@@ -2,7 +2,7 @@
   "marketplace": "editable-ppt-public",
   "repository": "czd176224-rgb/editable-ppt-workflow",
   "plugin": "editable-ppt-workflow",
-  "pluginVersion": "1.0.0+codex.20260728024418",
+  "pluginVersion": "1.0.0+codex.20260728063111",
   "workflowContractVersion": "word-only-v1",
   "requiredUserFiles": 1,
   "requiredHumanConfirmationPhaseCount": 1,

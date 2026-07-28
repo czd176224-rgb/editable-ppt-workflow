@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -41,6 +42,21 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def release_files(root: Path) -> list[Path]:
+    if (root / ".git").exists():
+        completed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=True,
+            capture_output=True,
+        )
+        return [
+            root / item.decode("utf-8")
+            for item in completed.stdout.split(b"\0")
+            if item and (root / item.decode("utf-8")).is_file()
+        ]
+    return [path for path in root.rglob("*") if path.is_file()]
+
+
 def validate(root: Path) -> dict:
     errors: list[str] = []
     root = root.resolve()
@@ -73,7 +89,7 @@ def validate(root: Path) -> dict:
     token_pattern = re.compile(r"(?:gho_|github_pat_|sk-)[A-Za-z0-9_-]{12,}")
     user_path_pattern = re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+", re.IGNORECASE)
     files: list[dict] = []
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    for path in sorted(release_files(root)):
         relative = path.relative_to(root)
         rel = normalized(relative)
         lowered = rel.lower()

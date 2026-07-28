@@ -25,16 +25,6 @@
       "sha256": "a83c7fde876da8a11efa8e784f67bcd0aa0afd1b87511092445ef9425b074b9e"
     },
     {
-      "path": "dist/editable-ppt-workflow-1.0.0+codex.20260728024418-windows.zip",
-      "bytes": 348316,
-      "sha256": "e1649f550afa0a385456d926305193561a00c4ea915c0514c13532c79dd32215"
-    },
-    {
-      "path": "dist/SHA256SUMS.txt",
-      "bytes": 128,
-      "sha256": "408b401b46fdfb04b75307d7fdcb300139c322445726af2b0d4595f96221c619"
-    },
-    {
       "path": "docs/QUICKSTART.zh-CN.md",
       "bytes": 1353,
       "sha256": "b6c143f70173143af8c44adca594710ab23095dd1c42eae77f3167266a482fb3"
@@ -686,8 +676,8 @@
     },
     {
       "path": "public-release-audit.json",
-      "bytes": 31965,
-      "sha256": "62a534493b25f68c78be42a08a09c1d34b2192d6633f4d951b23ce2bba17768c"
+      "bytes": 32496,
+      "sha256": "408ba13f02e0f62fbb4fef319aba1d94fe6d6a96d706810e1cf6318ba3cfecdf"
     },
     {
       "path": "public-release-files.json",
@@ -701,8 +691,8 @@
     },
     {
       "path": "scripts/check_public_release.py",
-      "bytes": 4711,
-      "sha256": "c1139787427d75849721cc331c5c18cc6d0a8d73f5e8eb77ed1fb1359db8800f"
+      "bytes": 5195,
+      "sha256": "0ea4d607d1eee02549ca2699113554f69ad227da82ad1d13ca004cd5c4c83ce6"
     },
     {
       "path": "scripts/package_release.ps1",

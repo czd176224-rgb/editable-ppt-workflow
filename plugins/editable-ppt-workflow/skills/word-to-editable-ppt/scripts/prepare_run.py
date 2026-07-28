@@ -74,6 +74,7 @@ def prepare(word: Path, output: Path) -> dict:
 
     source_copy = output / "00_source" / "source.docx"
     pages_path = output / "00_source" / "pages.json"
+    source_copy.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(word, source_copy)
     _atomic_json(pages_path, pages_payload)
 

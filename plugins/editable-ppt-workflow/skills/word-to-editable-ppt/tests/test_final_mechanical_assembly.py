@@ -381,6 +381,25 @@ def test_final_assembly_has_exactly_one_slide_per_locked_word_page_in_locked_ord
     assert receipt.page_count == 3
     assert _slide_texts(receipt.output_path) == ["Word page 2", "Word page 1", "Word page 3"]
     assert len(Presentation(receipt.output_path).slides) == 3
+    assert editable_page_cache.inspect_editable_pptx(receipt.output_path).slide_page_ids == (2, 1, 3)
+
+
+def test_slide_fingerprint_ignores_serializer_only_xml_whitespace(tmp_path: Path) -> None:
+    project = _project(tmp_path, (1,))
+    original = _page_pptx(project, 1)
+    rewritten = original.with_name("page_001-reserialized.pptx")
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(rewritten, "w") as target:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename == "ppt/slides/slide1.xml":
+                text = payload.decode("utf-8")
+                text = text.replace("><", ">\n  <")
+                payload = text.encode("utf-8")
+            target.writestr(item, payload)
+
+    first = editable_page_cache.inspect_editable_pptx(original)
+    second = editable_page_cache.inspect_editable_pptx(rewritten)
+    assert first.slide_fingerprints == second.slide_fingerprints
 
 
 def test_final_mechanical_qa_contains_only_mechanical_gates(tmp_path: Path) -> None:
@@ -404,6 +423,48 @@ def test_final_mechanical_qa_contains_only_mechanical_gates(tmp_path: Path) -> N
     assert "similarity" not in serialized
     assert "visual_dna" not in serialized
     assert "global_visual" not in serialized
+
+
+def test_final_render_proof_is_reused_only_for_the_same_strict_deck_hash(tmp_path: Path) -> None:
+    project = _project(tmp_path, (1, 2))
+    _complete_all(project)
+    receipt = assemble_deck(build_current_assembly_plan(project), project / "08_final" / "deck.pptx")
+    calls = 0
+
+    def counted_renderer(pptx: Path, output: Path) -> int:
+        nonlocal calls
+        calls += 1
+        return _render_with_real_open(pptx, output)
+
+    first = run_final_mechanical_qa(project, receipt, renderer=counted_renderer)
+    second = run_final_mechanical_qa(project, receipt, renderer=counted_renderer)
+
+    assert first["open_render_status"]["cache_hit"] is False
+    assert second["open_render_status"]["cache_hit"] is True
+    assert calls == 1
+
+
+def test_missing_optional_renderer_is_an_advisory_not_a_publication_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path, (1,))
+    _complete_all(project)
+    receipt = assemble_deck(build_current_assembly_plan(project), project / "08_final" / "deck.pptx")
+
+    class MissingRenderer(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        "final_mechanical_qa._default_renderer",
+        lambda _pptx, _output: (_ for _ in ()).throw(MissingRenderer("no local renderer installed")),
+    )
+    monkeypatch.setattr("final_mechanical_qa.NoRenderBackendError", MissingRenderer, raising=False)
+    report = run_final_mechanical_qa(project, receipt)
+
+    assert report["passed"] is True
+    assert report["open_render_status"]["passed"] is True
+    assert report["open_render_status"]["mode"] == "structural-only"
+    assert "optional" in report["open_render_status"]["advisory"].lower()
 
 
 def test_final_mechanical_qa_rejects_a_receipt_with_the_wrong_deck_hash(tmp_path: Path) -> None:

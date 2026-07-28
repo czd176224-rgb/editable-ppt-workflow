@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+import sys
+
+PLUGIN_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SCRIPTS))
+
+from runtime_office import NoRenderBackendError, resolve_soffice
 
 
 def render_powerpoint(input_path: Path, output: Path) -> int:
@@ -27,9 +34,9 @@ def render_powerpoint(input_path: Path, output: Path) -> int:
 
 
 def render_libreoffice(input_path: Path, output: Path) -> int:
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice = resolve_soffice()
     if not soffice:
-        raise RuntimeError("LibreOffice executable was not found")
+        raise NoRenderBackendError("LibreOffice executable was not found")
     import fitz
 
     with tempfile.TemporaryDirectory(prefix="ppt-render-") as temp:
@@ -43,11 +50,11 @@ def render_libreoffice(input_path: Path, output: Path) -> int:
         if completed.returncode != 0 or not pdf_path.is_file():
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"LibreOffice conversion failed: {detail}")
-        document = fitz.open(pdf_path)
-        for index, page in enumerate(document, start=1):
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            pix.save(output / f"slide_{index:03d}.png")
-        return len(document)
+        with fitz.open(pdf_path) as document:
+            for index, page in enumerate(document, start=1):
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                pix.save(output / f"slide_{index:03d}.png")
+            return len(document)
 
 
 def main() -> int:

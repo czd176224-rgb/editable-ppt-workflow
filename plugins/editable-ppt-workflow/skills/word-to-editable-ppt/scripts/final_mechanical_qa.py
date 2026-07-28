@@ -6,12 +6,19 @@ import argparse
 import hashlib
 import json
 import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
 from pptx import Presentation
+
+PLUGIN_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SCRIPTS))
+
+from cache_key import canonical_sha256
+from cache_store import CacheStore
+from runtime_office import NoRenderBackendError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +88,73 @@ def _default_renderer(pptx: Path, output: Path) -> int:
         return render_libreoffice(pptx, output)
     except Exception as exc:
         errors.append(f"LibreOffice: {exc}")
-    raise RuntimeError("no presentation renderer could open the final PPTX: " + " | ".join(errors))
+    powerpoint_unavailable = any(
+        marker in errors[0].lower()
+        for marker in ("win32com", "class not registered", "invalid class string", "no module named")
+    )
+    libreoffice_unavailable = any("executable was not found" in item.lower() for item in errors)
+    error_type = NoRenderBackendError if powerpoint_unavailable and libreoffice_unavailable else RuntimeError
+    raise error_type("no presentation renderer could open the final PPTX: " + " | ".join(errors))
+
+
+def _renderer_identity(renderer: Renderer | None) -> str:
+    if renderer is None:
+        return "auto-local-office-v1"
+    module = getattr(renderer, "__module__", type(renderer).__module__)
+    name = getattr(renderer, "__qualname__", type(renderer).__qualname__)
+    return f"callable:{module}:{name}"
+
+
+def _render_with_cache(
+    project: Path,
+    output: Path,
+    output_sha256: str,
+    expected_count: int,
+    renderer: Renderer | None,
+) -> tuple[int, bool, str]:
+    identity = {
+        "schema_version": 1,
+        "policy": "strict-render-proof-v1",
+        "pptx_sha256": output_sha256,
+        "renderer": _renderer_identity(renderer),
+        "expected_count": expected_count,
+    }
+    key = canonical_sha256(identity)
+    store = CacheStore(project)
+    hit = store.lookup("renders", key)
+    if hit is not None and dict(hit.manifest.get("identity", {})) == identity:
+        count = hit.manifest.get("rendered_count")
+        if isinstance(count, int) and count == expected_count:
+            return count, True, key
+
+    with store.staging("renders", key) as staged:
+        count = (renderer or _default_renderer)(output, staged)
+        if count != expected_count:
+            raise PackageValidationError(
+                f"renderer produced {count} pages for {expected_count} locked Word pages"
+            )
+        rendered_files = sorted(staged.glob("slide_*.png"))
+        if len(rendered_files) != expected_count:
+            raise PackageValidationError("renderer did not retain one proof image per locked Word page")
+        files = [
+            {"path": path.relative_to(staged).as_posix(), "sha256": _sha256(path)}
+            for path in rendered_files
+        ]
+        manifest = {
+            "schema_version": 1,
+            "layer": "renders",
+            "key": key,
+            "identity": identity,
+            "rendered_count": count,
+            "files": files,
+        }
+        try:
+            store.seal("renders", key, staged, manifest)
+        except FileExistsError:
+            concurrent = store.lookup("renders", key)
+            if concurrent is None or dict(concurrent.manifest.get("identity", {})) != identity:
+                raise
+    return count, False, key
 
 
 def run_final_mechanical_qa(
@@ -121,7 +194,7 @@ def run_final_mechanical_qa(
         list(output_inspection.slide_fingerprints) if output_inspection is not None else []
     )
     fingerprints_match = expected_fingerprints == actual_fingerprints
-    actual_order = list(locked) if fingerprints_match else []
+    actual_order = list(output_inspection.slide_page_ids) if output_inspection is not None else []
     page_count = {
         "expected": len(locked),
         "actual": actual_count,
@@ -130,7 +203,7 @@ def run_final_mechanical_qa(
     page_order = {
         "expected": list(locked),
         "actual": actual_order,
-        "passed": fingerprints_match and actual_order == list(locked),
+        "passed": actual_order == list(locked),
     }
 
     artifact_pages = [
@@ -186,22 +259,33 @@ def run_final_mechanical_qa(
     rendered = False
     rendered_count = 0
     render_error: str | None = None
+    render_cache_hit = False
+    render_cache_key: str | None = None
+    render_mode = "rendered"
+    render_advisory: str | None = None
     try:
         opened_presentation = Presentation(output)
         opened = len(opened_presentation.slides) == len(locked)
-        with tempfile.TemporaryDirectory(prefix="final-mechanical-render-", dir=output.parent) as temporary:
-            render_dir = Path(temporary)
-            rendered_count = (renderer or _default_renderer)(output, render_dir)
-            rendered_files = sorted(render_dir.glob("slide_*.png"))
-            rendered = rendered_count == len(locked) and len(rendered_files) == len(locked)
-            post_render_inspection = inspect_editable_pptx(output)
-            post_render_sha256 = _sha256(output)
-            if (
-                post_render_sha256 != inspected_output_sha256
-                or output_inspection is None
-                or post_render_inspection != output_inspection
-            ):
-                raise PackageValidationError("renderer changed the mechanically inspected deck")
+        rendered_count, render_cache_hit, render_cache_key = _render_with_cache(
+            project,
+            output,
+            inspected_output_sha256 or assembly_receipt.output_sha256,
+            len(locked),
+            renderer,
+        )
+        rendered = rendered_count == len(locked)
+        post_render_inspection = inspect_editable_pptx(output)
+        post_render_sha256 = _sha256(output)
+        if (
+            post_render_sha256 != inspected_output_sha256
+            or output_inspection is None
+            or post_render_inspection != output_inspection
+        ):
+            raise PackageValidationError("renderer changed the mechanically inspected deck")
+    except NoRenderBackendError as exc:
+        rendered = False
+        render_mode = "structural-only"
+        render_advisory = f"Optional local render backend unavailable: {exc}"
     except Exception as exc:
         rendered = False
         render_error = str(exc)
@@ -210,7 +294,11 @@ def run_final_mechanical_qa(
         "rendered": rendered,
         "rendered_page_count": rendered_count,
         "error": render_error,
-        "passed": opened and rendered,
+        "passed": opened and (rendered or render_mode == "structural-only"),
+        "mode": render_mode,
+        "advisory": render_advisory,
+        "cache_hit": render_cache_hit,
+        "cache_key": render_cache_key,
     }
 
     gates = (

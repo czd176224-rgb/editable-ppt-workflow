@@ -15,6 +15,8 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import doctor  # noqa: E402
+import extract_docx_pages  # noqa: E402
+import render_pptx  # noqa: E402
 
 
 def test_office_smoke_prefers_powerpoint_and_does_not_call_soffice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -206,6 +208,41 @@ def test_resolve_soffice_checks_common_windows_install_location(tmp_path: Path, 
     monkeypatch.setattr(doctor.shutil, "which", lambda _command: None)
 
     assert doctor.resolve_soffice() == str(executable.resolve())
+
+
+def test_real_libreoffice_consumers_honor_explicit_soffice_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Detection and the actual render/pagination paths must use one resolver."""
+    import fitz
+
+    executable = tmp_path / "portable-lo" / "program" / "soffice.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setenv("SOFFICE_EXE", str(executable))
+    calls: list[Path] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess:
+        calls.append(Path(command[0]))
+        output_dir = Path(command[command.index("--outdir") + 1])
+        source = Path(command[-1])
+        pdf = fitz.open()
+        pdf.new_page()
+        pdf.save(output_dir / f"{source.stem}.pdf")
+        pdf.close()
+        return subprocess.CompletedProcess(command, 0, stdout="converted", stderr="")
+
+    monkeypatch.setattr(render_pptx.subprocess, "run", fake_run)
+    monkeypatch.setattr(extract_docx_pages.subprocess, "run", fake_run)
+    pptx = tmp_path / "deck.pptx"
+    pptx.write_bytes(b"pptx")
+    rendered = tmp_path / "rendered"
+    rendered.mkdir()
+    assert render_pptx.render_libreoffice(pptx, rendered) == 1
+    docx = tmp_path / "source.docx"
+    docx.write_bytes(b"docx")
+    assert extract_docx_pages._render_pdf_with_libreoffice(docx, tmp_path / "source.pdf") is True
+    assert calls == [executable.resolve(), executable.resolve()]
 
 
 def test_successful_office_smoke_is_authoritative_when_version_probe_times_out(

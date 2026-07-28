@@ -13,29 +13,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+PLUGIN_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SCRIPTS))
+
+from runtime_office import resolve_soffice
+
 
 REQUIRED_MODULES = ["flask", "jsonschema", "PIL", "fitz", "docx", "pptx"]
 EXPECTED_EDITPPT_CLI_VERSION = "0.3.0"
-
-
-def resolve_soffice() -> str | None:
-    """Find LibreOffice from an explicit override, PATH, or standard installs."""
-    candidates: list[Path] = []
-    configured = os.getenv("SOFFICE_EXE")
-    if configured:
-        candidates.append(Path(configured))
-    for command in ("soffice", "soffice.exe"):
-        discovered = shutil.which(command)
-        if discovered:
-            candidates.append(Path(discovered))
-    for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
-        base = os.getenv(variable)
-        if base:
-            candidates.append(Path(base) / "LibreOffice/program/soffice.exe")
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate.resolve())
-    return None
 
 
 def resolve_command(command: str) -> str | None:
@@ -354,7 +340,7 @@ def diagnose(check_powerpoint: bool = False, smoke_test: bool = False) -> dict:
         "commands": {
             "editppt": editppt_command,
             "officecli": officecli_command,
-            "soffice": command_version("soffice", ["--version"]),
+            "soffice": command_version(resolve_soffice() or "soffice", ["--version"]),
         },
         "powerpoint": powerpoint_status() if check_powerpoint else {"available": None, "detail": "use --check-powerpoint"},
         "image_backend_credentials": {

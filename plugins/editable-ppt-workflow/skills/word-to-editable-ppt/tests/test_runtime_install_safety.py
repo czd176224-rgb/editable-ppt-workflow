@@ -79,3 +79,17 @@ def test_windows_nonportable_runtime_probes_real_win32com_and_portable_records_s
     assert "$RunningOnWindows -and -not $PortableSmokeTest" in verifier
     assert 'win32com_import = "skipped-portable"' in installer
     assert '$Report.win32com_import -ne "skipped-portable"' in verifier
+
+
+def test_optional_local_renderer_never_blocks_runtime_installation():
+    installer = INSTALLER.read_text(encoding="utf-8")
+
+    assert 'throw "Install Microsoft PowerPoint or LibreOffice, then retry."' not in installer
+    assert "Write-Warning" in installer
+
+
+def test_installed_current_workflow_contains_the_shared_office_resolver():
+    installer = INSTALLER.read_text(encoding="utf-8")
+
+    assert 'Join-Path $PluginRoot "scripts\\runtime_office.py"' in installer
+    assert 'Join-Path $CurrentWorkflowScripts "runtime_office.py"' in installer

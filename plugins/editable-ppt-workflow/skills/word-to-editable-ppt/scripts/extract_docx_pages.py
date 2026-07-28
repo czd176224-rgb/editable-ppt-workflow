@@ -7,8 +7,15 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+PLUGIN_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SCRIPTS))
+
+from runtime_office import resolve_soffice
 
 import fitz
 
@@ -143,7 +150,7 @@ def _render_pdf_with_word(input_path: Path, output_pdf: Path) -> bool:
 
 
 def _render_pdf_with_libreoffice(input_path: Path, output_pdf: Path) -> bool:
-    executable = shutil.which("soffice") or shutil.which("libreoffice")
+    executable = resolve_soffice()
     if not executable:
         return False
     completed = subprocess.run(

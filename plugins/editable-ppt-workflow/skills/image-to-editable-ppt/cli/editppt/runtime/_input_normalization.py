@@ -4,10 +4,17 @@ import json
 import posixpath
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
+
+PLUGIN_SCRIPTS = Path(__file__).resolve().parents[5] / "scripts"
+if str(PLUGIN_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_SCRIPTS))
+
+from runtime_office import resolve_soffice
 from xml.etree import ElementTree as ET
 
 from PIL import Image
@@ -215,7 +222,7 @@ def extract_image_based_pptx_pages(pptx_path, pages_dir):
 
 
 def find_soffice():
-    return shutil.which("soffice") or shutil.which("libreoffice")
+    return resolve_soffice()
 
 
 def convert_office_to_pdf(input_path, out_dir):

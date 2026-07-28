@@ -29,7 +29,7 @@ python scripts\word_to_editable_ppt.py workflow next --project D:\Projects\Deck
 Pagination rules are strict:
 
 1. Prefer ordered, consecutive `第1页`, `第2页`, and later markers.
-2. If no marker exists anywhere, use physical pages rendered by Microsoft Word or LibreOffice.
+2. If no marker exists anywhere, use physical pages rendered by Microsoft Word; resolve LibreOffice lazily only as an optional fallback.
 3. Stop on duplicated, skipped, or out-of-order markers; never fall back from invalid markers.
 4. Lock page count, page numbers, page order, page-local source text, and source hashes.
 5. Produce exactly one PPT slide for each locked Word page. Do not add slides that are not represented by Word pages.
@@ -74,12 +74,14 @@ All initial pages use byte-identical style-execution content and its same SHA-25
 
 ## 4. Apply relaxed page-local QA and repair
 
-Make exactly two qualitative decisions for the current page:
+Make one combined QA evaluation containing exactly two qualitative decisions for the current page:
 
 1. Does the page match the confirmed style overall?
 2. Does it preserve the current Word page's main content, key facts, numbers, entities, qualifications, and main logic?
 
 Return `pass`, `pass_with_advisory`, or `repair`, with repair scope `none`, `local`, or `structural`. Reasonable summarization, rewording, block reordering, visual translation, different valid layouts, small color variance, and small typography variance pass or receive an advisory.
+
+Read the generated image once for both decisions. Do not run separate style, content, logic, OCR, or global-consistency QA passes on a normal page. Invoke deeper inspection only when that combined observation contains a concrete ambiguity or anomaly. A passing page proceeds directly to reconstruction.
 
 Wrong facts, numbers, dates, entities, invented important conclusions, reversed major logic, unreadable crop/overlap, or material overall-style mismatch require repair.
 
@@ -111,10 +113,11 @@ Wait until every locked Word page is complete. Assemble completed page packages 
 - every page has a passing page-local QA result;
 - editable objects exist;
 - each page package is valid;
-- the final PPTX opens and can be back-rendered.
+- the final PPTX opens; PowerPoint is the preferred back-renderer and LibreOffice is resolved only as an optional fallback;
+- a strict project-local render proof is reused only when the final PPTX hash, renderer identity, expected page count, and retained proof-image hashes all match.
 
 Do not re-evaluate visual similarity across pages. `officecli` may validate or surgically repair the already assembled file; it does not own page generation or assembly.
 
 ## Blockers
 
-Stop for invalid pagination markers, unavailable physical pagination, an empty extracted page, a missing or changed frozen style artifact, an invalid page lease, a project-external artifact, a failed editable package, page-count/order mismatch, or an unavailable required open/render check. Never bypass the browser confirmation phase or mark a page complete before its reconstruction package is sealed.
+Stop for invalid pagination markers, unavailable physical pagination when the Word has no markers, an empty extracted page, a missing or changed frozen style artifact, an invalid page lease, a project-external artifact, a failed editable package, or page-count/order mismatch. Do not stop merely because LibreOffice is absent. When neither PowerPoint nor LibreOffice is available, complete structural PPTX validation and record a final render advisory. Never bypass the browser confirmation phase or mark a page complete before its reconstruction package is sealed.

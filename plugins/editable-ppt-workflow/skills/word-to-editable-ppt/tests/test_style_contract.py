@@ -27,17 +27,18 @@ def confirmed_result() -> dict:
         "stage": "final",
         "status": "confirmed",
         "confirmed_at": "2026-07-27T09:30:00+08:00",
-        "audience": "厅局负责人",
-        "core_message": "逐页忠实转化并统一视觉风格",
-        "delivery_context": "会议现场",
-        "content_divergence": "不改变页序与事实",
         "canvas": "ppt169",
         "page_count": 2,
         "pagination_mode": "explicit_text_markers",
         "one_page_to_one_slide": True,
         "direction": 1,
-        "delivery_purpose": "balanced",
-        "mode": "pyramid",
+        "template_selection": {
+            "id": "policy-project-brief",
+            "label": "政策与项目进度简报",
+            "version": "1.0",
+            "substyle_id": None,
+            "override_fields": ["information_density"],
+        },
         "visual_style": "editorial",
         "color": {
             "name_zh": "现代清晰",
@@ -59,7 +60,15 @@ def confirmed_result() -> dict:
             "type_scale_pt": {"page_title": 28, "section_title": 18, "body": 12, "caption": 9},
         },
         "style_axes": {"formal": 80, "modern": 35, "minimal": 60},
+        "layout_preferences": ["auto", "editorial", "matrix"],
         "information_density": "balanced",
+        "regional_style": {"enabled": False},
+        "background_system": "light",
+        "image_role": {"role": "evidence", "proportion": "medium-low"},
+        "evidence_strength": "data-case",
+        "composition_tendency": "formal-consulting",
+        "brand_device": "light",
+        "production_profile": "balanced",
         "additional_requirements": "保持正式克制",
         "image_rendering": {
             "name_zh": "克制的平面表达",
@@ -119,18 +128,14 @@ def write_project(project: Path, confirmed: dict) -> None:
     )
 
 
-def test_compile_is_byte_deterministic_and_retains_all_selected_execution_fields():
-    """An identical confirmed choice must always produce the same prompt contract."""
+def test_compile_is_byte_deterministic_and_separates_locks_preferences_and_freedom():
+    """The prompt contract must preserve choices without turning every choice into a lock."""
     first = compile_style_execution(confirmed_result())
     second = compile_style_execution(confirmed_result())
 
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
     assert first == {
-        "schema_version": "1.0",
-        "audience": "厅局负责人",
-        "core_message": "逐页忠实转化并统一视觉风格",
-        "delivery_context": "会议现场",
-        "content_divergence": "不改变页序与事实",
+        "schema_version": "2.0",
         "canvas": "ppt169",
         "canvas_profile": {
             "aspect_ratio": "16:9",
@@ -140,25 +145,39 @@ def test_compile_is_byte_deterministic_and_retains_all_selected_execution_fields
             "fit": "contain",
             "allow_crop": False,
         },
-        "direction": 1,
-        "delivery_purpose": "balanced",
-        "mode": "pyramid",
-        "visual_style": "editorial",
-        "color": confirmed_result()["color"],
-        "icons": "tabler-outline",
-        "typography": confirmed_result()["typography"],
-        "image_rendering": confirmed_result()["image_rendering"],
-        "style_axes": {"formal": 80, "modern": 35, "minimal": 60},
-        "information_density": "balanced",
-        "additional_requirements": "保持正式克制",
-        "formula_policy": "mixed",
-        "generation_mode": "continuous",
-        "refine_spec": False,
-        "image_quality": "high",
-        "max_concurrency": 4,
-        "automatic_repair_budget": 2,
-        "editable_output": True,
-        "start_generation": True,
+        "hard_constraints": {
+            "content_fidelity": "preserve_information_and_logic",
+            "one_page_to_one_slide": True,
+            "title_color": "#22577A",
+            "palette": confirmed_result()["color"]["palette"],
+            "typography": confirmed_result()["typography"],
+        },
+        "soft_preferences": {
+            "direction": 1,
+            "template_selection": confirmed_result()["template_selection"],
+            "visual_style": "editorial",
+            "color": confirmed_result()["color"],
+            "icons": "tabler-outline",
+            "typography": confirmed_result()["typography"],
+            "image_rendering": confirmed_result()["image_rendering"],
+            "style_axes": {"formal": 80, "modern": 35, "minimal": 60},
+            "layout_preferences": ["auto", "editorial", "matrix"],
+            "information_density": "balanced",
+            "regional_style": {"enabled": False},
+            "background_system": "light",
+            "image_role": {"role": "evidence", "proportion": "medium-low"},
+            "evidence_strength": "data-case",
+            "composition_tendency": "formal-consulting",
+            "brand_device": "light",
+            "additional_requirements": "保持正式克制",
+        },
+        "creative_freedom": {
+            "layout": True,
+            "composition": True,
+            "visual_hierarchy": True,
+            "content_visualization": True,
+            "page_specific_emphasis": True,
+        },
     }
 
 
@@ -194,11 +213,16 @@ def test_freeze_writes_canonical_artifacts_validates_schemas_and_advances_workfl
     confirmation_path = style_dir / "style_confirmation.json"
     execution_path = style_dir / "style_execution.json"
     hash_path = style_dir / "style_execution.sha256"
+    visual_path = style_dir / "ui_preview_audit.png"
+    visual_hash_path = style_dir / "ui_preview_audit.sha256"
 
     assert frozen["sha256"] == hash_path.read_text(encoding="ascii").strip()
     assert confirmation_path.read_bytes() == canonical_json_bytes(confirmed_result())
     assert execution_path.read_bytes() == canonical_json_bytes(frozen["execution"])
     assert frozen["sha256"] == hashlib.sha256(execution_path.read_bytes()).hexdigest()
+    assert visual_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert "approved_visual" not in frozen["execution"]
+    assert hashlib.sha256(visual_path.read_bytes()).hexdigest() == visual_hash_path.read_text(encoding="ascii").strip()
     for name, instance in (("style_confirmation", confirmed_result()), ("style_execution", frozen["execution"])):
         schema = json.loads((ROOT / "schemas" / f"{name}.schema.json").read_text(encoding="utf-8"))
         assert not list(Draft202012Validator(schema).iter_errors(instance))
@@ -210,11 +234,18 @@ def test_freeze_writes_canonical_artifacts_validates_schemas_and_advances_workfl
         "confirmation_file": "02_style/style_confirmation.json",
         "execution_file": "02_style/style_execution.json",
         "execution_sha256": frozen["sha256"],
+        "ui_preview_audit_file": "02_style/ui_preview_audit.png",
+        "ui_preview_audit_sha256": visual_hash_path.read_text(encoding="ascii").strip(),
     }
     assert state["scheduler"] == {
         "concurrency": 4,
         "configured_max": 4,
         "last_trigger": "style_confirmation",
+    }
+    assert state["runtime"] == {
+        "generation_mode": "continuous",
+        "image_quality": "high",
+        "automatic_repair_budget": 2,
     }
     action = workflow_state.next_action(project)
     assert action["stage"] == "page_pipeline"

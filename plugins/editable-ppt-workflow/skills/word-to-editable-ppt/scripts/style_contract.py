@@ -1,42 +1,49 @@
-"""Freeze the Confirm UI result into a compact, deterministic image style contract."""
+"""Freeze the three-step visual confirmation into compact executable artifacts."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+
+from approved_visual import render_ui_preview_audit
 
 
 STYLE_DIR = "02_style"
 CONFIRMATION_FILE = "style_confirmation.json"
 EXECUTION_FILE = "style_execution.json"
 EXECUTION_HASH_FILE = "style_execution.sha256"
+UI_PREVIEW_AUDIT_FILE = "ui_preview_audit.png"
+UI_PREVIEW_AUDIT_HASH_FILE = "ui_preview_audit.sha256"
 
-STAGE1_FIELDS = (
-    "audience",
-    "core_message",
-    "delivery_context",
-    "content_divergence",
+CONFIRMATION_FIELDS = (
     "canvas",
-)
-STAGE2_FIELDS = (
+    "page_count",
+    "pagination_mode",
+    "one_page_to_one_slide",
     "direction",
-    "delivery_purpose",
-    "mode",
+    "template_selection",
     "visual_style",
     "color",
     "icons",
     "typography",
     "image_rendering",
     "style_axes",
+    "layout_preferences",
     "information_density",
+    "regional_style",
+    "background_system",
+    "image_role",
+    "evidence_strength",
+    "composition_tendency",
+    "brand_device",
+    "production_profile",
     "additional_requirements",
-)
-STAGE3_FIELDS = (
     "formula_policy",
     "generation_mode",
     "refine_spec",
@@ -46,8 +53,7 @@ STAGE3_FIELDS = (
     "editable_output",
     "start_generation",
 )
-PAGINATION_FIELDS = ("page_count", "pagination_mode", "one_page_to_one_slide")
-EXECUTION_FIELDS = STAGE1_FIELDS + STAGE2_FIELDS + STAGE3_FIELDS
+
 CANVAS_PROFILES = {
     "ppt169": {
         "aspect_ratio": "16:9",
@@ -76,15 +82,8 @@ def resolve_canvas_profile(canvas: str) -> dict[str, Any]:
 
 
 def canonical_json_bytes(value: dict[str, Any]) -> bytes:
-    """Encode JSON once, in the exact bytes used for the execution digest."""
     return (
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         + "\n"
     ).encode("utf-8")
 
@@ -111,7 +110,6 @@ def _required_projection(confirmed: dict[str, Any], fields: tuple[str, ...]) -> 
 
 
 def canonical_confirmation(confirmed: dict[str, Any]) -> dict[str, Any]:
-    """Keep only the authoritative, final Confirm UI fields and locked facts."""
     if not isinstance(confirmed, dict):
         raise ValueError("confirmed style result must be an object")
     if confirmed.get("stage") != "final" or confirmed.get("status") != "confirmed":
@@ -121,17 +119,58 @@ def canonical_confirmation(confirmed: dict[str, Any]) -> dict[str, Any]:
         "status": "confirmed",
         "confirmed_at": confirmed.get("confirmed_at"),
     }
-    snapshot.update(_required_projection(confirmed, STAGE1_FIELDS + PAGINATION_FIELDS + STAGE2_FIELDS + STAGE3_FIELDS))
+    snapshot.update(_required_projection(confirmed, CONFIRMATION_FIELDS))
     _validate(snapshot, "style_confirmation.schema.json")
     return snapshot
 
 
-def compile_style_execution(confirmed: dict) -> dict:
-    """Project a final confirmation into the sole page-independent image input."""
+def compile_style_execution(confirmed: dict[str, Any]) -> dict[str, Any]:
     snapshot = canonical_confirmation(confirmed)
-    execution = {"schema_version": "1.0"}
-    execution.update({field: snapshot[field] for field in EXECUTION_FIELDS})
-    execution["canvas_profile"] = resolve_canvas_profile(snapshot["canvas"])
+    palette = snapshot["color"].get("palette") if isinstance(snapshot["color"], dict) else None
+    title_color = palette.get("primary") if isinstance(palette, dict) else None
+    if not isinstance(title_color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", title_color):
+        raise ValueError("confirmed palette primary/title color must be a six-digit HEX color")
+    execution = {
+        "schema_version": "2.0",
+        "canvas": snapshot["canvas"],
+        "canvas_profile": resolve_canvas_profile(snapshot["canvas"]),
+        "hard_constraints": {
+            "content_fidelity": "preserve_information_and_logic",
+            "one_page_to_one_slide": True,
+            "title_color": title_color.upper(),
+            "palette": snapshot["color"]["palette"],
+            "typography": snapshot["typography"],
+        },
+        "soft_preferences": {
+            field: snapshot[field]
+            for field in (
+                "direction",
+                "template_selection",
+                "visual_style",
+                "color",
+                "icons",
+                "typography",
+                "image_rendering",
+                "style_axes",
+                "layout_preferences",
+                "information_density",
+                "regional_style",
+                "background_system",
+                "image_role",
+                "evidence_strength",
+                "composition_tendency",
+                "brand_device",
+                "additional_requirements",
+            )
+        },
+        "creative_freedom": {
+            "layout": True,
+            "composition": True,
+            "visual_hierarchy": True,
+            "content_visualization": True,
+            "page_specific_emphasis": True,
+        },
+    }
     _validate(execution, "style_execution.schema.json")
     return execution
 
@@ -158,14 +197,27 @@ def _assert_immutable(path: Path, expected: bytes) -> None:
         raise ValueError(f"immutable style artifact already differs: {path}")
 
 
-def freeze_style_contract(project: Path) -> dict:
-    """Persist the final UI result, execution bytes, digest, and workflow transition."""
+def _first_page_source(project: Path) -> tuple[str, str]:
+    contract = _read_object(project / "01_page_contracts" / "page_001.json")
+    source = contract.get("source_text")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("first locked page source text is missing")
+    lines = [line.strip() for line in source.splitlines() if line.strip()]
+    if lines and re.fullmatch(r"第\s*1\s*页", lines[0]):
+        lines = lines[1:]
+    return (lines[0] if lines else "演示文稿视觉系统", source)
+
+
+def freeze_style_contract(project: Path) -> dict[str, Any]:
     project = Path(project).resolve()
     result_path = project / "confirm_ui" / "result.json"
     if not result_path.is_file():
         raise FileNotFoundError(f"final confirmation is missing: {result_path}")
 
     confirmed = canonical_confirmation(_read_object(result_path))
+    title, body = _first_page_source(project)
+    ui_preview_audit_bytes = render_ui_preview_audit(confirmed, title, body)
+    ui_preview_audit_sha256 = hashlib.sha256(ui_preview_audit_bytes).hexdigest()
     execution = compile_style_execution(confirmed)
     confirmation_bytes = canonical_json_bytes(confirmed)
     execution_bytes = canonical_json_bytes(execution)
@@ -181,15 +233,14 @@ def freeze_style_contract(project: Path) -> dict:
         raise ValueError("confirmed style contract is already frozen with a different digest")
 
     style_dir = project / STYLE_DIR
-    confirmation_path = style_dir / CONFIRMATION_FILE
-    execution_path = style_dir / EXECUTION_FILE
-    hash_path = style_dir / EXECUTION_HASH_FILE
-    hash_bytes = (digest + "\n").encode("ascii")
-    for path, contents in (
-        (confirmation_path, confirmation_bytes),
-        (execution_path, execution_bytes),
-        (hash_path, hash_bytes),
-    ):
+    artifacts = (
+        (style_dir / CONFIRMATION_FILE, confirmation_bytes),
+        (style_dir / EXECUTION_FILE, execution_bytes),
+        (style_dir / EXECUTION_HASH_FILE, (digest + "\n").encode("ascii")),
+        (style_dir / UI_PREVIEW_AUDIT_FILE, ui_preview_audit_bytes),
+        (style_dir / UI_PREVIEW_AUDIT_HASH_FILE, (ui_preview_audit_sha256 + "\n").encode("ascii")),
+    )
+    for path, contents in artifacts:
         _assert_immutable(path, contents)
         _atomic_write(path, contents)
 
@@ -199,17 +250,25 @@ def freeze_style_contract(project: Path) -> dict:
         "confirmation_file": f"{STYLE_DIR}/{CONFIRMATION_FILE}",
         "execution_file": f"{STYLE_DIR}/{EXECUTION_FILE}",
         "execution_sha256": digest,
+        "ui_preview_audit_file": f"{STYLE_DIR}/{UI_PREVIEW_AUDIT_FILE}",
+        "ui_preview_audit_sha256": ui_preview_audit_sha256,
     }
     state["scheduler"] = {
         "concurrency": confirmed["max_concurrency"],
         "configured_max": confirmed["max_concurrency"],
         "last_trigger": "style_confirmation",
     }
+    state["runtime"] = {
+        "generation_mode": confirmed["generation_mode"],
+        "image_quality": confirmed["image_quality"],
+        "automatic_repair_budget": confirmed["automatic_repair_budget"],
+    }
     _atomic_write(workflow_path, canonical_json_bytes(state))
     return {
         "confirmation": confirmed,
         "execution": execution,
         "sha256": digest,
-        "style_confirmation_path": str(confirmation_path),
-        "style_execution_path": str(execution_path),
+        "style_confirmation_path": str(style_dir / CONFIRMATION_FILE),
+        "style_execution_path": str(style_dir / EXECUTION_FILE),
+        "ui_preview_audit_path": str(style_dir / UI_PREVIEW_AUDIT_FILE),
     }

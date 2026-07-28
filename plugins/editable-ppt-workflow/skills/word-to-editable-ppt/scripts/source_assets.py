@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 from PIL import Image, UnidentifiedImageError
 
 from extract_docx_pages import iter_blocks, relationship_ids
+from page_assets import classify_page_asset
 from docx import Document
 
 
@@ -207,6 +208,16 @@ def build_manifest(occurrences: Iterable[dict[str, Any]], source_file: str | Non
         dimensions = _dimensions(data) if data is not None else None
         if dimensions is not None:
             asset["width"], asset["height"] = dimensions
+        asset.update(
+            classify_page_asset(
+                asset["media_type"],
+                binding_status=asset["binding_status"],
+                has_generation_input=(
+                    data is not None
+                    and asset["media_type"] in SUPPORTED_GENERATION_MEDIA | DERIVABLE_GENERATION_MEDIA
+                ),
+            )
+        )
         assets.append(asset)
     manifest: dict[str, Any] = {"schema_version": "1.0", "assets": assets}
     if source_file is not None:
@@ -286,15 +297,22 @@ def extract_source_assets(docx_path: Path, pages_payload: dict, output_dir: Path
             derivative_relative = str(DERIVED_ASSET_DIRECTORY / f"{asset['asset_id']}.png")
             derivative = output_dir / derivative_relative
             derivative.parent.mkdir(parents=True, exist_ok=True)
-            with Image.open(BytesIO(data)) as image:
-                image.seek(0)
-                converted = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-                converted.save(derivative, format="PNG", optimize=False, compress_level=9)
-            asset["generation_input"] = {
-                "relative_path": derivative_relative,
-                "sha256": hashlib.sha256(derivative.read_bytes()).hexdigest(),
-                "media_type": "image/png",
-                "derivation": "deterministic_png",
-                "source_sha256": asset["sha256"],
-            }
+            try:
+                with Image.open(BytesIO(data)) as image:
+                    image.seek(0)
+                    converted = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                    converted.save(derivative, format="PNG", optimize=False, compress_level=9)
+                asset["generation_input"] = {
+                    "relative_path": derivative_relative,
+                    "sha256": hashlib.sha256(derivative.read_bytes()).hexdigest(),
+                    "media_type": "image/png",
+                    "derivation": "deterministic_png",
+                    "source_sha256": asset["sha256"],
+                }
+            except (UnidentifiedImageError, OSError, ValueError):
+                asset.update(
+                    classify_page_asset(
+                        asset["media_type"], binding_status=asset["binding_status"], has_generation_input=False
+                    )
+                )
     return manifest

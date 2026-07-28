@@ -1,30 +1,36 @@
 # Editable PPT Workflow
 
-This plugin accepts one user-supplied paginated Word document and produces one editable PowerPoint slide per locked Word page.
+该插件把一个分页 Word 文档转换为一页对应一页的可编辑 PowerPoint。
 
-## Workflow
+## 当前工作流
 
-`one Word input → marker-first/physical-fallback pagination → one embedded three-stage browser confirmation phase → immutable shared style contract → independent page image generation → relaxed page-local QA and repair → independent reconstruction → mechanical final assembly`
+`Word 自动分页与内容锁定 → 三步视觉合同确认 → 逐页独立 Image2 生图 → 页内宽松 QA/修复 → 逐页可编辑重建 → 机械组装`
 
-The three-stage browser interaction is embedded in `word-to-editable-ppt` and adapted from the PPT Master interaction model. The plugin does not depend on an external package, install, import, or filesystem path for that interaction.
+用户只需上传 Word。网页采用三步专业视觉化配置台但只在最后确认一次：先从“政策与项目进度简报、品牌叙事型综合商务汇报、技术证据型投资 BP”中选择模板；投资 BP 再选择“深色科技”或“白底研发”；随后通过分组导航、局部规则示意和固定风格摘要调整页面组织、语义色板、中英文字体、字号、信息密度、图像角色、证据强度、构图倾向、品牌装置、风格程度和可选地区特色。
 
-Initial page creation uses exactly one `images/generations` request with only the current-page text, exact frozen style execution, and technical output parameters. One combined page-QA decision checks overall style plus source content and logic. Passing pages do not enter a second visual review. Local fixes to an existing page may use `images/edits`; only structural, logic, or material overall-style failures generate a fresh image.
+界面不再使用容易造成误解的中央假页面预览。模板卡片和各选项提供局部视觉示意及影响说明，模板默认与用户覆盖项在最终合同中分别标明。第三步同时选择生产与交付模式：质量优先（高质量、并发2页、每页修复2次）、均衡（高质量、并发4页、每页修复1次）或速度优先（中等质量、并发6页、每页修复1次）。确认后，精确色板和字体作为硬性视觉锚点，其余模板要求作为柔性偏好写入紧凑合同；UI 截图仅作为项目审计记录，不参与生图或缓存。
 
-The single browser phase freezes detailed visual controls (including formal/modern/minimal degree, a four-level type scale, density, and free-form requirements) and production controls (quality, concurrency, repair budget, editable output, and start). `ppt169` uses `1792x1008` with a 16:9 PowerPoint canvas; `ppt43` uses `1536x1152` with a 4:3 canvas. Both mappings are no-crop.
+每个未缓存页面通常只进行一次 `images/generations`。请求只包含本页原文、紧凑风格要求、必要的本页图片附件和技术参数。局部错误可使用 `images/edits`，结构、内容或逻辑错误重新生成该页。不存在整套 PPT 视觉一致性复检。
 
-Pages have independent scheduler, QA, retry, cache, and reconstruction states. A passing page may reconstruct while other pages generate or repair. Strict project-local hashes reuse unchanged page images, QA receipts, editable packages, and final render evidence. The final writer waits for all locked pages, assembles them in Word order, and checks count/order, artifact integrity, page-QA status, editability, package validity, and open/back-render capability.
+## Skills 分工
 
-Microsoft Word and PowerPoint are preferred when installed. LibreOffice is a lazy optional fallback for unmarked physical pagination and final back-rendering; it is not required when the corresponding Microsoft Office capability is available. If neither renderer exists, structural PPTX validation remains non-blocking and the final report records a clear advisory instead of spending generation quota or stopping installation.
+| Skill | 负责内容 |
+| --- | --- |
+| `word-to-editable-ppt` | Word 分页与原文锁定、页内附件、实时 UI、风格合同、调度和页内 QA。 |
+| `codex-gpt-image` | 通过 Codex OAuth 调用 `gpt-image-2` 生图或修图。 |
+| `image-to-editable-ppt` | 把通过 QA 的页面图片重建为可编辑对象并按页序组装。 |
+| `officecli` | 可选的最终 Office 校验和小范围修复。 |
 
-The only generated-image directory is `06_images/generated/`. Final deliverables and their mechanical receipts are written only to `08_final/`.
+## 缓存与额度
 
-## Deterministic routing
+缓存只存在当前项目。严格命中会复用页面图、QA 结果和可编辑页面包。缓存身份包括本页正文、风格合同、本页附件、生成参数、修复反馈和重建版本；UI 审计截图不参与。修改一页只重做该页。
 
-| Skill | Owns | Boundary |
-| --- | --- | --- |
-| `word-to-editable-ppt` | One-Word preparation, embedded browser confirmation, immutable style contract, independent page state, relaxed QA, and final mechanical checks. | It does not add pages outside the Word source or require other user uploads. |
-| `codex-gpt-image` | Initial page generation and issue-specific image repair with normalized provenance. | It does not decide final page acceptance or assemble PPTX files. |
-| `image-to-editable-ppt` | Per-page editable reconstruction, strict page cache, and one-writer locked-order assembly. | It consumes accepted current-page artifacts only. |
-| `officecli` | Validation and surgical fixes on the assembled deliverable. | It does not own generation, page QA, or assembly. |
+## 局限
 
-The latest supported build is distributed through the public `editable-ppt-public` Marketplace snapshot. Development changes remain private until they pass validation and are exported as a clean public release.
+- Image2 可能误写文字、遗漏细节或产生不合适的视觉表达；只有异常页会自动修复。
+- 高密度页面可能需要较小字号。
+- 可编辑重建不能保证像素级还原。
+- Word 中无法解析的嵌入文件会产生非阻塞提示。
+- Microsoft Word/PowerPoint 能提高物理分页和回渲染可靠性；LibreOffice 只是可选后备。
+
+所有页面图片写入 `06_images/generated/`，最终 PPT 和机械校验结果写入 `08_final/`。

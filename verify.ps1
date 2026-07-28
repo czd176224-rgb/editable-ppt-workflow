@@ -49,8 +49,14 @@ if ($PackageInfo.requiredUserFiles -ne 1) {
 if ($PackageInfo.requiredHumanConfirmationPhaseCount -ne 1) {
     throw "package-info must declare exactly one human confirmation phase"
 }
-if ($PackageInfo.confirmationInteraction -ne "embedded-three-stage-browser") {
-    throw "package-info must declare the embedded three-stage browser interaction"
+if ($PackageInfo.confirmationInteraction -ne "three-step-single-confirmation") {
+    throw "package-info must declare the three-step single-confirmation interaction"
+}
+if ($PackageInfo.uiPreviewImagePolicy -ne "project-audit-only-never-image-input") {
+    throw "UI preview audit image must be excluded from image generation"
+}
+if ($PackageInfo.strictPageCacheInputCount -ne 6) {
+    throw "package-info must declare the six-input strict page cache"
 }
 if ($PackageInfo.initialImageEndpoint -ne "images/generations") {
     throw "Initial page generation must use images/generations"
@@ -107,4 +113,4 @@ if ($PortableSmokeTest) {
     }
 }
 
-Write-Output "Verified $($Manifest.name) $($Manifest.version): one Word input, one embedded three-stage confirmation phase, current-only runtime."
+Write-Output "Verified $($Manifest.name) $($Manifest.version): one Word input, three-step single confirmation, audit-only UI record, current-only runtime."

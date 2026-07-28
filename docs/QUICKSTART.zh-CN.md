@@ -6,7 +6,7 @@
 
 - 已安装并登录 Codex Desktop；
 - 已安装 Python 3.10 或更高版本，并能在 PowerShell 中运行 `python --version`；
-- 已安装 Microsoft PowerPoint，或者免费的 LibreOffice；
+- 推荐安装 Microsoft PowerPoint；LibreOffice 只作为可选后备；
 - 首次安装和生成页面时网络可用。
 
 ## 安装
@@ -28,8 +28,9 @@
 请把我上传的分页 Word 转换为可编辑 PPT。
 ```
 
-4. 浏览器会打开一次连续三阶段风格选择。完成并确认后，页面会独立生成、检查和重建。
-5. 等待 Codex 返回最终 `.pptx` 文件。
+4. 浏览器会打开一屏实时风格选择。切换方向、颜色、字体和密度时可立即看到真实 Word 页的近似效果；只需确认一次。
+5. UI 预览不调用 Image2，确认截图只用于项目审计，不参与页面生图。
+6. 等待页面独立生成、检查、重建并返回最终 `.pptx`。
 
 Word 中如果有连续的“第1页、第2页……”标记，插件优先按标记分页；完全没有标记时，才按 Word 或 LibreOffice 的实际物理分页处理。
 

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from jsonschema import Draft202012Validator
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import prepare_run  # noqa: E402
 from extract_docx_pages import extract_auto  # noqa: E402
+from page_assets import classify_page_asset  # noqa: E402
 
 
 def make_marked_word(path: Path) -> Path:
@@ -154,3 +157,54 @@ def test_prepared_state_has_the_word_only_shape(tmp_path: Path):
     assert not (template / "06_images" / "approved").exists()
     assert not (template / "06_images" / "draft").exists()
     assert not (template / "09_deliverables").exists()
+
+
+def test_inline_word_image_is_extracted_and_bound_only_to_its_locked_page(tmp_path: Path):
+    """A Word image must never leak into another independently generated slide."""
+    image_path = tmp_path / "chart.png"
+    Image.new("RGB", (80, 40), "#22577A").save(image_path)
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("根据下图说明第一阶段进展。")
+    document.add_picture(str(image_path))
+    document.add_paragraph("第2页")
+    document.add_paragraph("第二页不应收到第一页图片。")
+    word = tmp_path / "with-image.docx"
+    document.save(word)
+
+    project = tmp_path / "project"
+    prepare_run.prepare(word, project)
+    first = json.loads((project / "01_page_contracts/page_001.json").read_text(encoding="utf-8"))
+    second = json.loads((project / "01_page_contracts/page_002.json").read_text(encoding="utf-8"))
+
+    assert len(first["asset_bindings"]) == 1
+    binding = first["asset_bindings"][0]
+    assert binding["asset_role"] == "visual_reference"
+    assert binding["processing"] == "direct_image"
+    assert binding["use_policy"] == "required"
+    assert binding["advisories"] == []
+    assert (project / binding["generation_input"]["relative_path"]).read_bytes() == image_path.read_bytes()
+    assert second["asset_bindings"] == []
+    manifest = json.loads((project / "00_source/source_asset_manifest.json").read_text(encoding="utf-8"))
+    schema = json.loads((ROOT / "schemas/source_asset_manifest.schema.json").read_text(encoding="utf-8"))
+    assert not list(Draft202012Validator(schema).iter_errors(manifest))
+
+
+@pytest.mark.parametrize(
+    ("media_type", "expected_role", "expected_processing"),
+    [
+        ("application/pdf", "document_source", "extract_content"),
+        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "data_source", "extract_content"),
+        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "document_source", "extract_content"),
+        ("application/octet-stream", "unsupported", "unavailable"),
+    ],
+)
+def test_page_attachment_classification_is_explicit_and_non_blocking(
+    media_type: str, expected_role: str, expected_processing: str
+):
+    """Unreadable attachments should be visible to QA without stopping other pages."""
+    result = classify_page_asset(media_type, binding_status="bound", has_generation_input=False)
+    assert result["asset_role"] == expected_role
+    assert result["processing"] == expected_processing
+    assert result["blocking"] is False
+    assert bool(result["advisories"]) is (expected_processing == "unavailable")

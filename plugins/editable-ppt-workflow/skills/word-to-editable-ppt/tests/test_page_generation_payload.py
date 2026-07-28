@@ -37,31 +37,41 @@ def frozen_style() -> dict:
     return {"execution": execution, "sha256": digest}
 
 
-def test_initial_request_is_limited_to_page_text_style_and_rendering_parameters(tmp_path: Path) -> None:
+def test_initial_request_is_minimal_and_excludes_the_ui_audit_snapshot(tmp_path: Path) -> None:
     """Adding any page-external planning input must not expand a new image request."""
     page_text = "一、推进数字化改革\n明确三个阶段目标。"
     style = frozen_style()
-    request = build_initial_request(page_text, style, tmp_path / "page-01.png")
+    page_image = tmp_path / "chart.png"
+    page_image.write_bytes(b"page-image")
+    style["execution"]["ui_preview_audit"] = {"relative_path": "02_style/ui_preview_audit.png"}
+    style["sha256"] = hashlib.sha256(
+        (json.dumps(style["execution"], ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    ).hexdigest()
+    request = build_initial_request(
+        page_text,
+        style,
+        tmp_path / "page-01.png",
+        reference_images=[{"path": page_image, "role": "page_asset_required"}],
+    )
 
     assert request.operation == "generate"
     assert request.endpoint == "images/generations"
-    assert request.payload == {
-        "operation": "generate",
-        "endpoint": "images/generations",
-        "page_text": page_text,
-        "style_execution": style["execution"],
-        "style_execution_sha256": style["sha256"],
-        "output": str((tmp_path / "page-01.png").resolve()),
-        "model": "gpt-image-2",
-        "size": "1792x1008",
-        "quality": "medium",
-        "fidelity_boundary": "Render only the supplied current-page text; do not invent facts or text.",
+    payload = request.payload
+    assert set(payload) == {
+        "operation", "endpoint", "prompt", "output", "trace_out", "model", "size", "quality",
+        "reference_images", "image_roles",
     }
+    assert page_text in payload["prompt"]
+    assert "preserve all information and logical relationships" in payload["prompt"].lower()
+    assert payload["reference_images"] == [str(page_image.resolve())]
+    assert payload["image_roles"] == ["page_asset_required"]
+    assert payload["trace_out"].endswith("page-01.trace.json")
+    assert "ui_preview_audit" not in json.dumps(payload, ensure_ascii=False)
     forbidden = {
         "master", "sample", "logo", "other_page", "semantic_units", "relations", "qa_rubric",
         "approved_content_master", "company_logo", "required_image_inputs", "explicit_relations",
     }
-    assert not forbidden & request.payload.keys()
+    assert not forbidden & payload.keys()
 
 
 @pytest.mark.parametrize(
@@ -92,8 +102,9 @@ def test_canvas_and_quality_drive_legal_no_crop_generation_contract(
 
     assert request.size == image_size
     assert request.quality == "medium"
-    assert request.payload["style_execution"]["canvas_profile"]["fit"] == "contain"
-    assert request.payload["style_execution"]["canvas_profile"]["allow_crop"] is False
+    assert request.payload["size"] == image_size
+    assert request.style_execution["canvas_profile"]["fit"] == "contain"
+    assert request.style_execution["canvas_profile"]["allow_crop"] is False
 
 
 def test_initial_request_rejects_a_style_execution_that_no_longer_matches_its_digest(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["asset_id", "relationship_id", "source_part", "original_filename", "media_type", "sha256", "byte_size", "page_numbers", "source_block_indexes", "binding_status", "relative_path"],
+        "required": ["asset_id", "relationship_id", "source_part", "original_filename", "media_type", "sha256", "byte_size", "page_numbers", "source_block_indexes", "binding_status", "relative_path", "asset_role", "processing", "blocking", "advisories"],
         "properties": {
           "asset_id": {"type": "string", "pattern": "^word_asset_[0-9]{3,}$"},
           "relationship_id": {"type": "string", "minLength": 1},
@@ -24,6 +24,10 @@
           "page_numbers": {"type": "array", "items": {"type": "integer", "minimum": 1}, "uniqueItems": true},
           "source_block_indexes": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": true},
           "binding_status": {"enum": ["bound", "unresolved"]},
+          "asset_role": {"enum": ["visual_reference", "data_source", "document_source", "unsupported"]},
+          "processing": {"enum": ["direct_image", "extract_content", "unavailable"]},
+          "blocking": {"const": false},
+          "advisories": {"type": "array", "items": {"type": "string", "minLength": 1}},
           "relative_path": {"type": "string", "pattern": "^00_source/word_assets/original/"},
           "generation_input": {
             "type": "object",

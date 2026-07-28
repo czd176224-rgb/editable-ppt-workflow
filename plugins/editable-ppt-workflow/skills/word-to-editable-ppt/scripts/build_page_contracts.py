@@ -8,6 +8,8 @@ import json
 import re
 from pathlib import Path
 
+from page_assets import binding_metadata
+
 
 DATE_RE = re.compile(r"(?:19|20)\d{2}年\d{1,2}月\d{1,2}日|(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}")
 AMOUNT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:万|亿|元|万元|亿元|%|％)")
@@ -400,7 +402,7 @@ def explicit_relations(units: list[dict], page_number: int) -> list[dict]:
     return relations
 
 
-def _asset_bindings(page: dict, manifest: dict | None) -> list[dict]:
+def _asset_bindings(page: dict, manifest: dict | None, page_text: str) -> list[dict]:
     """Return only the original Word assets explicitly bound to this page."""
     if manifest is None:
         return []
@@ -426,10 +428,12 @@ def _asset_bindings(page: dict, manifest: dict | None) -> list[dict]:
             "sha256": asset["sha256"],
             "media_type": asset["media_type"],
             "relative_path": asset["relative_path"],
+            "original_filename": asset["original_filename"],
             "source_block_indexes": source_block_indexes,
         }
         if isinstance(asset.get("generation_input"), dict):
             binding["generation_input"] = asset["generation_input"]
+        binding.update(binding_metadata(page_text, asset))
         bindings.append(binding)
     return bindings
 
@@ -460,7 +464,7 @@ def build(source: Path, output: Path, source_asset_manifest: dict | None = None)
             "source_text": text,
             "source_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "source_blocks": blocks,
-            "asset_bindings": _asset_bindings(page, source_asset_manifest),
+            "asset_bindings": _asset_bindings(page, source_asset_manifest, text),
             "source_tables": tables,
             "semantic_units": units,
             "explicit_relations": explicit_relations(units, number),

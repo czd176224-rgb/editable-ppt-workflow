@@ -5,6 +5,7 @@
 *.log
 .venv/
 .worktrees/
+tmp/
 dist/
 runtime_report.json
 00_source/

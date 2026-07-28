@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'czd176224-rgb/editable-ppt-workflow'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate snapshot
+        shell: pwsh
+        run: python scripts/check_public_release.py . --write-report public-release-audit.json
+      - name: Package Windows release
+        shell: pwsh
+        run: .\scripts\package_release.ps1
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME dist/* --generate-notes --title "Editable PPT Workflow $env:GITHUB_REF_NAME"

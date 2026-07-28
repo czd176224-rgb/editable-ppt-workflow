@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/word-to-editable-ppt/page_qa.schema.json",
+  "title": "Relaxed, page-local QA result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "repair_scope", "issues"],
+  "properties": {
+    "status": {
+      "enum": ["pass", "pass_with_advisory", "repair"]
+    },
+    "repair_scope": {
+      "enum": ["none", "local", "structural"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 280}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "repair"}}},
+      "then": {
+        "properties": {
+          "repair_scope": {"enum": ["local", "structural"]},
+          "issues": {"minItems": 1}
+        }
+      },
+      "else": {
+        "properties": {"repair_scope": {"const": "none"}}
+      }
+    }
+  ]
+}

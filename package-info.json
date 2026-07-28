@@ -1,0 +1,21 @@
+{
+  "marketplace": "editable-ppt-public",
+  "repository": "czd176224-rgb/editable-ppt-workflow",
+  "plugin": "editable-ppt-workflow",
+  "pluginVersion": "1.0.0+codex.20260728024418",
+  "workflowContractVersion": "word-only-v1",
+  "requiredUserFiles": 1,
+  "requiredHumanConfirmationPhaseCount": 1,
+  "confirmationInteraction": "embedded-three-stage-browser",
+  "initialImageEndpoint": "images/generations",
+  "localRepairEndpoint": "images/edits",
+  "imageCanvasProfiles": {
+    "ppt169": "1792x1008",
+    "ppt43": "1536x1152"
+  },
+  "generatedImagesDirectory": "06_images/generated",
+  "finalOutputDirectory": "08_final",
+  "releaseStatus": "published-public-marketplace",
+  "repositoryVisibility": "public",
+  "supportedPlatform": "Windows 10/11 x64"
+}

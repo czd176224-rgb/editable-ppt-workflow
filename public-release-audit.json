@@ -1,0 +1,748 @@
+{
+  "schemaVersion": 1,
+  "root": ".",
+  "passed": true,
+  "errors": [],
+  "files": [
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "bytes": 432,
+      "sha256": "58d41342f3783ddbb3014d291aefdb98ac0a1df54b3b4c0aae523e7bbf9da647"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 2519,
+      "sha256": "654f73bd57ab726b93d88424d68c927b98a47ca96399927c05f4395a551eabf7"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "bytes": 806,
+      "sha256": "09d56b59dc305f269224610b3a7fbe9657d5219b8f85ed8cd96b24e73026a208"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 250,
+      "sha256": "a83c7fde876da8a11efa8e784f67bcd0aa0afd1b87511092445ef9425b074b9e"
+    },
+    {
+      "path": "dist/editable-ppt-workflow-1.0.0+codex.20260728024418-windows.zip",
+      "bytes": 348316,
+      "sha256": "e1649f550afa0a385456d926305193561a00c4ea915c0514c13532c79dd32215"
+    },
+    {
+      "path": "dist/SHA256SUMS.txt",
+      "bytes": 128,
+      "sha256": "408b401b46fdfb04b75307d7fdcb300139c322445726af2b0d4595f96221c619"
+    },
+    {
+      "path": "docs/QUICKSTART.zh-CN.md",
+      "bytes": 1353,
+      "sha256": "b6c143f70173143af8c44adca594710ab23095dd1c42eae77f3167266a482fb3"
+    },
+    {
+      "path": "docs/TROUBLESHOOTING.zh-CN.md",
+      "bytes": 1789,
+      "sha256": "85d4a15f57a5d9f84909d0245433b46ec9702587a9a0c2a0188aa773bf903535"
+    },
+    {
+      "path": "docs/USER_GUIDE.zh-CN.md",
+      "bytes": 1708,
+      "sha256": "b600b8747c1c5deae81e840b4472cc31e828df831bed26112d57b34f55767f5d"
+    },
+    {
+      "path": "install.ps1",
+      "bytes": 3538,
+      "sha256": "e3614cea979d909125954345949b59a162017656148ea2a0fcd86c359da1b904"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1070,
+      "sha256": "3218a95fcd1e01d19bbda65090943fedf79d4d3f802c3a6e23580e3aceb51759"
+    },
+    {
+      "path": "package-info.json",
+      "bytes": 776,
+      "sha256": "1075300508abf877d1036be540045665e14419d22326949d24f6ded89d7df676"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/.codex-plugin/plugin.json",
+      "bytes": 2817,
+      "sha256": "e85518b5c5290f728b0b76be84e3ec0e3ed50bd5ce0d50fb8bcba51870d42ed4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/README.md",
+      "bytes": 2860,
+      "sha256": "484747d3a83fde74ba65faff07f3474cfe79a41a380c0913efd16ab7b6d24698"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/scripts/check_current_runtime.py",
+      "bytes": 10920,
+      "sha256": "a1246d8103656a1db70912f44ac1f0ff8648a200d012ee96095f3cdc7e7205e3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/scripts/install_runtime.ps1",
+      "bytes": 11552,
+      "sha256": "a0bf7cb1361b338917ee5042e42c47b53d31e0415a72d3378bf9f0ed516c69db"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/scripts/portable_e2e_smoke.py",
+      "bytes": 7307,
+      "sha256": "82f6496f170e7c6514ab86af0aad1fbf4f2c76cc248e53f794be411558736800"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/scripts/runtime_root_safety.ps1",
+      "bytes": 5876,
+      "sha256": "a9624c1a02f5f85c933833b83cdd122d40312addca9a07adc72ce08a0ea9ceaf"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/scripts/test_install_runtime_safety.ps1",
+      "bytes": 5634,
+      "sha256": "e1bdb69ed67dd068cc3fc1e137afbfe8b61a8bd795e10da964c0fa622973f45b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/codex-gpt-image/references/openai-images-api-parameters.md",
+      "bytes": 5336,
+      "sha256": "b8c09aa6f2177315717d9661f2b81b7ad79ec03da234ad16b6ab6111aa9774b2"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/codex-gpt-image/scripts/codex_gpt_image.py",
+      "bytes": 32763,
+      "sha256": "48fe61b72c845a42cdc6409070561c599bb15283ddc2e53d5445cf1d0bbeea96"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/codex-gpt-image/SKILL.md",
+      "bytes": 4762,
+      "sha256": "9a920b65dd571320380d5aac73646cabed675b62237c700b6eac04396d5e5ef9"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/codex-gpt-image/tests/test_generation_trace.py",
+      "bytes": 3037,
+      "sha256": "4701467fd0483d256e499c430f7eb497c4c6547cd684b8ad5cdc4d8372224b60"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/agents/openai.yaml",
+      "bytes": 265,
+      "sha256": "a971fe9fdce0d9350b11a04532054dd2c150994256f288d9ae7330b0ac7f1d9b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/__init__.py",
+      "bytes": 25,
+      "sha256": "b6f403f4aa16c546d8031f24ada5f9994c5002bb17e835eb1e0789bd0cc85d52"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/cli.py",
+      "bytes": 731,
+      "sha256": "fd49ed1fcf3abfd2bcb0929df1665e68d1bb68e7b4583ea79d3633088c8c81f3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/__init__.py",
+      "bytes": 68,
+      "sha256": "9bbccf398638395c225941aae78726da1b1ff0786b359d7854abb5dacad7475d"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/_input_normalization.py",
+      "bytes": 15229,
+      "sha256": "a6a94b66b45003cc514157e392a5151c483bab7e547321013f61ff1a6d165fec"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/_page_artifacts.py",
+      "bytes": 3751,
+      "sha256": "b8e233ba08af8660cb2d518a04bcecd9f4f656e22f5cef982ca4e4d8782c133c"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/build_pptx_from_manifest.py",
+      "bytes": 48846,
+      "sha256": "f335896d30a7aa152db88d781b9e8eab742cc72a20348b4a07b852b3a0e2f9af"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/configure_image_backend.py",
+      "bytes": 2541,
+      "sha256": "b64bf0e0857fecd2885c7b1d54accbefbd1a5d92af096e4ab26d34cb939dc21d"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/deck_run_state.py",
+      "bytes": 7656,
+      "sha256": "0b6ec3a98842868c8e99df877b24eb2fa67f2bdd208c1c6e1f1572313d4226b3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/deck_text_hints.py",
+      "bytes": 7903,
+      "sha256": "d85aad0a1790688316d9ddc38d30d2d63247dd56a75424c076b5b26bfa1e4ca1"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/editable_page_cache.py",
+      "bytes": 26724,
+      "sha256": "c30134a0956f928eeb108ba1b986db67eec66d8a7cd363ec75a8ac6b3112e9bb"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/final_assembler.py",
+      "bytes": 11741,
+      "sha256": "d12500dfd8037118c1ccf4a9108a1a7e8fd77e1684520976f120a17b94011da5"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/finalize_deck_run.py",
+      "bytes": 13555,
+      "sha256": "5681f89b12487805f159c46cb6b9567cff98e28740406f852435afe0d7e50f4b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/formula_renderer.py",
+      "bytes": 8945,
+      "sha256": "32d939bfa2e82ed87b891c914f67b54c2103f07a5f0f8e6da7ce9a96c9c1bcc4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/image_gen.py",
+      "bytes": 30414,
+      "sha256": "dafe6a3504386e96b6ea5518a6003303ac2bee54dbd3c7dbc4cbfcbb57550167"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/main.py",
+      "bytes": 38432,
+      "sha256": "10e4e0243cdd58a847c4a6771ea12c552b115eceac44cc1975731b0d4233062f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/make_page_contact_sheet.py",
+      "bytes": 909,
+      "sha256": "3bbbc5db4e7be8ee6166da8ea35c81d04e28be8d0fd9f5f1ab318280f113f348"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/paddle_text_hints.py",
+      "bytes": 9944,
+      "sha256": "d55f68fff77b481a065b07020dee7637767bfffe90b356e20498918950f2fa60"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/page_job_status.py",
+      "bytes": 2201,
+      "sha256": "7958849668d31dd222629a3059c9b00e36894b18155d99348ec33584801c1d6b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/page_text_metrics.py",
+      "bytes": 12199,
+      "sha256": "5ff9f78e3e18d52443284ead5c8871143b1383ef7677aa699d68f5ceeeadb955"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/prepare_deck_run.py",
+      "bytes": 7419,
+      "sha256": "02d949fc1b2d29be2631f35efcf57efd39c3f491533bdb9c3fb6b73dc320b8a0"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/process_asset_sheet.py",
+      "bytes": 4636,
+      "sha256": "7ec803f6268d541438d37e87f972a1a773f71278c26b970d0f2f0f42045bae72"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/record_imagegen_result.py",
+      "bytes": 3091,
+      "sha256": "5b7a056eeabc32eb0a2c391e766f5db2bc930ba66c141fe2b8f9c32e798a651f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/record_page_dispatch.py",
+      "bytes": 2941,
+      "sha256": "5e64bb0c4522f3b2bb6c5209949f4fbbd014fccbf426e373313d25d378c2c9d6"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/record_page_result.py",
+      "bytes": 3840,
+      "sha256": "b8aa6a504bb85e5293baaece922a68dc73422b8824b564c55a7f684c81c28cab"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/remove_chroma_key.py",
+      "bytes": 14335,
+      "sha256": "a81844c908c32ae579f9885abf98112d801aef0882a94026db7b077a607965b2"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/reset_page_job.py",
+      "bytes": 2700,
+      "sha256": "c008694260523b07eaaea17da06150d46df4a2fef6ab1d9927db6a04b220c64b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/runtime_env.py",
+      "bytes": 13221,
+      "sha256": "c4fa38c2018577c0e4689f77d8370d0856e621c5d98cfbbc10c39b8a4fafd704"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/split_alpha_components.py",
+      "bytes": 9279,
+      "sha256": "cd57ea2130c09ff518123c36e7fd9bb8d345ea04ab2822f19f5662181eba73e5"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/text_hints.py",
+      "bytes": 14272,
+      "sha256": "a973e2b033ec188093abb9834d61c3aa60ce51142d339bd23c7c55e9676b6712"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/editppt/runtime/validate_pptx.py",
+      "bytes": 29717,
+      "sha256": "aadbab52a8c2bca758df797751f17a25fed032bf5e0acd60877639856236ab86"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/pyproject.toml",
+      "bytes": 704,
+      "sha256": "54fa09b8e2843b06c7ac9cf7ca142b47d580ba84d01f97c68d5efa04dfc0eabe"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/tests/conftest.py",
+      "bytes": 471,
+      "sha256": "12612a85a32503659a04a4932a070d1404f98dc8f38c1abd611562ea58985af0"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/tests/test_current_editable_page_package.py",
+      "bytes": 2603,
+      "sha256": "7d19c99227017338fd07a863c3242c4dd349745845594f734fd15ccb469b64db"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/prompts/page-worker.md",
+      "bytes": 7181,
+      "sha256": "577866a7233e5449dfadf7bee9c225e90d683dc1958e2d1af394552bcb008179"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/references/cli-helper.md",
+      "bytes": 15098,
+      "sha256": "a43707171ae0f49ba0132c0e1eb0d914448a9f20f919fbbe6b69d344a0ffae48"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/references/manifest-schema.md",
+      "bytes": 12086,
+      "sha256": "13a131e554d394ac1ab0e1780fb3f18d77cda0694eb5ac4a4dfb056b569d2a3b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/references/page-decision-tree.md",
+      "bytes": 21578,
+      "sha256": "27b8ebd60f9c93e504dbe0deec598c223ad1c0a41103fe51bcb6a0fb5a689f11"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/scripts/build-page-worker-prompt.py",
+      "bytes": 4728,
+      "sha256": "9c2b6b0b2cc257386eeac6e3705f465089f52cb067090ce3d40f8fdd6605c1fd"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/SKILL.md",
+      "bytes": 16415,
+      "sha256": "34a13fb851a68d63d1eea7d16816a22012a6fa56346f8dba98b9099315740092"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/officecli/SKILL.md",
+      "bytes": 25536,
+      "sha256": "93f1672ef91aa6d1d6808377faa4ecf9cc5ae81e01494a86ab5632ae9c6c31af"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/.gitignore",
+      "bytes": 67,
+      "sha256": "6cd216e132650c20feb16ba352abb6e420c1768334a41c22b54bfe90116bf991"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/README.md",
+      "bytes": 2822,
+      "sha256": "4a1d849e2e84257b5592ee2839485bfeaffae8f704f76a7a7b62c84d1dc19de7"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/requirements-dev.txt",
+      "bytes": 37,
+      "sha256": "ee72e5b223afa137c1c7331e3b68cbd8539b58701342031746e235a91390740e"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/requirements.txt",
+      "bytes": 153,
+      "sha256": "98afd96a3e7fae5ed78d0b5927a5812a65e82c498277448e6eda2a972c528e69"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/page_contract.schema.json",
+      "bytes": 7029,
+      "sha256": "05de971f0badab6bf3656e87466c24aaf480620afe608e28d41b96f14b43df8b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/page_qa.schema.json",
+      "bytes": 906,
+      "sha256": "c0d099c514c6d8ff88d5968f65df293137df29f6e0d8fdf9f3c50c58ea2ed691"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/project_config.schema.json",
+      "bytes": 875,
+      "sha256": "75be1bf2a707c83a611f2377928fc259185b6332d2ef437cb3f3d2b8431b6fbf"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/source_asset_manifest.schema.json",
+      "bytes": 2630,
+      "sha256": "58b58231143f3110dc38dd94e20132464eca07719affc5fcd6aca1383e508dd3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/source_lock.schema.json",
+      "bytes": 1181,
+      "sha256": "85de9d21cde3b4ceed38aaa358c90a99c2344eb885374f779c4a72ae3959eec3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/style_confirmation.schema.json",
+      "bytes": 3617,
+      "sha256": "b2deabfa06c3eb50806c72c93ede042306dbc33799399d50476a4b53a1ee31f9"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/schemas/style_execution.schema.json",
+      "bytes": 3697,
+      "sha256": "e1211e56dfa6b8bb3bcc20e3cae39bba4023f9911905b0abc5bdbd97ddd5e8aa"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/adaptive_scheduler.py",
+      "bytes": 6905,
+      "sha256": "5000dcc9351920fdf13e30c03f0021ca1ceefcec9a4a017efdedb213e3e96b0c"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/build_page_contracts.py",
+      "bytes": 27479,
+      "sha256": "129725402eeeb0ea8efba7b80c705bb97e966fbb4558dbf9b889080fb543bd49"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/cache_key.py",
+      "bytes": 3419,
+      "sha256": "129191b88592218e9a8420d041120ddab1985a960d7e3b3962db4ece17b16355"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/cache_store.py",
+      "bytes": 17523,
+      "sha256": "1cbdcc681fdda1e2128d313138d37b3c8d73f96841728d8caede704672893ed8"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/__init__.py",
+      "bytes": 142,
+      "sha256": "cf2c7df6fb4f04a5ae97a2552fb6d995370af6578a50095daa240678d9d6630a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/server.py",
+      "bytes": 31553,
+      "sha256": "0a164f92ff24faaca13c81df64f52b45a253eec90574b91ee88cdc6504c5d6a3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/app.js",
+      "bytes": 21383,
+      "sha256": "40cb885daa2608c2e58cdbaa54c1c4c5d9c8ea75f998de11e53e2b9f8629503f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/catalogs.json",
+      "bytes": 2030,
+      "sha256": "020e9b9d463d9f32ab1360e56f3f2c77cd8f8cdc6f501c4240274364ca52643e"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/index.html",
+      "bytes": 741,
+      "sha256": "0ce7df98a57d7e117c5a4d21028a6874c2d61e75eb08eed7f0d2cc766394132a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style.css",
+      "bytes": 6791,
+      "sha256": "6ef3b8b9e60c1ee7597d927def370b60a8b2337732eb0a7929e6a6c7db2c6ee5"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/blueprint.svg",
+      "bytes": 2569,
+      "sha256": "2d218f26576f67967fe842b55be0658b9a5b614353f2476b441cb63cce74919b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/brutalist.svg",
+      "bytes": 2971,
+      "sha256": "4499aabb1469737c948ed958ee1074af8d3473595925afba0067ea58e11697a8"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/chalkboard.svg",
+      "bytes": 1942,
+      "sha256": "e383aa738b0708c5feb9ae3250dc4f1b10debb0aaea7726971f2197b924d868e"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/dark-tech.svg",
+      "bytes": 2288,
+      "sha256": "2fd79e9d732a7456eae79f8add54b4b7f5d8a141d6bd1dfb53485a518e425d8f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/data-journalism.svg",
+      "bytes": 3516,
+      "sha256": "cc366aace65008d04ba1cb51aaf1c4382e767cd0e68e4a201ad881315090c8dc"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/editorial.svg",
+      "bytes": 2789,
+      "sha256": "1df926e4aa8c8f98fbba7b8d2cab86427d187dcfa55dcbf5ed729037782e1710"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/glassmorphism.svg",
+      "bytes": 2813,
+      "sha256": "6626f30988f05c4ef295c97ee4c419ca37af24d6b77546bcefed4ca221f1d6fd"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/ink-notes.svg",
+      "bytes": 1639,
+      "sha256": "e542f44ce13ebf97b362849b3b76e5db60578d865bcaf13d14e3805dd004d870"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/ink-wash.svg",
+      "bytes": 1866,
+      "sha256": "70d5b849b06be3c3945d578031c67744c910ff1fd9d3daf918bd92b35f7efb4e"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/memphis.svg",
+      "bytes": 1924,
+      "sha256": "330e586812ba2f05af4e5cc90da8dfc49512d4ab055428f1dc7aa978b867e5d0"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/paper-cut.svg",
+      "bytes": 1416,
+      "sha256": "3927a066b35c52c7c8f2b486171b3454aab8000ca19f033e488ac674aee64f79"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/photo-editorial.svg",
+      "bytes": 2142,
+      "sha256": "400f990df9e6fde425f5feb2930bb302539eec7b8aa9eb91e3df6dbaca27d956"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/pixel-art.svg",
+      "bytes": 1915,
+      "sha256": "25cbcbd7c576073cafaef1fe1b3d926f36dcb7bd64f216cd6739cf2c77d2f3f4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/sketch-notes.svg",
+      "bytes": 2067,
+      "sha256": "969e6d3c350cd44671d505014024aa5c6b782383f8576332418174f098a909ae"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/soft-rounded.svg",
+      "bytes": 2539,
+      "sha256": "1f8d3b4782cc4d4d81d18d69478330fc53ac2749de59908e445768ba9789302d"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/swiss-minimal.svg",
+      "bytes": 1345,
+      "sha256": "740ef20f8c7c757a5a9b1812410f43d41405e0bf1194ed610f96d0b2362cd3ce"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/vintage-poster.svg",
+      "bytes": 1370,
+      "sha256": "ce21a7e2af29cfa61d870a38b1d3e935fffe03075060f5381ed0e678c4360d01"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/confirm_ui/static/style_previews/zine.svg",
+      "bytes": 2151,
+      "sha256": "423a4da47d4c885a5741a5b5ed9ef57046d52e1b359ced6badd23c7f3900af9a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/contract_version.py",
+      "bytes": 817,
+      "sha256": "ebcc1e1c89637c84ce60958f2692cb6ba084932e00e6346aa59bb590b2f35b1a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/doctor.py",
+      "bytes": 17538,
+      "sha256": "4e8c184b73ae56f3e6e16ba8a85b1eefa3c566ddc201f922a4b73ec894a2b4fa"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/extract_docx_pages.py",
+      "bytes": 13163,
+      "sha256": "4dd17d11a65968326e7b51b795ac353b666aaef41be47c02a35b24316c36f55f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/final_mechanical_qa.py",
+      "bytes": 9695,
+      "sha256": "1b2b6c65d038c789878866a6ac18440fb1b9af778109a995f219c3e4346fb3f4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/init_project.py",
+      "bytes": 1780,
+      "sha256": "9d407134c05f56d6203daa64dc7f4f8be8f437a94ddfd7785e282a94f85f0829"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/page_complexity.py",
+      "bytes": 2539,
+      "sha256": "3f74837dc0bae4088deb7e7528b5eed4c41d611e314921583e96c8d0d6cd9522"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/page_generation.py",
+      "bytes": 7338,
+      "sha256": "c7a38f3d55260c48981b1d1f2cd4626b15815e51fcb5b1d415ddd70ed852c032"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/page_pipeline.py",
+      "bytes": 11594,
+      "sha256": "fcf1b142fff13c0b36d2903a71fff15f35dd5f0461905880af88f0f5d6610cd4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/page_qa.py",
+      "bytes": 6115,
+      "sha256": "a833ef4bb94c32ce86c40d6dae34f74f9c166c021094ea1e7fd0e62ed83004b8"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/prepare_run.py",
+      "bytes": 4918,
+      "sha256": "d366273385ebacfe1a2df94dbe8904d62f303baedefbd05ee4bbdcaf0dcf2d83"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/render_pptx.py",
+      "bytes": 3219,
+      "sha256": "6a5d7dbb18286191ab81125297efa048d474b3892519db4d6edff002b405024a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/source_assets.py",
+      "bytes": 15064,
+      "sha256": "ae2a21d89b6c3e0a4b68e323fa06c5b6d5e05038032a61a2e9ee36974793c0a4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/style_contract.py",
+      "bytes": 7360,
+      "sha256": "afa0350fdcb79146845f90ec024c2ce9f5e522b6812b1dbee3b800290e41731c"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/word_to_editable_ppt.py",
+      "bytes": 1134,
+      "sha256": "75ba6a735e9adf9f57e3fbf6eef8336ca04eb1caae47cf638209e2a325e061af"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/scripts/workflow_state.py",
+      "bytes": 26469,
+      "sha256": "f3fb0afc509314458f59008ee8d4f2571f0f0077e3d6466bb4b60fff29fc9052"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/SKILL.md",
+      "bytes": 8880,
+      "sha256": "79021c0f57fcc3dc8ca43d49080242bc24b40925fd19837918f37392cf9866c6"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/.gitignore",
+      "bytes": 183,
+      "sha256": "7ba68e3ff7dc4eec44ecc7959822ebea36dbf709b00a8e81f38b120f83e52409"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/01_page_contracts/.gitkeep",
+      "bytes": 2,
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/06_images/generated/.gitkeep",
+      "bytes": 1,
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/07_editable/.gitkeep",
+      "bytes": 2,
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/08_final/.gitkeep",
+      "bytes": 1,
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/project.json",
+      "bytes": 342,
+      "sha256": "ae4579dfeb625feb4c0fd632be15741b6503938d5b6eba2c7cd80581c62ee918"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/template/README.md",
+      "bytes": 1462,
+      "sha256": "16d5de55ea82b8f94ca4e2c4c0742f9bb743907fb0b45b5804d526ee1b05f423"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_confirm_ui_contract.py",
+      "bytes": 21363,
+      "sha256": "b7b09f256d7f4b93540a0ec943b879da4033a9b6d3c3a5caa106537f067fa609"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_current_runtime_scanner.py",
+      "bytes": 2990,
+      "sha256": "0727fd0d1bda9705968e633bd39a6312049139ec784e0b8276f54af687d16a3f"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_doctor_office_smoke.py",
+      "bytes": 11255,
+      "sha256": "28c8d0bb3691c880155877cd7181ee56bc7ab224cda50b9dfa48338355cafc42"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_final_mechanical_assembly.py",
+      "bytes": 34373,
+      "sha256": "8179b34af18b731455258140e5033e8e6bcaf1c023b35801821bde985913d25c"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_independent_page_workflow.py",
+      "bytes": 21110,
+      "sha256": "3aba1899295e7829483e8ae129469722001ce05a5ba8aabe2dec19dc15a4e26d"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_page_generation_payload.py",
+      "bytes": 5421,
+      "sha256": "dbd2dda984027f90ff6aa64dbc565619f9a7ed00d0bb5a80577f1f8e99e62a6a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_relaxed_page_qa.py",
+      "bytes": 4658,
+      "sha256": "bd9f7e98127eb50bc6abf7b4cdd9d1ce403f4658719a548bf6ee50689319fa75"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_runtime_install_safety.py",
+      "bytes": 3356,
+      "sha256": "59fb86a806aa70e683bf2016984c05454ec7a7796bdc90ba1eada5343a714b8a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_style_contract.py",
+      "bytes": 8933,
+      "sha256": "df9d8f60fcc6476ede44d869d1d35f48553a9d8a0d51b246f82f760de605b782"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/word-to-editable-ppt/tests/test_word_only_contract.py",
+      "bytes": 6322,
+      "sha256": "79e32c697561b939cc53e945a8323cbd4c122c5de565a678a1b46f24cb0edabe"
+    },
+    {
+      "path": "public-release-audit.json",
+      "bytes": 31965,
+      "sha256": "62a534493b25f68c78be42a08a09c1d34b2192d6633f4d951b23ce2bba17768c"
+    },
+    {
+      "path": "public-release-files.json",
+      "bytes": 600,
+      "sha256": "43c542c9ed253b359d926b169d87635ea8be03e5938d61bbc3650652a9e5a8a7"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3406,
+      "sha256": "b335926a23d33e2e7c395c0049bbc96c7b42cb92c8de9e688071ced0a718e48b"
+    },
+    {
+      "path": "scripts/check_public_release.py",
+      "bytes": 4711,
+      "sha256": "c1139787427d75849721cc331c5c18cc6d0a8d73f5e8eb77ed1fb1359db8800f"
+    },
+    {
+      "path": "scripts/package_release.ps1",
+      "bytes": 2680,
+      "sha256": "79dd50f3c1ecb7b27979a818f6025279f9c31c7d7e22f43d43da293b343d138a"
+    },
+    {
+      "path": "SECURITY.md",
+      "bytes": 1302,
+      "sha256": "33bea7f8ebce8057fbee04927119c2850330bef2c8789956582bee06bebe1641"
+    },
+    {
+      "path": "setup.cmd",
+      "bytes": 357,
+      "sha256": "c68237ab30e42c93e1858eede32c0cf4d2990cadd78f42586fef4eecefc302c1"
+    },
+    {
+      "path": "uninstall.cmd",
+      "bytes": 444,
+      "sha256": "ce5f6da136c625e37e3446ea774af1b0c795263f19b7f9e7a37b93003290606a"
+    },
+    {
+      "path": "uninstall.ps1",
+      "bytes": 2549,
+      "sha256": "996a5b4692c5691ea0ff566e6e58e6d995fa1881888dcaddc84a6bb2616a2ddc"
+    },
+    {
+      "path": "update.cmd",
+      "bytes": 168,
+      "sha256": "cb026bf23ed4e81bc69b28de2bea348849dcd7bd8428f1be0c2eb21334078465"
+    },
+    {
+      "path": "update.ps1",
+      "bytes": 311,
+      "sha256": "cf8d69cd4e19ce7cae8d1897e9af3665c59e10c4cf3aea91342bdb5f38c128db"
+    },
+    {
+      "path": "verify.ps1",
+      "bytes": 4922,
+      "sha256": "7170586d1330c5b07e54ba7e5d0cdef3405febc6f3a702a8a6725e7d98aeec34"
+    }
+  ]
+}

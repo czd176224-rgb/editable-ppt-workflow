@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "fontStack": {"type": "object", "additionalProperties": false, "required": ["cjk", "latin", "css"], "properties": {"cjk": {"type": "string", "minLength": 1}, "latin": {"type": "string", "minLength": 1}, "css": {"type": "string", "minLength": 1}}},
+    "typeScale": {"type": "object", "additionalProperties": false, "required": ["page_title", "section_title", "body", "caption"], "properties": {"page_title": {"type": "number", "minimum": 12, "maximum": 72}, "section_title": {"type": "number", "minimum": 10, "maximum": 48}, "body": {"type": "number", "minimum": 8, "maximum": 32}, "caption": {"type": "number", "minimum": 8, "maximum": 24}}},
+    "typography": {"type": "object", "additionalProperties": false, "required": ["name_zh", "heading", "body", "body_size", "type_scale_pt"], "properties": {"name_zh": {"type": "string"}, "heading": {"$ref": "#/$defs/fontStack"}, "body": {"$ref": "#/$defs/fontStack"}, "body_size": {"type": "number", "exclusiveMinimum": 0}, "type_scale_pt": {"$ref": "#/$defs/typeScale"}}},
+    "styleAxes": {"type": "object", "additionalProperties": false, "required": ["formal", "modern", "minimal"], "properties": {"formal": {"type": "integer", "minimum": 0, "maximum": 100}, "modern": {"type": "integer", "minimum": 0, "maximum": 100}, "minimal": {"type": "integer", "minimum": 0, "maximum": 100}}},
+    "canvasProfile": {"type": "object", "additionalProperties": false, "required": ["aspect_ratio", "image_size", "slide_width_inches", "slide_height_inches", "fit", "allow_crop"], "properties": {"aspect_ratio": {"enum": ["16:9", "4:3"]}, "image_size": {"enum": ["1792x1008", "1536x1152"]}, "slide_width_inches": {"type": "number", "exclusiveMinimum": 0}, "slide_height_inches": {"type": "number", "exclusiveMinimum": 0}, "fit": {"const": "contain"}, "allow_crop": {"const": false}}}
+  },
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "audience", "core_message", "delivery_context", "content_divergence", "canvas", "canvas_profile", "direction", "delivery_purpose", "mode", "visual_style", "color", "icons", "typography", "image_rendering", "style_axes", "information_density", "additional_requirements", "formula_policy", "generation_mode", "refine_spec", "image_quality", "max_concurrency", "automatic_repair_budget", "editable_output", "start_generation"],
+  "properties": {
+    "schema_version": {"const": "1.0"}, "audience": {"type": "string"}, "core_message": {"type": "string"}, "delivery_context": {"type": "string"}, "content_divergence": {"type": "string"},
+    "canvas": {"enum": ["ppt169", "ppt43"]}, "canvas_profile": {"$ref": "#/$defs/canvasProfile"}, "direction": {"type": "integer", "minimum": 0}, "delivery_purpose": {"type": "string", "minLength": 1}, "mode": {"type": "string", "minLength": 1}, "visual_style": {"type": "string", "minLength": 1},
+    "color": {"type": "object"}, "icons": {"type": "string", "minLength": 1}, "typography": {"$ref": "#/$defs/typography"}, "image_rendering": {"type": "object"}, "style_axes": {"$ref": "#/$defs/styleAxes"}, "information_density": {"enum": ["low", "balanced", "high"]}, "additional_requirements": {"type": "string", "maxLength": 2000},
+    "formula_policy": {"enum": ["mixed", "editable", "rendered"]}, "generation_mode": {"enum": ["continuous", "split"]}, "refine_spec": {"type": "boolean"}, "image_quality": {"enum": ["auto", "low", "medium", "high"]}, "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 6}, "automatic_repair_budget": {"type": "integer", "minimum": 0, "maximum": 3}, "editable_output": {"type": "boolean"}, "start_generation": {"const": true}
+  }
+}

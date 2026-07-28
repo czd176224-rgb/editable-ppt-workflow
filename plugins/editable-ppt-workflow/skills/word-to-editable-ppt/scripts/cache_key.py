@@ -1,0 +1,87 @@
+"""Strict page-local cache identity for the current Word-only workflow."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Mapping
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
+
+
+def canonical_sha256(payload: Mapping[str, Any]) -> str:
+    """Hash a JSON object using stable UTF-8 bytes."""
+    try:
+        encoded = json.dumps(
+            _thaw(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("cache identity inputs must be finite JSON values") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256(value: Any, field: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{field} must be a lowercase SHA-256 digest")
+    return value
+
+
+@dataclass(frozen=True)
+class CacheKeyInputs:
+    """The complete and exclusive identity of one reconstructed page."""
+
+    page_source_sha256: str
+    style_execution_sha256: str
+    generation_parameters: Mapping[str, Any]
+    repair_feedback: Mapping[str, Any]
+    reconstruction_version: str
+
+    def __post_init__(self) -> None:
+        _sha256(self.page_source_sha256, "page_source_sha256")
+        _sha256(self.style_execution_sha256, "style_execution_sha256")
+        if not isinstance(self.generation_parameters, Mapping) or not self.generation_parameters:
+            raise ValueError("generation_parameters must be a non-empty JSON object")
+        if not isinstance(self.repair_feedback, Mapping):
+            raise ValueError("repair_feedback must be a JSON object")
+        if not isinstance(self.reconstruction_version, str) or not self.reconstruction_version.strip():
+            raise ValueError("reconstruction_version must be non-empty")
+        object.__setattr__(self, "generation_parameters", _freeze(self.generation_parameters))
+        object.__setattr__(self, "repair_feedback", _freeze(self.repair_feedback))
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """Return a detached manifest-safe representation with exactly five inputs."""
+        return {
+            "page_source_sha256": self.page_source_sha256,
+            "style_execution_sha256": self.style_execution_sha256,
+            "generation_parameters": _thaw(self.generation_parameters),
+            "repair_feedback": _thaw(self.repair_feedback),
+            "reconstruction_version": self.reconstruction_version,
+        }
+
+
+def build_page_cache_key(inputs: CacheKeyInputs) -> str:
+    """Return the strict identity of a single page pipeline result."""
+    if not isinstance(inputs, CacheKeyInputs):
+        raise TypeError("inputs must be CacheKeyInputs")
+    return canonical_sha256(inputs.payload)

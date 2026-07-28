@@ -1,0 +1,26 @@
+{
+  "files": [
+    ".agents/plugins/marketplace.json",
+    ".gitignore",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "docs/QUICKSTART.zh-CN.md",
+    "docs/TROUBLESHOOTING.zh-CN.md",
+    "docs/USER_GUIDE.zh-CN.md",
+    "install.ps1",
+    "package-info.json",
+    "plugins/editable-ppt-workflow",
+    "public-release-files.json",
+    "scripts/check_public_release.py",
+    "scripts/package_release.ps1",
+    "setup.cmd",
+    "uninstall.cmd",
+    "uninstall.ps1",
+    "update.cmd",
+    "update.ps1",
+    "verify.ps1"
+  ]
+}

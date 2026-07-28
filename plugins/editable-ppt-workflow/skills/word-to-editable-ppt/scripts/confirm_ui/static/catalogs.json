@@ -1,0 +1,49 @@
+{
+  "canvas": [
+    {"id": "ppt169", "name": "16:9 宽屏", "note": "标准会议与屏幕展示"},
+    {"id": "ppt43", "name": "4:3 标准", "note": "传统会议室与存档场景"}
+  ],
+  "delivery_purpose": [
+    {"id": "text", "name": "自主阅读", "note": "页面承载完整信息"},
+    {"id": "balanced", "name": "平衡汇报", "note": "页面与讲解共同承载信息"},
+    {"id": "presentation", "name": "现场演讲", "note": "突出观点与视觉证据"}
+  ],
+  "mode": [
+    {"id": "pyramid", "name": "结论先行"},
+    {"id": "narrative", "name": "叙事推进"},
+    {"id": "modular", "name": "模块并列"}
+  ],
+  "information_density": [
+    {"id": "low", "name": "低密度"},
+    {"id": "balanced", "name": "平衡密度"},
+    {"id": "high", "name": "高密度"}
+  ],
+  "visual_style": [
+    {"id": "swiss-minimal", "name": "瑞士极简", "preview": "swiss-minimal.svg"},
+    {"id": "editorial", "name": "编辑出版", "preview": "editorial.svg"},
+    {"id": "data-journalism", "name": "数据新闻", "preview": "data-journalism.svg"},
+    {"id": "blueprint", "name": "蓝图结构", "preview": "blueprint.svg"},
+    {"id": "dark-tech", "name": "深色科技", "preview": "dark-tech.svg"},
+    {"id": "ink-wash", "name": "现代水墨", "preview": "ink-wash.svg"}
+  ],
+  "icons": [
+    {"id": "tabler-outline", "name": "Tabler 线性"},
+    {"id": "phosphor-duotone", "name": "Phosphor 双色"},
+    {"id": "chunk-filled", "name": "几何实心"}
+  ],
+  "formula_policy": [
+    {"id": "mixed", "name": "兼顾可编辑性与视觉一致"},
+    {"id": "editable", "name": "优先原生可编辑公式"},
+    {"id": "rendered", "name": "优先稳定渲染"}
+  ],
+  "generation_mode": [
+    {"id": "continuous", "name": "连续生成并统一校验"},
+    {"id": "split", "name": "分批生成并逐批校验"}
+  ],
+  "image_quality": [
+    {"id": "auto", "name": "自动"},
+    {"id": "low", "name": "快速"},
+    {"id": "medium", "name": "均衡"},
+    {"id": "high", "name": "高质量"}
+  ]
+}

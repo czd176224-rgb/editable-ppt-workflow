@@ -563,7 +563,7 @@ def test_final_assembly_waits_until_every_locked_page_is_complete(tmp_path: Path
         build_current_assembly_plan(project)
 
 
-def test_final_assembly_recomputes_the_current_five_input_cache_identity(tmp_path: Path) -> None:
+def test_final_assembly_recomputes_the_current_six_input_cache_identity(tmp_path: Path) -> None:
     project = _project(tmp_path, (1, 2))
     _complete_all(project)
     style_path = project / "02_style" / "style_execution.json"
@@ -599,7 +599,7 @@ def test_failed_post_publish_authority_replay_leaves_no_final_output(
     assert not output.exists()
 
 
-def test_identical_word_pages_reuse_one_exact_five_input_cache_package(tmp_path: Path) -> None:
+def test_identical_word_pages_reuse_one_exact_six_input_cache_package(tmp_path: Path) -> None:
     project = _project(tmp_path, (1, 2))
     first_contract = json.loads(
         (project / "01_page_contracts" / "page_001.json").read_text(encoding="utf-8")

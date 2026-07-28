@@ -23,7 +23,7 @@ python --version
 
 ## 找不到 PowerPoint 或 LibreOffice
 
-安装 Microsoft PowerPoint，或者从 LibreOffice 官方网站安装免费版本。安装完成后重新运行 `setup.cmd`。
+PowerPoint 和 LibreOffice 都不是基础结构校验的强制条件。若需要无标记 Word 的物理分页或最终回渲染证明，推荐安装 Microsoft Office，也可以安装 LibreOffice 作为后备；缺失时插件应给出非阻塞提示。
 
 ## Marketplace 下载失败
 
@@ -39,7 +39,7 @@ python --version
 
 ## 页面内容不理想
 
-先检查 Word 的分页标记和当前页原文是否正确。风格需要调整时，应重新开始任务并在三阶段网页确认中修改风格要求。插件不会把旧项目的风格或内容自动带入新项目。
+先检查 Word 的分页标记、当前页原文和页内附件是否正确。风格需要调整时，应重新开始任务并在一屏实时网页中修改风格要求。插件不会把旧项目的风格或内容自动带入新项目。
 
 ## 卸载
 

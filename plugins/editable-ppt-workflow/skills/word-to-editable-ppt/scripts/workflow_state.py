@@ -44,6 +44,7 @@ CURRENT_TOP_LEVEL_FIELDS = frozenset({
     "jobs",
     "final_pptx",
     "scheduler",
+    "runtime",
 })
 
 
@@ -256,8 +257,16 @@ def _store_scheduler(run: dict[str, Any], scheduler: AdaptiveScheduler) -> None:
 def _dispatch_window(project: Path, run: Mapping[str, Any], jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Apply the confirmed continuous/split batching policy in locked page order."""
     execution = load_style(project, run)["execution"]
-    mode = execution.get("generation_mode")
+    # Runtime scheduling is intentionally outside the compact visual contract.
+    # Read legacy embedded values when present, otherwise use the persisted
+    # scheduler established at confirmation time.
+    scheduler = run.get("scheduler")
+    runtime = run.get("runtime")
+    runtime_mode = runtime.get("generation_mode") if isinstance(runtime, Mapping) else None
+    mode = execution.get("generation_mode", runtime_mode or "continuous")
     batch_size = execution.get("max_concurrency")
+    if batch_size is None and isinstance(scheduler, Mapping):
+        batch_size = scheduler.get("configured_max")
     if mode not in {"continuous", "split"}:
         raise ValueError("confirmed generation mode is invalid")
     if type(batch_size) is not int or not 1 <= batch_size <= 6:
@@ -490,7 +499,9 @@ def record_qa(
             issues = list(qa.issues)
             if effective_scope == "local":
                 style = load_style(project, run)["execution"]
-                budget = style.get("automatic_repair_budget")
+                runtime = run.get("runtime")
+                runtime_budget = runtime.get("automatic_repair_budget") if isinstance(runtime, Mapping) else None
+                budget = style.get("automatic_repair_budget", runtime_budget if runtime_budget is not None else 1)
                 if type(budget) is not int or not 0 <= budget <= 3:
                     raise ValueError("confirmed automatic repair budget is invalid")
                 used = job.get("automatic_repairs_used", 0)

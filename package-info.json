@@ -2,11 +2,18 @@
   "marketplace": "editable-ppt-public",
   "repository": "czd176224-rgb/editable-ppt-workflow",
   "plugin": "editable-ppt-workflow",
-  "pluginVersion": "1.0.0+codex.20260728063111",
+  "pluginVersion": "1.0.0+codex.20260728231105",
   "workflowContractVersion": "word-only-v1",
   "requiredUserFiles": 1,
   "requiredHumanConfirmationPhaseCount": 1,
-  "confirmationInteraction": "embedded-three-stage-browser",
+  "confirmationInteraction": "three-step-single-confirmation",
+  "productionProfiles": [
+    "quality",
+    "balanced",
+    "speed"
+  ],
+  "uiPreviewImagePolicy": "project-audit-only-never-image-input",
+  "strictPageCacheInputCount": 6,
   "initialImageEndpoint": "images/generations",
   "localRepairEndpoint": "images/edits",
   "imageCanvasProfiles": {

@@ -1,91 +1,65 @@
 # Editable PPT Workflow
 
-将一个已经分页的 Word 文档转换为风格统一、逐页生成并可编辑重建的 PowerPoint。插件面向 Windows 版 Codex Desktop/CLI，工作流合同为 `word-only-v1`。
+将一个已经分页的 Word 文档转换为逐页生成、逐页检查并可编辑重建的 PowerPoint。当前工作流合同为 `word-only-v1`。
 
-## 能做什么
+## 使用方式
 
-- 只要求上传一个 `.docx` 文件。
-- 优先识别文档中的“第1页、第2页……”标记；完全没有标记时使用 Word 或 LibreOffice 的物理分页。
-- 锁定一页 Word 对应一页 PPT，不跨页合并。
-- 通过一次连续的三阶段网页交互确认整套演示文稿的视觉方向。
-- 根据锁定后的共同风格，独立生成、检查、修复和重建每一页。
-- 最后按原页序机械组装，并检查 PPT 文件是否可打开和回渲染。
-
-## 真实限制
-
-- 目前只支持 Windows 10/11 x64。
-- 首次安装需要网络，并需要 Python 3.10 或更高版本。
-- 物理分页和回渲染需要 Microsoft PowerPoint 或免费的 LibreOffice；安装包不包含 Microsoft PowerPoint。
-- 图片生成依赖 Codex 账户可用的图片生成能力。复杂页面可能耗时较长，也可能需要自动重试。
-- 可编辑重建会尽力恢复文本和主要对象，但无法保证与生成图片达到像素级一致。
-- 原文越密集，字号越可能减小；插件会优先保持内容和逻辑对应关系。
-
-## 三步开始
-
-1. 从 [Releases](https://github.com/czd176224-rgb/editable-ppt-workflow/releases/latest) 下载 Windows ZIP 并解压。
-2. 双击 `setup.cmd`，等待环境检查和安装完成。
-3. 重启 Codex，新建任务，上传分页 Word，输入 `@editable-ppt-workflow`。
-
-复制下面这句话即可：
+1. 安装后重启 Codex。
+2. 新建任务并上传一个分页 `.docx`。
+3. 输入：
 
 ```text
 @editable-ppt-workflow 请把我上传的分页 Word 转换为可编辑 PPT。
 ```
 
-完整的新手说明见 [快速开始](docs/QUICKSTART.zh-CN.md)，日常操作见 [使用说明](docs/USER_GUIDE.zh-CN.md)，安装失败见 [常见故障](docs/TROUBLESHOOTING.zh-CN.md)。
+插件优先识别 `第1页、第2页……` 标记；完全没有标记时才使用 Word 物理分页或 LibreOffice 后备。锁定后始终保持一页 Word 对应一页 PPT。
 
-## 命令行安装
+用户通过三个可返回的步骤填写视觉要求，但只进行一次最终确认。先选模板，再通过专业视觉化配置台调整细节，最后检查视觉、生产与交付合同；颜色支持 RGB/HEX 精确选择。局部视觉示意不调用 Image2，UI 截图只保存在项目中，不会投喂生图程序。生产模式提供质量优先、均衡和速度优先三档，并明确显示对应的图像质量、并发页数和自动修复次数。
 
-如果已经克隆本仓库：
+## 能做什么
+
+- 自动识别 Word 总页数、页序、正文、表格和页内图片/附件。
+- 用统一的紧凑风格合同逐页独立调用 `gpt-image-2`。
+- 在忠实本页信息和逻辑的基础上重组视觉表达。
+- 只对异常页面做局部修图或重新生成。
+- 页面通过 QA 后立即并行进入可编辑重建。
+- 严格复用当前项目内未变化页面的缓存。
+- 最终按锁定页序组装并检查页数、对象可编辑性和文件结构。
+
+## 优点与代价
+
+优点：用户输入少；只有一次人工确认；正常页面没有重复生图和重复深检；修改单页不会重做整套；页面构图仍由 Image2 根据内容独立决定。
+
+代价：首次安装环境较大；图片生成和对象级重建仍需要时间；Image2 对密集文字并非绝对可靠；可编辑重建不能保证像素级一致；复杂或无法解析的 Word 附件可能需要本页额外处理。
+
+## 安装
+
+从 Releases 下载 Windows ZIP 后运行 `setup.cmd`，或克隆仓库后运行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\install.ps1
 ```
 
-更新：
+完整说明见 [快速开始](docs/QUICKSTART.zh-CN.md)、[使用说明](docs/USER_GUIDE.zh-CN.md) 和 [常见故障](docs/TROUBLESHOOTING.zh-CN.md)。
+
+## 运行环境
+
+- Windows 10/11 x64
+- Python 3.10+
+- Codex 登录及账户可用的图片生成能力
+- Microsoft Word/PowerPoint 推荐但非强制
+- LibreOffice 仅作为物理分页和回渲染后备
+
+项目缓存默认仅存在当前项目目录，不会成为跨项目记忆。Word 页文本和必要的本页图片可能发送到 Codex Images；详情见 [安全说明](SECURITY.md)。
+
+## 开发验证
 
 ```powershell
-.\update.ps1
-```
-
-卸载插件但保留隔离运行时：
-
-```powershell
-.\uninstall.ps1
-```
-
-完整卸载插件、公开 Marketplace 和插件自有运行时：
-
-```powershell
-.\uninstall.ps1 -RemoveRuntime -RemoveMarketplace
-```
-
-卸载器不会搜索或删除用户创建的 Word、PPT 或项目目录。
-
-## 插件包含的 Skills
-
-- `word-to-editable-ppt`
-- `codex-gpt-image`
-- `image-to-editable-ppt`
-- `officecli`
-
-这些 Skills 随插件一起安装，不要求用户逐个寻找。安装完成后请新建 Codex 任务，让 Codex 重新载入插件清单。
-
-## 隐私与联网
-
-Word 内容、页面提示和当前页所需的图片可能被发送到已配置的图片生成或 OCR 服务。项目缓存默认保存在当前项目目录，不会作为插件的跨项目记忆。请勿处理超出组织政策允许范围的机密材料。详情见 [安全说明](SECURITY.md)。
-
-## 开发与验证
-
-```powershell
-python -m pip install -r plugins\editable-ppt-workflow\skills\word-to-editable-ppt\requirements-dev.txt
 python -m pytest plugins\editable-ppt-workflow\skills\word-to-editable-ppt\tests -q
 python -m pytest plugins\editable-ppt-workflow\skills\codex-gpt-image\tests -q
 python -m pytest plugins\editable-ppt-workflow\skills\image-to-editable-ppt\cli\tests -q
 python -m pytest tests -q
 ```
 
-## License
-
-[MIT](LICENSE)
+[MIT License](LICENSE)

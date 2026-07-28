@@ -1,29 +1,24 @@
 # Word to Editable PPT
 
-`word-only-v1` converts one paginated `.docx` into one editable PPT slide per Word page.
+将一个分页 `.docx` 转换为“一页 Word 对应一页可编辑 PPT”。用户只上传 Word，通过三步专业视觉化配置台形成视觉、生产与交付合同，并只在最后确认一次。
 
-Flow:
+流程：
 
-`Word pagination lock → one embedded three-stage browser confirmation phase → immutable shared style contract → independent images/generations page work → relaxed page-local QA and targeted repair → independent editable reconstruction → locked-order mechanical assembly`
+`锁定 Word 页码、正文和页内附件 → 模板选择与细节调整 → 确认视觉及三档生产模式 → 逐页独立 Image2 生图 → 页内宽松 QA/自动修复 → 逐页可编辑重建 → 按原页序组装`
 
-The browser component is embedded and adapted from the PPT Master interaction model; no separate Skill, package, or filesystem path is required.
+主要特点：
 
-```powershell
-python scripts\word_to_editable_ppt.py prepare --word D:\Input\source.docx --output D:\Projects\Deck
-python scripts\word_to_editable_ppt.py workflow next --project D:\Projects\Deck
-python scripts\word_to_editable_ppt.py confirm-ui start --project D:\Projects\Deck
-python scripts\word_to_editable_ppt.py confirm-ui wait --project D:\Projects\Deck --stage final
-python scripts\word_to_editable_ppt.py confirm-ui shutdown --project D:\Projects\Deck
-```
+- UI 采用三个可返回修改的步骤，但仍然只在最后确认一次。
+- 内置政策与项目进度简报、品牌叙事型综合商务汇报、技术证据型投资 BP；投资 BP 提供深色科技和白底研发两个子风格。
+- 模板自动匹配配色、字体、背景体系、密度、构图、图像、证据和品牌装置，用户可逐项覆盖。
+- 模板卡片和选项提供局部视觉示意与影响说明，不调用 Image2，也不伪装成最终 PPT 页面。
+- 背景、标题、分组标题、正文、关键数字、强调色、表头和边框均支持 RGB/HEX 精确选择。
+- 精确色板和字体作为硬性视觉锚点；页面组织和具体构图仍由 Image2 按本页内容灵活决定。
+- UI 预览截图只保存在项目中审计，不投喂 Image2。
+- 每个未缓存页面通常只调用一次 `gpt-image-2`。
+- 生图只接收本页原文、紧凑风格合同和必要的本页图片附件。
+- QA 只检查本页风格，以及与本页原文内容和逻辑是否匹配。
+- 页面独立缓存、修复和重建，修改单页不会重做整套 PPT。
+- LibreOffice 是可选后备，不是强制依赖。
 
-Ordered `第N页` markers take priority and require no pagination renderer. Physical pagination is used only when the document contains no markers: Microsoft Word is preferred and LibreOffice is a lazy optional fallback. Invalid marker sequences stop the run. Page count, order, source text, and hashes remain locked.
-
-The final browser result compiles deterministically into one immutable `style_execution.json`. Every initial page uses the exact same style bytes and `images/generations`. `images/edits` is reserved for local repair of an existing current-page image; structural, logic, or material overall-style repairs regenerate the page.
-
-Stage 2 freezes the selected visual direction, six-role palette, CJK/Latin fonts, four-level type scale, information density, icon/image language, formal/modern/minimal degrees, and natural-language additions. Stage 3 freezes image quality, concurrency, automatic local-repair budget, editable output, and start mechanics. The selected `ppt169` or `ppt43` canvas maps to a legal equal-ratio `gpt-image-2` size and the same final PowerPoint slide ratio, with no crop.
-
-QA is one combined page-local qualitative decision: overall style match plus preservation of the current page's main content, key facts, and main logic. A normal page is read once and proceeds directly to reconstruction; only a concrete anomaly triggers repair or deeper inspection. Valid summarization, rewording, reordering, layout variation, and small visual differences are allowed. Pages proceed and reconstruct independently, including while other pages repair.
-
-Final assembly waits for all locked pages and checks only page count/order, artifact integrity, page-QA status, editable objects, package validity, and open/back-render capability. PowerPoint is preferred for back-rendering and LibreOffice is optional fallback. Strict hash hits reuse retained project-local render evidence; if neither renderer exists, structural validation completes with an advisory. Public releases are installed through the `editable-ppt-public` Marketplace; development changes are not visible until a new release is published.
-
-Runtime outputs use `06_images/generated/` for page images and `08_final/` for the final PPTX, mechanical QA report, and run summary.
+限制：Image2 仍可能出现文字或细节错误；复杂页面可能触发该页自动修复。可编辑重建强调对象可修改，不能保证与生成图片像素级完全一致。PDF、表格等 Word 附件需要本地提取后才能作为内容来源；无法解析的附件会留下提示，但不会阻塞其他页面。

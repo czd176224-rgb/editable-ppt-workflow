@@ -114,6 +114,62 @@ def normalized_repair_feedback(job: Mapping[str, Any]) -> dict[str, Any]:
     return {"repair_scope": scope, "issues": list(issues)}
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def page_asset_inputs(project: Path, contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return strict identities for usable page-local assets only."""
+    inputs: list[dict[str, Any]] = []
+    bindings = contract.get("asset_bindings", [])
+    if not isinstance(bindings, list):
+        raise ValueError("page asset bindings must be an array")
+    for binding in bindings:
+        if not isinstance(binding, Mapping) or binding.get("processing") not in {"direct_image", "extract_content"}:
+            continue
+        generation = binding.get("generation_input")
+        selected = generation if isinstance(generation, Mapping) else binding
+        relative = selected.get("relative_path")
+        expected = selected.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            raise ValueError("usable page asset identity is incomplete")
+        path = project_file(project, relative)
+        if _file_sha256(path) != expected:
+            raise ValueError("page asset SHA-256 mismatch")
+        inputs.append(
+            {
+                "asset_id": binding.get("asset_id"),
+                "sha256": expected,
+                "media_type": selected.get("media_type", binding.get("media_type")),
+                "processing": binding.get("processing"),
+                "use_policy": binding.get("use_policy", "contextual"),
+                "derivation": selected.get("derivation", "source_attachment"),
+            }
+        )
+    return inputs
+
+
+def page_image_references(project: Path, contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for binding in contract.get("asset_bindings", []):
+        if not isinstance(binding, Mapping) or binding.get("processing") != "direct_image":
+            continue
+        generation = binding.get("generation_input")
+        if not isinstance(generation, Mapping) or not isinstance(generation.get("relative_path"), str):
+            raise ValueError("direct page image has no generation input")
+        references.append(
+            {
+                "path": project_file(project, generation["relative_path"]),
+                "role": f"page_asset_{binding.get('use_policy', 'contextual')}",
+            }
+        )
+    return references
+
+
 def generation_parameters(job: Mapping[str, Any], style: Mapping[str, Any]) -> dict[str, Any]:
     feedback = normalized_repair_feedback(job)
     operation = "edit" if feedback["repair_scope"] == "local" else "generate"
@@ -121,7 +177,7 @@ def generation_parameters(job: Mapping[str, Any], style: Mapping[str, Any]) -> d
         "operation": operation,
         "model": DEFAULT_MODEL,
         "size": style["execution"]["canvas_profile"]["image_size"],
-        "quality": style["execution"]["image_quality"],
+        "quality": style["execution"].get("image_quality", DEFAULT_QUALITY),
         "fidelity_boundary": FIDELITY_BOUNDARY,
         "canvas_profile": style["execution"]["canvas_profile"],
     }
@@ -139,6 +195,7 @@ def cache_inputs(project: Path, run: Mapping[str, Any], job: Mapping[str, Any]) 
     return CacheKeyInputs(
         page_source_sha256=contract["source_hash"],
         style_execution_sha256=style["sha256"],
+        page_asset_inputs=page_asset_inputs(project, contract),
         generation_parameters=generation_parameters(job, style),
         repair_feedback=normalized_repair_feedback(job),
         reconstruction_version=RECONSTRUCTION_VERSION,
@@ -178,14 +235,17 @@ def generation_request(
     style = load_style(project, run)
     output = _output_path(project, int(job["page_number"]), attempt)
     feedback = normalized_repair_feedback(job)
+    references = page_image_references(project, contract)
     if job.get("status") == "repair" or feedback["repair_scope"] != "none":
         generation = job.get("generation")
         prior = generation.get("image") if isinstance(generation, Mapping) else None
         if not isinstance(prior, str):
             raise ValueError("repair page has no prior generated image")
-        request = build_repair_request(contract["source_text"], style, project_file(project, prior), feedback)
+        request = build_repair_request(
+            contract["source_text"], style, project_file(project, prior), feedback, reference_images=references
+        )
         return replace(request, output=output.resolve())
-    return build_initial_request(contract["source_text"], style, output)
+    return build_initial_request(contract["source_text"], style, output, reference_images=references)
 
 
 def page_request(

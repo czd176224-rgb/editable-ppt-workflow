@@ -494,10 +494,55 @@ def test_page_local_cache_hits_and_one_source_change_invalidates_only_that_page(
     assert status(project)["cache_hits"] == [2]
 
 
+def test_page_image_is_the_only_reference_and_its_bytes_are_in_strict_cache_identity(tmp_path: Path) -> None:
+    project = _project(tmp_path, page_count=1)
+    asset = project / "00_source/word_assets/original/chart.png"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"chart-v1")
+    contract_path = project / "01_page_contracts/page_001.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+    contract["asset_bindings"] = [{
+        "asset_id": "word_asset_001",
+        "sha256": digest,
+        "media_type": "image/png",
+        "relative_path": "00_source/word_assets/original/chart.png",
+        "original_filename": "chart.png",
+        "source_block_indexes": [1],
+        "asset_role": "visual_reference",
+        "processing": "direct_image",
+        "use_policy": "required",
+        "blocking": False,
+        "advisories": [],
+        "generation_input": {
+            "relative_path": "00_source/word_assets/original/chart.png",
+            "sha256": digest,
+            "media_type": "image/png",
+            "derivation": "original_supported",
+        },
+    }]
+    _write_json(contract_path, contract)
+
+    first = next_action(project)["requests"][0]
+    payload = first["generation_request"]
+    assert payload["reference_images"] == [str(asset.resolve())]
+    assert payload["image_roles"] == ["page_asset_required"]
+    first_key = first["cache_key"]
+    assert _job(project, 1)["cache"]["identity"]["page_asset_inputs"][0]["sha256"] == digest
+
+    asset.write_bytes(b"chart-v2")
+    contract["asset_bindings"][0]["sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
+    contract["asset_bindings"][0]["generation_input"]["sha256"] = contract["asset_bindings"][0]["sha256"]
+    _write_json(contract_path, contract)
+
+    assert next_action(project)["requests"][0]["cache_key"] != first_key
+
+
 def test_cache_identity_changes_for_each_exact_input_and_not_for_another_page() -> None:
     first_page = CacheKeyInputs(
         page_source_sha256="1" * 64,
         style_execution_sha256="2" * 64,
+        page_asset_inputs=[{"asset_id": "word_asset_001", "sha256": "a" * 64, "derivation": "original_supported"}],
         generation_parameters={"model": "gpt-image-2", "quality": "high", "size": "1536x1024"},
         repair_feedback={"repair_scope": "none", "issues": []},
         reconstruction_version="editable-v1",
@@ -508,6 +553,7 @@ def test_cache_identity_changes_for_each_exact_input_and_not_for_another_page() 
     variants = (
         replace(first_page, page_source_sha256="4" * 64),
         replace(first_page, style_execution_sha256="5" * 64),
+        replace(first_page, page_asset_inputs=[{"asset_id": "word_asset_001", "sha256": "b" * 64, "derivation": "original_supported"}]),
         replace(first_page, generation_parameters={"model": "gpt-image-2", "quality": "medium", "size": "1536x1024"}),
         replace(first_page, repair_feedback={"repair_scope": "local", "issues": ["Fix date"]}),
         replace(first_page, reconstruction_version="editable-v2"),
@@ -515,6 +561,7 @@ def test_cache_identity_changes_for_each_exact_input_and_not_for_another_page() 
     assert set(first_page.payload) == {
         "page_source_sha256",
         "style_execution_sha256",
+        "page_asset_inputs",
         "generation_parameters",
         "repair_feedback",
         "reconstruction_version",

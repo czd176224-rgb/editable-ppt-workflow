@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the embedded three-stage style confirmation browser session."""
+"""Serve the embedded three-step visual-contract confirmation session."""
 
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from preview import project_pages  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -67,11 +74,60 @@ STAGE3_FIELDS = (
     "editable_output",
     "start_generation",
 )
+ONE_SCREEN_FIELDS = (
+    "direction",
+    "template_selection",
+    "canvas",
+    "visual_style",
+    "color",
+    "icons",
+    "typography",
+    "image_rendering",
+    "style_axes",
+    "layout_preferences",
+    "information_density",
+    "regional_style",
+    "background_system",
+    "image_role",
+    "evidence_strength",
+    "composition_tendency",
+    "brand_device",
+    "production_profile",
+    "additional_requirements",
+)
+PRODUCTION_PROFILES = {
+    "quality": {"image_quality": "high", "max_concurrency": 2, "automatic_repair_budget": 2},
+    "balanced": {"image_quality": "high", "max_concurrency": 4, "automatic_repair_budget": 1},
+    "speed": {"image_quality": "medium", "max_concurrency": 6, "automatic_repair_budget": 1},
+}
+ONE_SCREEN_PRODUCTION_BASE = {
+    "formula_policy": "mixed", "generation_mode": "continuous", "refine_spec": False,
+    "editable_output": True, "start_generation": True,
+}
 FORMULA_POLICIES = {"mixed", "editable", "rendered"}
 GENERATION_MODES = {"continuous", "split"}
 IMAGE_QUALITIES = {"auto", "low", "medium", "high"}
 INFORMATION_DENSITIES = {"low", "balanced", "high"}
+LAYOUT_PREFERENCES = {
+    "auto",
+    "editorial",
+    "conclusion-first",
+    "split",
+    "table",
+    "matrix",
+    "data-led",
+    "timeline",
+    "modular",
+}
 CANVAS_IDS = {"ppt169", "ppt43"}
+TEMPLATE_IDS = {"policy-project-brief", "brand-narrative-business", "evidence-investment-bp"}
+BP_SUBSTYLE_IDS = {"dark-tech", "white-rd"}
+BACKGROUND_SYSTEMS = {"light", "dark", "mixed", "light-with-dark-highlights"}
+IMAGE_ROLES = {"text-structure", "evidence", "technical-evidence", "product-evidence", "narrative", "balanced"}
+IMAGE_PROPORTIONS = {"low", "medium-low", "medium", "high"}
+EVIDENCE_STRENGTHS = {"business", "data-case", "strict"}
+COMPOSITION_TENDENCIES = {"auto", "formal-consulting", "brand-editorial", "technical-rd", "product-launch"}
+BRAND_DEVICES = {"none", "light", "medium", "strong"}
 PALETTE_ROLES = (
     "background",
     "secondary_bg",
@@ -372,6 +428,84 @@ def _stage3_submission_error(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _one_screen_submission_error(payload: dict[str, Any], candidate_count: int) -> str | None:
+    direction = payload.get("direction")
+    if type(direction) is not int or not 0 <= direction < candidate_count:
+        return "direction must be an in-range candidate index"
+    if payload.get("canvas") not in CANVAS_IDS:
+        return "canvas must be ppt169 or ppt43"
+    template = payload.get("template_selection")
+    if not isinstance(template, dict):
+        return "template_selection must be an object"
+    required_template_fields = {"id", "label", "version", "substyle_id", "override_fields"}
+    if set(template) != required_template_fields:
+        return "template_selection must define id, label, version, substyle_id, and override_fields"
+    if template.get("id") not in TEMPLATE_IDS:
+        return "template_selection.id must be a supported template"
+    if not isinstance(template.get("label"), str) or not template["label"].strip() or template.get("version") != "1.0":
+        return "template_selection label/version is invalid"
+    substyle = template.get("substyle_id")
+    if template["id"] == "evidence-investment-bp":
+        if substyle not in BP_SUBSTYLE_IDS:
+            return "investment BP requires dark-tech or white-rd substyle"
+    elif substyle is not None:
+        return "only investment BP may define a substyle"
+    overrides = template.get("override_fields")
+    if not isinstance(overrides, list) or len(overrides) != len(set(overrides)) or any(not isinstance(item, str) or not item for item in overrides):
+        return "template_selection.override_fields must be a unique string list"
+    for field in ("visual_style", "icons"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return f"{field} must be non-empty"
+    for validator, value in (
+        (_palette_error, payload.get("color")),
+        (_typography_error, payload.get("typography")),
+        (_style_axes_error, payload.get("style_axes")),
+    ):
+        error = validator(value, "submission")
+        if error:
+            return error
+    if payload.get("information_density") not in INFORMATION_DENSITIES:
+        return "information_density must be low, balanced, or high"
+    layouts = payload.get("layout_preferences")
+    if (
+        not isinstance(layouts, list)
+        or not layouts
+        or len(layouts) != len(set(layouts))
+        or any(layout not in LAYOUT_PREFERENCES for layout in layouts)
+    ):
+        return "layout_preferences must be a non-empty unique list of supported layout ids"
+    rendering = payload.get("image_rendering")
+    if not isinstance(rendering, dict):
+        return "submission.image_rendering must be an object"
+    if not isinstance(rendering.get("rendering"), str) or not rendering["rendering"].strip():
+        return "submission.image_rendering.rendering must be non-empty"
+    if not _localized_present(rendering, "visual") or not _localized_present(rendering, "mood"):
+        return "submission.image_rendering must describe visual expression and mood"
+    regional = payload.get("regional_style")
+    if not isinstance(regional, dict) or type(regional.get("enabled")) is not bool:
+        return "regional_style must be an object with a boolean enabled field"
+    if payload.get("background_system") not in BACKGROUND_SYSTEMS:
+        return "background_system must be supported"
+    image_role = payload.get("image_role")
+    if not isinstance(image_role, dict) or set(image_role) != {"role", "proportion"}:
+        return "image_role must define role and proportion"
+    if image_role.get("role") not in IMAGE_ROLES or image_role.get("proportion") not in IMAGE_PROPORTIONS:
+        return "image_role contains an unsupported role or proportion"
+    if payload.get("evidence_strength") not in EVIDENCE_STRENGTHS:
+        return "evidence_strength must be supported"
+    if payload.get("composition_tendency") not in COMPOSITION_TENDENCIES:
+        return "composition_tendency must be supported"
+    if payload.get("brand_device") not in BRAND_DEVICES:
+        return "brand_device must be supported"
+    if payload.get("production_profile") not in PRODUCTION_PROFILES:
+        return "production_profile must be quality, balanced, or speed"
+    requirements = payload.get("additional_requirements")
+    if not isinstance(requirements, str) or len(requirements) > 2000:
+        return "additional_requirements must be text no longer than 2000 characters"
+    return None
+
+
 def _stage1_submission_error(payload: dict[str, Any]) -> str | None:
     for field in ("audience", "core_message", "delivery_context", "content_divergence"):
         if not isinstance(payload.get(field), str):
@@ -420,7 +554,12 @@ def _recommendation_view(project: Path, recommendations: dict[str, Any]) -> dict
     if stage == 3:
         allowed = {"stage", "lang", "recommend", "refine_spec"}
         return _clean({key: value for key, value in recommendations.items() if key in allowed})
-    raise ValueError("recommendations.json must declare stage1, stage2, or stage3")
+    if stage == 4:
+        view = _normalize_stage2(recommendations)
+        view.update(_project_facts(project))
+        view["stage"] = "final"
+        return view
+    raise ValueError("recommendations.json must declare stage1, stage2, stage3, or final")
 
 
 def _session_state(project: Path) -> dict[str, Any]:
@@ -459,6 +598,8 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
     rec_stage = _stage_number(recommendations.get("stage"))
     submitted_stage = _stage_number(payload.get("stage"))
     expected_stage = _expected_recommendation_stage(result_path)
+    if expected_stage == 1 and rec_stage == 4 and not result_path.exists():
+        expected_stage = 4
     if rec_stage != expected_stage or submitted_stage != rec_stage:
         return None, (
             f"strict stage order requires stage{expected_stage or ' complete'}; "
@@ -495,7 +636,7 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
                 result[field] = _clean(payload[field])
         result["stage"] = "stage2"
         result["status"] = "stage2-confirmed"
-    else:
+    elif rec_stage == 3:
         submission_error = _stage3_submission_error(payload)
         if submission_error:
             raise ValueError(submission_error)
@@ -503,6 +644,21 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
         for field in STAGE3_FIELDS:
             if field in payload:
                 result[field] = payload[field]
+        result["stage"] = "final"
+        result["status"] = "confirmed"
+    else:
+        normalized_recommendations = _normalize_stage2(recommendations)
+        recommendation_error = _stage2_error(normalized_recommendations)
+        if recommendation_error:
+            return None, recommendation_error
+        candidates = normalized_recommendations["design_directions"]["candidates"]
+        submission_error = _one_screen_submission_error(payload, len(candidates))
+        if submission_error:
+            raise ValueError(submission_error)
+        result = {field: _clean(payload[field]) for field in ONE_SCREEN_FIELDS}
+        result.update(_project_facts(project))
+        result.update(ONE_SCREEN_PRODUCTION_BASE)
+        result.update(PRODUCTION_PROFILES[result["production_profile"]])
         result["stage"] = "final"
         result["status"] = "confirmed"
     result = _clean(result)
@@ -563,6 +719,21 @@ def create_app(
     def catalogs():
         return send_from_directory(static_dir, "catalogs.json")
 
+    @app.get("/api/pages")
+    def pages():
+        try:
+            project_facts = _project_facts(project)
+            response = jsonify(
+                {
+                    "pages": project_pages(project, int(project_facts["page_count"])),
+                    "page_count": project_facts["page_count"],
+                }
+            )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return jsonify({"error": str(exc)}), 409
+
     @app.get("/api/recommendations")
     def recommendations():
         recommendations_path = project / CONFIRM_DIR / RECOMMENDATIONS
@@ -572,6 +743,8 @@ def create_app(
             raw = _read_json(recommendations_path)
             rec_stage = _stage_number(raw.get("stage"))
             expected = _expected_recommendation_stage(project / CONFIRM_DIR / RESULT)
+            if expected == 1 and rec_stage == 4 and not (project / CONFIRM_DIR / RESULT).exists():
+                expected = 4
             if rec_stage != expected:
                 return jsonify(
                     {
@@ -582,7 +755,7 @@ def create_app(
                     }
                 ), 409
             cleaned = _recommendation_view(project, raw)
-            if rec_stage == 2:
+            if rec_stage in {2, 4}:
                 error = _stage2_error(cleaned)
                 if error:
                     return jsonify({"error": error}), 409

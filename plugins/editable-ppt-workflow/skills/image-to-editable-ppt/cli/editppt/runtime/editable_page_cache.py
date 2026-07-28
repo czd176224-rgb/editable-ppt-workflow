@@ -33,6 +33,7 @@ MAX_COMPRESSION_RATIO = 200.0
 CURRENT_CACHE_IDENTITY_FIELDS = frozenset({
     "page_source_sha256",
     "style_execution_sha256",
+    "page_asset_inputs",
     "generation_parameters",
     "repair_feedback",
     "reconstruction_version",

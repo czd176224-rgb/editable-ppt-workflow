@@ -156,17 +156,18 @@ def _rewrite_relationship_ids(element, mapping: dict[str, str]) -> None:
             node.set(attribute, mapping[old_id])
 
 
-def _copy_page_slide(source_path: Path, destination: Presentation) -> None:
+def _copy_page_slide(source_path: Path, destination: Presentation, destination_layout, page_number: int) -> None:
     source = Presentation(source_path)
     if len(source.slides) != 1:
         raise PackageValidationError("reconstructed page package must contain one slide")
     if source.slide_width != destination.slide_width or source.slide_height != destination.slide_height:
         raise PackageValidationError("all reconstructed Word pages must share one slide size")
     source_slide = source.slides[0]
-    destination_slide = destination.slides.add_slide(destination.slide_layouts[6])
+    destination_slide = destination.slides.add_slide(destination_layout)
     mapping = _remap_relationships(source_slide, destination_slide)
 
     copied_content = copy.deepcopy(source_slide.element.cSld)
+    copied_content.set("name", f"editable-ppt-word-page:{page_number}")
     _rewrite_relationship_ids(copied_content, mapping)
     destination_slide.element.replace(destination_slide.element.cSld, copied_content)
     source_color_map = source_slide.element.clrMapOvr
@@ -238,8 +239,11 @@ def _validate_output(path: Path, packages: tuple[PagePackage, ...]) -> tuple[int
         raise PackageValidationError("assembled deck does not have the exact Word-page count")
     if inspection.editable_object_counts != expected:
         raise PackageValidationError("assembled deck editable-object inventory changed")
+    expected_page_ids = tuple(package.page_number for package in packages)
+    if inspection.slide_page_ids != expected_page_ids:
+        raise PackageValidationError("assembled deck does not preserve the locked Word-page identity and order")
     if inspection.slide_fingerprints != tuple(package.slide_fingerprint for package in packages):
-        raise PackageValidationError("assembled deck does not preserve the locked Word-page order")
+        raise PackageValidationError("assembled deck changed reconstructed page content")
     return inspection.editable_object_counts
 
 
@@ -255,12 +259,15 @@ def assemble_deck(plan: AssemblyPlan, output: Path) -> AssemblyReceipt:
     try:
         with _single_writer(lock_path):
             packages = _load_packages(plan)
-            first = Presentation(packages[0].pptx_path)
-            destination = Presentation()
-            destination.slide_width = first.slide_width
-            destination.slide_height = first.slide_height
-            for package in packages:
-                _copy_page_slide(package.pptx_path, destination)
+            destination = Presentation(packages[0].pptx_path)
+            if len(destination.slides) != 1:
+                raise PackageValidationError("first reconstructed page package must contain one slide")
+            shared_layout = destination.slides[0].slide_layout
+            destination.slides[0].element.cSld.set(
+                "name", f"editable-ppt-word-page:{packages[0].page_number}"
+            )
+            for package in packages[1:]:
+                _copy_page_slide(package.pptx_path, destination, shared_layout, package.page_number)
             destination.save(temporary)
             editable_counts = _validate_output(temporary, packages)
 

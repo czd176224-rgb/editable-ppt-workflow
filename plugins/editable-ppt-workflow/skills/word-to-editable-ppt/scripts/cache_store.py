@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, ContextManager, Mapping
 
 
-_LAYERS = frozenset({"pages"})
+_LAYERS = frozenset({"pages", "renders"})
 _INDEX_NAME = "index.json"
 
 

@@ -35,6 +35,7 @@ foreach ($required in @(
     (Join-Path $WorkflowSkill "SKILL.md"),
     (Join-Path $WorkflowSkill "requirements.txt"),
     (Join-Path $WorkflowSkill "scripts\confirm_ui\server.py"),
+    (Join-Path $PluginRoot "scripts\runtime_office.py"),
     (Join-Path $EditableSkill "SKILL.md"),
     (Join-Path $PluginRoot "skills\codex-gpt-image\SKILL.md"),
     (Join-Path $PluginRoot "skills\officecli\SKILL.md")
@@ -155,6 +156,7 @@ foreach ($name in @("scripts", "schemas", "template")) {
     Copy-Item -LiteralPath (Join-Path $WorkflowSkill $name) -Destination $CurrentWorkflowRoot -Recurse
 }
 $CurrentWorkflowScripts = Join-Path $CurrentWorkflowRoot "scripts"
+Copy-Item -LiteralPath (Join-Path $PluginRoot "scripts\runtime_office.py") -Destination (Join-Path $CurrentWorkflowScripts "runtime_office.py")
 $EditableSitePackages = (& $EditablePython -c "import site; print(site.getsitepackages()[0])").Trim()
 if ($LASTEXITCODE -ne 0 -or -not $EditableSitePackages) {
     throw "Unable to locate editable-PPT site-packages for workflow injection."
@@ -241,7 +243,7 @@ if (-not $Report.workflow_ready) {
     throw "Plugin runtime is incomplete. Review $ReportPath and confirm Codex sign-in, editppt, and OfficeCLI."
 }
 if (-not $Report.render_backend_available) {
-    throw "Install Microsoft PowerPoint or LibreOffice, then retry."
+    Write-Warning "No local presentation renderer was detected. Installation remains usable; PowerPoint or LibreOffice will be used lazily when available."
 }
 if (-not $Report.high_quality_ready) {
     Write-Warning "The runtime works, but a CJK font or render backend is not ready. Review $ReportPath."

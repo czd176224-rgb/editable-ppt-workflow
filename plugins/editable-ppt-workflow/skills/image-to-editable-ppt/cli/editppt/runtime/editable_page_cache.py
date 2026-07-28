@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import posixpath
+import re
 import stat
 import uuid
 import zipfile
@@ -65,6 +66,7 @@ class PptxInspection:
     slide_count: int
     editable_object_counts: tuple[int, ...]
     slide_fingerprints: tuple[str, ...]
+    slide_page_ids: tuple[int | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -301,6 +303,29 @@ def _zip_member_sha256(archive: zipfile.ZipFile, name: str) -> str:
     return digest.hexdigest()
 
 
+def _canonical_xml_bytes(element: ET.Element) -> bytes:
+    """Canonicalize OOXML while retaining text-bearing whitespace."""
+    normalized = copy.deepcopy(element)
+    text_tag = "{http://schemas.openxmlformats.org/drawingml/2006/main}t"
+    for node in normalized.iter():
+        if node.tag != text_tag and node.text is not None and not node.text.strip():
+            node.text = None
+        if node.tail is not None and not node.tail.strip():
+            node.tail = None
+    payload = ET.tostring(normalized, encoding="unicode")
+    return ET.canonicalize(payload, rewrite_prefixes=True).encode("utf-8")
+
+
+def _zip_member_semantic_sha256(archive: zipfile.ZipFile, name: str) -> str:
+    payload = _zip_read_bounded(archive, name)
+    if name.lower().endswith((".xml", ".rels")):
+        try:
+            payload = _canonical_xml_bytes(ET.fromstring(payload))
+        except ET.ParseError as exc:
+            raise PackageValidationError(f"PPTX XML relationship target is invalid: {name}") from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _slide_fingerprint(
     archive: zipfile.ZipFile,
     names: set[str],
@@ -327,9 +352,12 @@ def _slide_fingerprint(
                 raise PackageValidationError(f"external relationship is not allowed: {rels_name}")
             else:
                 resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
-                bound = _zip_member_sha256(archive, resolved)
+                bound = _zip_member_semantic_sha256(archive, resolved)
             relationships[relationship_id] = (reltype, bound)
     normalized = copy.deepcopy(slide)
+    content = normalized.find(f"{{{_P}}}cSld")
+    if content is not None:
+        content.attrib.pop("name", None)
     for node in normalized.iter():
         for attribute, relationship_id in tuple(node.attrib.items()):
             if attribute not in {
@@ -344,7 +372,7 @@ def _slide_fingerprint(
                     f"slide relationship is unresolved: {slide_name} -> {relationship_id}"
                 )
             node.set(attribute, f"{binding[0]}:{binding[1]}")
-    return hashlib.sha256(ET.tostring(normalized, encoding="utf-8")).hexdigest()
+    return hashlib.sha256(_canonical_xml_bytes(normalized)).hexdigest()
 
 
 def inspect_editable_pptx(path: Path) -> PptxInspection:
@@ -384,6 +412,7 @@ def inspect_editable_pptx(path: Path) -> PptxInspection:
                 raise PackageValidationError("PPTX slide order is invalid")
             counts: list[int] = []
             fingerprints: list[str] = []
+            page_ids: list[int | None] = []
             editable_tags = {
                 f"{{{_P}}}sp",
                 f"{{{_P}}}pic",
@@ -400,6 +429,10 @@ def inspect_editable_pptx(path: Path) -> PptxInspection:
                 children = list(sp_tree) if sp_tree is not None else []
                 counts.append(sum(child.tag in editable_tags for child in children))
                 fingerprints.append(_slide_fingerprint(archive, names, slide_name, slide))
+                content = slide.find(f"{{{_P}}}cSld")
+                name = content.get("name", "") if content is not None else ""
+                match = re.fullmatch(r"editable-ppt-word-page:(\d+)", name)
+                page_ids.append(int(match.group(1)) if match else None)
     except PackageValidationError:
         raise
     except (OSError, KeyError, zipfile.BadZipFile) as exc:
@@ -411,7 +444,7 @@ def inspect_editable_pptx(path: Path) -> PptxInspection:
         raise PackageValidationError("PowerPoint package cannot be opened by the PPTX runtime") from exc
     if len(opened.slides) != len(counts):
         raise PackageValidationError("PPTX open result disagrees with its slide relationships")
-    return PptxInspection(len(counts), tuple(counts), tuple(fingerprints))
+    return PptxInspection(len(counts), tuple(counts), tuple(fingerprints), tuple(page_ids))
 
 
 def validate_pptx_canvas(path: Path, profile: Mapping[str, Any]) -> None:

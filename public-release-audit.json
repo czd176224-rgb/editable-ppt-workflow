@@ -4,15 +4,15 @@
   "releaseTag": "v1.1.0",
   "pluginVersion": "1.1.0",
   "workflowContractVersion": "word-ppt-workflow-v5",
-  "sourceManifestSha256": "88f5a29a7a27bd02c1e9fd795934f8d3579048309ac9e369608f20957cf1987f",
+  "sourceManifestSha256": "a122cc98b4c61a36d5c32be6c42688020ec56b817425e594d0a493dabd1b688a",
   "root": ".",
   "passed": true,
   "errors": [],
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
-      "bytes": 789,
-      "sha256": "1e0ae49422f202fb9940c8d4176fbd04b7ebca09cc6979505ba5756351161281"
+      "bytes": 437,
+      "sha256": "21059731140e024ee5f03085a6ab0de3130dae9c6a4c3484709240564000ffd5"
     },
     {
       "path": ".gitattributes",
@@ -76,8 +76,8 @@
     },
     {
       "path": "package-info.json",
-      "bytes": 2643,
-      "sha256": "7d4989787b6528457c614b6dfa5fd8b81ee9c9b138c729991e3e848ec0ae01a0"
+      "bytes": 2141,
+      "sha256": "113e79bae82a32962d9c679c44003a113a6d6be26017eede5cc97d376f50947b"
     },
     {
       "path": "plugins/editable-ppt-workflow/.codex-plugin/plugin.json",
@@ -216,8 +216,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/finalize_manifest_deck_run.py",
-      "bytes": 5252,
-      "sha256": "6aa21c09e13540cf4c31be9188c54aec578de90832435c398b52650f899c0afa"
+      "bytes": 5386,
+      "sha256": "4bfa42515e2db8b65ffecec15dfb9ea26093aeac0e01bd4e92b383648434b6ec"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/fixed_region_runtime.py",
@@ -281,8 +281,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/record_manifest_page_result.py",
-      "bytes": 5406,
-      "sha256": "71e14b9051cec80fe878d6978cc6c5f8367dc5955066479af12f96f116a314cc"
+      "bytes": 5523,
+      "sha256": "572eef35251fb578ec4a32f1747dfba173e2ebe0e47639842472cd3f47cb289f"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/record_page_dispatch.py",
@@ -326,8 +326,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py",
-      "bytes": 29115,
-      "sha256": "6841fe663f645eef5000c62aa593b183caec2eec8238fe658f41d0b67c41863b"
+      "bytes": 29235,
+      "sha256": "b888cbf70fd6fd86d995f0a784bc888c0ff4fb48272f003089b865d046dc2655"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/workflow_metrics.py",
@@ -421,8 +421,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/requirements-dev.txt",
-      "bytes": 34,
-      "sha256": "e9d4d24bce9591949478a88c3f3a4efd035f95529e7ebd55c2c24676495497b3"
+      "bytes": 46,
+      "sha256": "cb99462720fe17cacc77fbd3cc07de9c1a95874a614ef7c25fcbfc9cb23c0043"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/requirements.txt",
@@ -1221,8 +1221,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_final_mechanical_assembly.py",
-      "bytes": 40716,
-      "sha256": "1de9c7007065ad531bc2b63505579c21ac1ca64744857da36ca76b4199f69c71"
+      "bytes": 40237,
+      "sha256": "23225a22c94026bcdcf3b27a26f0a7a209b06863a6d6a173b47530277fa87261"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_fixed_region_v1_authority.py",
@@ -1241,8 +1241,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_mixed_workflow_e2e.py",
-      "bytes": 14039,
-      "sha256": "f94bec8d6ed8c2d449484f1faedb1a1d354a888d526ef927a1c17aca9d57956f"
+      "bytes": 14157,
+      "sha256": "eccd97409057dfe9465ca017926cdd295bb27733fd8e071afb73325d129702a2"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_native_hybrid_page_builder.py",
@@ -1421,8 +1421,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v5_final_qa_gateway.py",
-      "bytes": 13723,
-      "sha256": "06ad1acf31d01c4555011a5d78da64c5c8be03818b6ec8e17efa180072d61def"
+      "bytes": 13986,
+      "sha256": "903db59fbec9af431933a2e07f8affbe163c8e4e6ca1327c149688f422f1bd80"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v5_identity.py",
@@ -1496,8 +1496,8 @@
     },
     {
       "path": "public-source-manifest.json",
-      "bytes": 56771,
-      "sha256": "88f5a29a7a27bd02c1e9fd795934f8d3579048309ac9e369608f20957cf1987f"
+      "bytes": 52028,
+      "sha256": "a122cc98b4c61a36d5c32be6c42688020ec56b817425e594d0a493dabd1b688a"
     },
     {
       "path": "README.md",

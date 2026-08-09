@@ -4,7 +4,7 @@
   "releaseTag": "v1.1.0",
   "pluginVersion": "1.1.0",
   "workflowContractVersion": "word-ppt-workflow-v5",
-  "sourceManifestSha256": "a122cc98b4c61a36d5c32be6c42688020ec56b817425e594d0a493dabd1b688a",
+  "sourceManifestSha256": "4aaad35d62a9dec9b2517719e5d10e98e4f3b9811b984c0d7914f6353816809c",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -326,8 +326,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py",
-      "bytes": 29235,
-      "sha256": "b888cbf70fd6fd86d995f0a784bc888c0ff4fb48272f003089b865d046dc2655"
+      "bytes": 29344,
+      "sha256": "8e4244a5775087205fa70c36d1c7a7c8ef60b472bd4ba212698cffa9a6a55b7b"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/workflow_metrics.py",
@@ -1497,7 +1497,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 52028,
-      "sha256": "a122cc98b4c61a36d5c32be6c42688020ec56b817425e594d0a493dabd1b688a"
+      "sha256": "4aaad35d62a9dec9b2517719e5d10e98e4f3b9811b984c0d7914f6353816809c"
     },
     {
       "path": "README.md",

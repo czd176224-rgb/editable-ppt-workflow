@@ -52,19 +52,21 @@ PROHIBITED_PATHS = (
 )
 PROHIBITED_REPO_PATHS = (
     "plugins/editable-ppt-workflow/skills/zhejiang-ppt-v2",
-    "plugins/editable-ppt-workflow/skills/image-to-editable-ppt/cli/tests/test_v18_editable_cache.py",
+    "plugins/editable-ppt-workflow/skills/word-to-editable-ppt",
+    "plugins/editable-ppt-workflow/skills/codex-gpt-image",
+    "plugins/editable-ppt-workflow/skills/image-to-editable-ppt",
+    "plugins/editable-ppt-workflow/skills/officecli",
+    "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_v18_editable_cache.py",
 )
 PROHIBITED_RUNTIME_PATTERNS = {
     "retired regional skill name": re.compile(r"zhejiang[-_ ]ppt(?:[-_ ]v2)?|\bzjppt\b", re.IGNORECASE),
     "external PPT Master dependency": re.compile(r"ppt[-_]master", re.IGNORECASE),
     "historical workflow contract": re.compile(r"five[-_]master[-_]v(?:16|17|18)", re.IGNORECASE),
     "legacy approval/sample field": re.compile(r"master_approval|sample_status", re.IGNORECASE),
-    "legacy uploaded logo field": re.compile(r"company_logo|\blogo(?:s)?\b", re.IGNORECASE),
-    "legacy style-image field": re.compile(r"style_reference|style[-_ ]image", re.IGNORECASE),
     "legacy visual-DNA field": re.compile(r"visual_dna|visual[- ]dna", re.IGNORECASE),
     "legacy page evidence": re.compile(
         r"five[-_ ]evidence|artifact_ownership|content_coverage|semantic_fidelity|information_structure|"
-        r"page_context_receipt|relation_bindings|generation_trace",
+        r"page_context_receipt|relation_bindings",
         re.IGNORECASE,
     ),
     "legacy deck-wide visual QA": re.compile(
@@ -76,8 +78,23 @@ PROHIBITED_RUNTIME_PATTERNS = {
         re.IGNORECASE,
     ),
 }
-ALLOWED_COMMANDS = frozenset({"confirm-ui", "doctor", "prepare", "workflow"})
-REQUIRED_REQUIREMENTS = frozenset({"flask", "jsonschema", "pillow", "pymupdf", "python-docx", "python-pptx"})
+V4_PRODUCTION_FILES = (
+    "production_runner.py", "run_workflow.py", "workflow_state.py", "page_pipeline.py",
+    "page_generation.py", "page_material_bundle_v4.py", "v4_qa.py", "v4_qa_gateway.py",
+    "v4_reconstruction.py", "v4_reconstruction_gateway.py",
+)
+REMOVED_V4_SEMANTICS = {
+    "removed native/hybrid route": re.compile(r"\b(?:native|hybrid)[-_ ]route\b|route\s*in\s*\{[^}]*['\"]native", re.IGNORECASE),
+    "removed Image2 skip": re.compile(r"skip[-_ ]image2|image2[-_ ]skip", re.IGNORECASE),
+    "removed background-only QA": re.compile(r"background[-_ ]only|text[-_ ]free[-_ ]background", re.IGNORECASE),
+    "removed wrong-ratio acceptance": re.compile(r"16:9[-_ ]body|direct[-_ ]then[-_ ]centered[-_ ]contain", re.IGNORECASE),
+    "removed flattened editability": re.compile(r"flattened[-_ ]editable|full[-_ ]body[-_ ]bitmap[-_ ]fallback", re.IGNORECASE),
+}
+ALLOWED_COMMANDS = frozenset({
+    "batch-generate", "confirm-ui", "doctor", "prepare", "run",
+    "v5", "v5-diagnostics", "workflow",
+})
+REQUIRED_REQUIREMENTS = frozenset({"flask", "jsonschema", "pillow", "pypdf", "pypdfium2", "python-docx", "python-pptx"})
 
 
 def _display(path: Path, root: Path) -> str:
@@ -115,12 +132,26 @@ def _scan_tokens(skill_root: Path, repo_root: Path) -> list[str]:
     return findings
 
 
+def _scan_v4_semantics(skill_root: Path, repo_root: Path) -> list[str]:
+    findings: list[str] = []
+    for name in V4_PRODUCTION_FILES:
+        path = skill_root / "scripts" / name
+        if not path.is_file():
+            findings.append(f"{_display(path, repo_root)}: required V4 production module is missing")
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), start=1):
+            for label, pattern in REMOVED_V4_SEMANTICS.items():
+                if pattern.search(line):
+                    findings.append(f"{_display(path, repo_root)}:{line_number}: {label}: {line.strip()}")
+    return findings
+
+
 def _scan_other_plugin_runtime(repo_root: Path) -> list[str]:
     findings: list[str] = []
     plugin_root = repo_root / "plugins/editable-ppt-workflow"
     roots = (
-        plugin_root / "skills/codex-gpt-image/scripts",
-        plugin_root / "skills/image-to-editable-ppt/cli/editppt",
+        plugin_root / "skills/generate-slide-body-image/scripts",
+        plugin_root / "skills/reconstruct-editable-slide/cli/editppt",
     )
     patterns = {
         "external PPT Master dependency": re.compile(r"ppt[-_]master", re.IGNORECASE),
@@ -181,13 +212,9 @@ def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
         return [f"{_display(path, repo_root)}: build_initial_request is missing"]
     literals = _literal_strings(initial)
     findings: list[str] = []
-    if "generate" not in literals:
+    if not {"generate", "edit"} <= literals:
         findings.append(
-            f"{_display(path, repo_root)}:{initial.lineno}: initial generation must select operation=generate"
-        )
-    if "edit" in literals or "images/edits" in literals:
-        findings.append(
-            f"{_display(path, repo_root)}:{initial.lineno}: images/edits is forbidden for initial generation"
+            f"{_display(path, repo_root)}:{initial.lineno}: initial generation must select generate/edit from reference presence with matching endpoints"
         )
     return findings
 
@@ -242,12 +269,13 @@ def _scan_requirements(skill_root: Path, repo_root: Path) -> list[str]:
 
 def check(repo_root: Path) -> list[str]:
     repo_root = repo_root.resolve()
-    skill_root = repo_root / "plugins/editable-ppt-workflow/skills/word-to-editable-ppt"
+    skill_root = repo_root / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow"
     if not skill_root.is_dir():
         return [f"installable workflow skill is missing: {skill_root}"]
     findings: list[str] = []
     findings.extend(_scan_removed_paths(skill_root, repo_root))
     findings.extend(_scan_tokens(skill_root, repo_root))
+    findings.extend(_scan_v4_semantics(skill_root, repo_root))
     findings.extend(_scan_other_plugin_runtime(repo_root))
     findings.extend(_scan_initial_generation(skill_root, repo_root))
     findings.extend(_scan_commands(skill_root, repo_root))

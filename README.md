@@ -1,65 +1,58 @@
-# Editable PPT Workflow
+# Editable PPT Workflow 1.1.0
 
-将一个已经分页的 Word 文档转换为逐页生成、逐页检查并可编辑重建的 PowerPoint。当前工作流合同为 `word-only-v1`。
+`word-ppt-workflow-v5` 将一个已分页 Word 和一个 SVG 企业 Logo 转为“一页 Word 对应一页 PPT”的高保真对象级可编辑演示文稿。
 
-## 使用方式
+## V5 工作流
 
-1. 安装后重启 Codex。
-2. 新建任务并上传一个分页 `.docx`。
-3. 输入：
+`锁定 Word 与 Logo → 编译页面意图与素材需求 → UI 一次全局确认 → 必需真实素材项目级搜索一次 → 每页 Image2 视觉设计 → 高保真对象级重建 → 添加固定图层 → Image2 原稿与最终页成对 QA → 按页序组装 → Office 验证`
 
-```text
-@editable-ppt-workflow 请把我上传的分页 Word 转换为可编辑 PPT。
-```
+- PPT 固定 16:9（25.4 × 14.288 cm）。
+- 正文设计图目标 17:8，允许的相对宽高比误差不超过 1%；超限必须修复或阻断。
+- 每个未命中有效缓存的页面都调用 Image2，不再按页面类型跳过。
+- Word 页内图片默认只作为 Image2 素材；只有精确页内批注或已归一化全局风格要求才必须直接出现。
+- 支持“文字表达图片化”“使用新闻稿图片”等自然语言批注；内部方括号指令仍兼容，但普通用户无需书写。
+- 优先级固定为：硬规则、Word 事实/表格、分页批注、UI 全局软风格、证据材料、模型创意。批注只覆盖软风格，不能更改事实、几何或 Logo。
+- 附件只作为本页不可信参考；批注明确需要新闻、照片或外部资料时会自动搜索并保留 URL、时间与本地文件哈希。必需材料缺失时进入 `material_blocked`，不会浪费 Image2 调用。
+- 已接受的 Image2 正文图决定构图、层级、配色、留白和视觉节奏，Word 决定文字与表格事实。整块正文图片加隐藏文字不算可编辑重建。
+- QA 在重建和固定图层完成后成对比较 Image2 原稿与最终可编辑页，同时检查原文、批注、真实素材、可读性和设计还原度；仅硬性问题阻塞，软建议不阻塞。
+- 最终 PPT 必须通过 OpenXML 打开、Microsoft PowerPoint 或 LibreOffice 逐页渲染及对象可编辑性检查。
+- 标题、原始 SVG Logo、页脚和页码在重建后分别加入固定区域，且每项恰好一个。
 
-插件优先识别 `第1页、第2页……` 标记；完全没有标记时才使用 Word 物理分页或 LibreOffice 后备。锁定后始终保持一页 Word 对应一页 PPT。
-
-用户通过三个可返回的步骤填写视觉要求，但只进行一次最终确认。先选模板，再通过专业视觉化配置台调整细节，最后检查视觉、生产与交付合同；颜色支持 RGB/HEX 精确选择。局部视觉示意不调用 Image2，UI 截图只保存在项目中，不会投喂生图程序。生产模式提供质量优先、均衡和速度优先三档，并明确显示对应的图像质量、并发页数和自动修复次数。
-
-## 能做什么
-
-- 自动识别 Word 总页数、页序、正文、表格和页内图片/附件。
-- 用统一的紧凑风格合同逐页独立调用 `gpt-image-2`。
-- 在忠实本页信息和逻辑的基础上重组视觉表达。
-- 只对异常页面做局部修图或重新生成。
-- 页面通过 QA 后立即并行进入可编辑重建。
-- 严格复用当前项目内未变化页面的缓存。
-- 最终按锁定页序组装并检查页数、对象可编辑性和文件结构。
-
-## 优点与代价
-
-优点：用户输入少；只有一次人工确认；正常页面没有重复生图和重复深检；修改单页不会重做整套；页面构图仍由 Image2 根据内容独立决定。
-
-代价：首次安装环境较大；图片生成和对象级重建仍需要时间；Image2 对密集文字并非绝对可靠；可编辑重建不能保证像素级一致；复杂或无法解析的 Word 附件可能需要本页额外处理。
-
-## 安装
-
-从 Releases 下载 Windows ZIP 后运行 `setup.cmd`，或克隆仓库后运行：
+## 一条命令
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install.ps1
+python plugins\editable-ppt-workflow\skills\run-word-to-ppt-workflow\scripts\word_to_editable_ppt.py run `
+  --word D:\Input\source.docx --logo D:\Input\logo.svg --output D:\Projects\Deck --wait-ui
 ```
 
-完整说明见 [快速开始](docs/QUICKSTART.zh-CN.md)、[使用说明](docs/USER_GUIDE.zh-CN.md) 和 [常见故障](docs/TROUBLESHOOTING.zh-CN.md)。
+同一命令可安全续跑。全项目只出现一次整体风格确认，页面要求摘要为只读信息，不再逐页弹窗。未确认风格、缺少 Image2/Codex/ChatGPT 登录、本地 Codex App Server 超时或订阅额度暂不可用时会返回明确 pending 状态；补齐条件后重跑即可。
 
-## 运行环境
+确认完成后，`run` 建立或恢复唯一的 V5 DAG，并返回当前 ready work；本次 `run-word-to-ppt-workflow` Codex Skill 随后调度 Image2、QA 和逐页重建子代理。Python 命令不会自行创建 Codex 子代理，也不会回落到旧 V4 生产链。
 
-- Windows 10/11 x64
-- Python 3.10+
-- Codex 登录及账户可用的图片生成能力
-- Microsoft Word/PowerPoint 推荐但非强制
-- LibreOffice 仅作为物理分页和回渲染后备
+## 安装与验证
 
-项目缓存默认仅存在当前项目目录，不会成为跨项目记忆。Word 页文本和必要的本页图片可能发送到 Codex Images；详情见 [安全说明](SECURITY.md)。
+Windows 10/11、Python 3.10+、Codex 桌面版/CLI 的 ChatGPT 登录和图片生成能力为必需条件。视觉 QA 与视觉重建通过 Codex App Server 使用订阅额度；生图通过 Codex OAuth 图片能力保持固定像素尺寸；插件不使用 OpenAI API key。PowerPoint 推荐，LibreOffice 只作可选分页/渲染后备。
 
-## 开发验证
+ChatGPT/Codex 订阅与 API 账单彼此独立：本插件只走 Codex 管理的 OAuth 和订阅能力，不读取 `OPENAI_API_KEY`，也不安装 OpenAI Python SDK；仍受用户订阅计划的图片、模型与速率额度约束。
+
+公开安装固定到不可变标签 `v1.1.0`。推荐下载完整 Release ZIP 并核验 SHA-256：
 
 ```powershell
-python -m pytest plugins\editable-ppt-workflow\skills\word-to-editable-ppt\tests -q
-python -m pytest plugins\editable-ppt-workflow\skills\codex-gpt-image\tests -q
-python -m pytest plugins\editable-ppt-workflow\skills\image-to-editable-ppt\cli\tests -q
-python -m pytest tests -q
+$Version = "1.1.0"
+$Asset = "editable-ppt-workflow-$Version-windows.zip"
+$ZipUrl = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0/editable-ppt-workflow-1.1.0-windows.zip"
+$Base = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0"
+Invoke-WebRequest $ZipUrl -OutFile $Asset
+Invoke-WebRequest "$Base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
+$Expected = ((Get-Content SHA256SUMS.txt | Where-Object { $_ -match [regex]::Escape($Asset) }) -split "\s+")[0].ToLowerInvariant()
+$Actual = (Get-FileHash -Algorithm SHA256 $Asset).Hash.ToLowerInvariant()
+if (-not $Expected -or $Actual -ne $Expected) { throw "Release ZIP SHA-256 verification failed." }
+$InstallDir = Join-Path $PWD "editable-ppt-workflow-$Version"
+if (Test-Path -LiteralPath $InstallDir) { throw "Install directory already exists: $InstallDir" }
+Expand-Archive -LiteralPath $Asset -DestinationPath $InstallDir
+& (Join-Path $InstallDir "setup.cmd")
 ```
+
+卸载使用 `.\uninstall.ps1`。故障处理见 [快速开始](docs/QUICKSTART.zh-CN.md)、[使用说明](docs/USER_GUIDE.zh-CN.md) 与 [常见故障](docs/TROUBLESHOOTING.zh-CN.md)。
 
 [MIT License](LICENSE)

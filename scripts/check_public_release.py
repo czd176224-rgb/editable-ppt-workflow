@@ -28,6 +28,7 @@ TEXT_SUFFIXES = {
 FORBIDDEN_SUFFIXES = {".docx", ".pptx", ".pdf", ".env"}
 FORBIDDEN_DIRECTORY_PARTS = {".git", "__pycache__", ".pytest_cache"}
 SKIP_CONTENT_SCAN = {"scripts/check_public_release.py"}
+GENERATED_RELEASE_FILES = {"public-source-manifest.json", "public-release-audit.json"}
 
 
 def normalized(relative: Path) -> str:
@@ -42,6 +43,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def tree_sha256(files: dict[str, str]) -> str:
+    payload = "".join(f"{path} {files[path]}\n" for path in sorted(files))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def release_files(root: Path) -> list[Path]:
     if (root / ".git").exists():
         completed = subprocess.run(
@@ -52,9 +58,14 @@ def release_files(root: Path) -> list[Path]:
         return [
             root / item.decode("utf-8")
             for item in completed.stdout.split(b"\0")
-            if item and (root / item.decode("utf-8")).is_file()
+            if item
+            and item.decode("utf-8") != "public-release-audit.json"
+            and (root / item.decode("utf-8")).is_file()
         ]
-    return [path for path in root.rglob("*") if path.is_file()]
+    return [
+        path for path in root.rglob("*")
+        if path.is_file() and normalized(path.relative_to(root)) != "public-release-audit.json"
+    ]
 
 
 def validate(root: Path) -> dict:
@@ -63,10 +74,29 @@ def validate(root: Path) -> dict:
     manifest_path = root / "plugins/editable-ppt-workflow/.codex-plugin/plugin.json"
     package_path = root / "package-info.json"
     marketplace_path = root / ".agents/plugins/marketplace.json"
-    required = [manifest_path, package_path, marketplace_path, root / "LICENSE"]
+    required = [
+        manifest_path,
+        package_path,
+        marketplace_path,
+        root / "LICENSE",
+        root / "NOTICE",
+        root / "docs/RELEASE.md",
+        root / "docs/SECURITY_AND_PROVENANCE.md",
+    ]
     for path in required:
         if not path.is_file():
             errors.append(f"missing required file: {path.relative_to(root)}")
+    source_manifest_path = root / "public-source-manifest.json"
+    source_manifest = None
+    if source_manifest_path.is_file():
+        source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8-sig"))
+        forbidden_provenance = {"sourceCommit", "commit", "branch", "remote", "repositoryPath", "sourcePath"}
+        if forbidden_provenance.intersection(source_manifest):
+            errors.append("public source manifest contains private-development provenance fields")
+        if source_manifest.get("schemaVersion") != "public-source-manifest-v1":
+            errors.append("public source manifest schemaVersion is invalid")
+        if source_manifest.get("authority") != "tracked-public-source":
+            errors.append("public source manifest authority must be tracked-public-source")
 
     if not errors:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
@@ -74,6 +104,8 @@ def validate(root: Path) -> dict:
         marketplace = json.loads(marketplace_path.read_text(encoding="utf-8-sig"))
         if manifest.get("version") != package.get("pluginVersion"):
             errors.append("plugin manifest and package-info versions differ")
+        if package.get("releaseTag") != f"v{package.get('pluginVersion')}":
+            errors.append("releaseTag must exactly match v<pluginVersion>")
         if package.get("marketplace") != "editable-ppt-public":
             errors.append("package-info marketplace is not editable-ppt-public")
         if package.get("repository") != "czd176224-rgb/editable-ppt-workflow":
@@ -85,6 +117,38 @@ def validate(root: Path) -> dict:
         entries = marketplace.get("plugins", [])
         if len(entries) != 1 or entries[0].get("name") != "editable-ppt-workflow":
             errors.append("Marketplace must expose exactly editable-ppt-workflow")
+        if source_manifest is not None:
+            for field in ("releaseTag", "pluginVersion", "workflowContractVersion"):
+                if source_manifest.get(field) != package.get(field):
+                    errors.append(f"public source manifest {field} does not match package-info")
+            declared = source_manifest.get("files")
+            if not isinstance(declared, dict):
+                errors.append("public source manifest files must be an object")
+            elif not (root / ".git").exists():
+                actual_paths = {
+                    normalized(path.relative_to(root))
+                    for path in root.rglob("*")
+                    if path.is_file() and normalized(path.relative_to(root)) not in GENERATED_RELEASE_FILES
+                }
+                declared_paths = set(declared)
+                if actual_paths != declared_paths:
+                    extra = sorted(actual_paths - declared_paths)
+                    missing = sorted(declared_paths - actual_paths)
+                    errors.append(
+                        "source manifest file set mismatch: "
+                        f"extra={extra[:5]} missing={missing[:5]}"
+                    )
+                actual_hashes = {
+                    relative: sha256(root / Path(relative))
+                    for relative in sorted(actual_paths.intersection(declared_paths))
+                }
+                for relative, actual_hash in actual_hashes.items():
+                    if declared.get(relative) != actual_hash:
+                        errors.append(f"public source manifest hash mismatch: {relative}")
+                if source_manifest.get("indexTreeSha256") != tree_sha256(
+                    {str(path): str(value) for path, value in declared.items()}
+                ):
+                    errors.append("public source manifest tree digest mismatch")
 
     token_pattern = re.compile(r"(?:gho_|github_pat_|sk-)[A-Za-z0-9_-]{12,}")
     user_path_pattern = re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+", re.IGNORECASE)
@@ -101,17 +165,40 @@ def validate(root: Path) -> dict:
             "config.yaml",
         }:
             errors.append(f"forbidden artifact: {rel}")
+        is_test_source = "tests" in lowered_parts or "test" in lowered_parts
         if path.suffix.lower() in TEXT_SUFFIXES and rel not in SKIP_CONTENT_SCAN:
             text = path.read_text(encoding="utf-8-sig", errors="replace")
-            if "editable-ppt-private" in text:
+            if "editable-ppt-private" in text and not is_test_source:
                 errors.append(f"private Marketplace identifier in: {rel}")
             if token_pattern.search(text):
                 errors.append(f"credential-like token in: {rel}")
             if user_path_pattern.search(text):
                 errors.append(f"machine-specific user path in: {rel}")
+            lowered_text = text.lower()
+            if "--ref main" in lowered_text and not is_test_source:
+                errors.append(f"mutable Marketplace ref in: {rel}")
+            if "/tests/" not in f"/{lowered}/" and ("import fitz" in lowered_text or "pymupdf" in lowered_text):
+                errors.append(f"prohibited PyMuPDF runtime dependency in: {rel}")
+            if (not is_test_source and "d.officecli.ai" in lowered_text and
+                    ("invoke-restmethod" in lowered_text or "| iex" in lowered_text or "| bash" in lowered_text)):
+                errors.append(f"mutable OfficeCLI installer in: {rel}")
         files.append({"path": rel, "bytes": path.stat().st_size, "sha256": sha256(path)})
 
-    return {"schemaVersion": 1, "root": ".", "passed": not errors, "errors": errors, "files": files}
+    package_identity = {}
+    if package_path.is_file():
+        package_identity = json.loads(package_path.read_text(encoding="utf-8-sig"))
+    return {
+        "schemaVersion": "public-release-audit-v1",
+        "reportType": "public-release-audit",
+        "releaseTag": package_identity.get("releaseTag"),
+        "pluginVersion": package_identity.get("pluginVersion"),
+        "workflowContractVersion": package_identity.get("workflowContractVersion"),
+        "sourceManifestSha256": sha256(source_manifest_path) if source_manifest_path.is_file() else None,
+        "root": ".",
+        "passed": not errors,
+        "errors": errors,
+        "files": files,
+    }
 
 
 def main() -> int:

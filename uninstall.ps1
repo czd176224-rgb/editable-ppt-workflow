@@ -1,15 +1,31 @@
 param(
     [switch]$RemoveRuntime,
     [switch]$RemoveMarketplace,
-    [string]$RuntimeRoot
+    [string]$RuntimeRoot,
+    [string]$ReceiptPath
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $PluginRoot = Join-Path $RepoRoot "plugins\editable-ppt-workflow"
-$PackageInfo = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "package-info.json") | ConvertFrom-Json
+$PackageInfo = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $RepoRoot "package-info.json") | ConvertFrom-Json
 $MarketplaceName = [string]$PackageInfo.marketplace
 $PluginName = [string]$PackageInfo.plugin
+$ReceiptBase = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
+if (-not $ReceiptPath) { $ReceiptPath = Join-Path $ReceiptBase "plugin-install-receipts\editable-ppt-workflow.json" }
+$ReceiptPath = [System.IO.Path]::GetFullPath($ReceiptPath)
+$ManagedReceipt = $null
+if (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) {
+    try { $ManagedReceipt = Get-Content -Raw -Encoding UTF8 -LiteralPath $ReceiptPath | ConvertFrom-Json }
+    catch { throw "The install receipt is unreadable; refusing to delete or modify it: $ReceiptPath" }
+    if ($ManagedReceipt.schemaVersion -ne "editable-ppt-install-receipt-v1" -or
+        $ManagedReceipt.plugin -ne $PluginName -or
+        $ManagedReceipt.marketplace -ne $MarketplaceName -or
+        -not $ManagedReceipt.repository -or -not $ManagedReceipt.releaseTag -or
+        -not $ManagedReceipt.pluginVersion) {
+        throw "The install receipt does not match this plugin/Marketplace and will not be deleted: $ReceiptPath"
+    }
+}
 
 $Codex = $null
 $CodexRoots = @(
@@ -40,11 +56,11 @@ if ($RemoveMarketplace) {
 
 if ($RemoveRuntime) {
     if (-not $RuntimeRoot) {
-        $RuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow"
+        $RuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow-fixed-canvas-cm-v2"
     }
     $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
     . (Join-Path $PluginRoot "scripts\runtime_root_safety.ps1")
-    $DefaultRuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow"
+    $DefaultRuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow-fixed-canvas-cm-v2"
     Assert-RuntimeRootLocation -RuntimeRoot $RuntimeRoot -DefaultRuntimeRoot $DefaultRuntimeRoot -PluginRoot $PluginRoot
     if (Test-Path -LiteralPath $RuntimeRoot -PathType Container) {
         if (-not (Test-RuntimeOwnershipSentinel $RuntimeRoot)) {
@@ -52,6 +68,18 @@ if ($RemoveRuntime) {
         }
         [System.IO.Directory]::Delete($RuntimeRoot, $true)
         Write-Output "Removed isolated runtime: $RuntimeRoot"
+    }
+}
+
+if ($ManagedReceipt) {
+    if ($RemoveMarketplace) {
+        $ReceiptTombstone = "$ReceiptPath.removed-$([guid]::NewGuid().ToString('N'))"
+        Move-Item -LiteralPath $ReceiptPath -Destination $ReceiptTombstone
+        try { Remove-Item -LiteralPath $ReceiptTombstone -Force }
+        catch { Write-Warning "The verified receipt was atomically detached but its tombstone could not be removed: $ReceiptTombstone" }
+        Write-Output "Removed verified install receipt: $ReceiptPath"
+    } else {
+        Write-Output "Verified install receipt preserved because Marketplace removal was not requested."
     }
 }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成 PPT 页面主体图"
+  short_description: "根据页面材料和视觉合同生成或修复完整主体图"
+  default_prompt: "Use $generate-slide-body-image to generate the complete 17:8 body image for this PPT page."

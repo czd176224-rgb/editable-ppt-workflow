@@ -1,28 +1,54 @@
 {
-  "marketplace": "editable-ppt-public",
-  "repository": "czd176224-rgb/editable-ppt-workflow",
-  "plugin": "editable-ppt-workflow",
-  "pluginVersion": "1.0.0+codex.20260728231105",
-  "workflowContractVersion": "word-only-v1",
-  "requiredUserFiles": 1,
-  "requiredHumanConfirmationPhaseCount": 1,
-  "confirmationInteraction": "three-step-single-confirmation",
-  "productionProfiles": [
-    "quality",
-    "balanced",
-    "speed"
-  ],
-  "uiPreviewImagePolicy": "project-audit-only-never-image-input",
-  "strictPageCacheInputCount": 6,
-  "initialImageEndpoint": "images/generations",
-  "localRepairEndpoint": "images/edits",
-  "imageCanvasProfiles": {
-    "ppt169": "1792x1008",
-    "ppt43": "1536x1152"
-  },
-  "generatedImagesDirectory": "06_images/generated",
-  "finalOutputDirectory": "08_final",
-  "releaseStatus": "published-public-marketplace",
-  "repositoryVisibility": "public",
-  "supportedPlatform": "Windows 10/11 x64"
+    "marketplace":  "editable-ppt-public",
+    "repository":  "czd176224-rgb/editable-ppt-workflow",
+    "plugin":  "editable-ppt-workflow",
+    "pluginVersion":  "1.1.0",
+    "releaseTag":  "v1.1.0",
+    "workflowContractVersion":  "word-ppt-workflow-v5",
+    "geometryContractVersion":  "fixed-canvas-cm-v2",
+    "promptContractVersion":  "page-prompt-v8",
+    "qaPolicyVersion":  "risk-qa-v5",
+    "reconstructionVersion":  "editable-image-v3",
+    "requiredUserFiles":  2,
+    "requiredHumanConfirmationPhaseCount":  1,
+    "confirmationInteraction":  "single-global-confirmation",
+    "currentUiAdapter":  "confirm-ui-result-v1-single-confirmation-sse-progress",
+    "productionProfiles":  [
+                               "quality",
+                               "balanced",
+                               "speed"
+                           ],
+    "uiPreviewImagePolicy":  "project-audit-only-never-image-input",
+    "everyPageCallsImage2":  true,
+    "initialImageEndpoint":  "images/generations-or-edits-by-reference-presence",
+    "localRepairEndpoint":  "images/edits",
+    "imageSourcePixels":  "exact-1904x896-17:8-with-actual-dimension-receipt",
+    "bodyImageAspectPolicy":  "17:8-relative-error-at-most-0.01",
+    "bodyImageSizes":  {
+                           "speed":  "1904x896",
+                           "balanced":  "1904x896",
+                           "quality":  "1904x896"
+                       },
+    "pageImagePolicy":  "reference-only-unless-exact-comment-or-normalized-style-requires-presence",
+    "designAcceptancePolicy":  "shared-authentic-slots-then-exact-source-compose-and-semantic-acceptance-with-one-targeted-repair",
+    "qaPolicy":  "accepted-composed-body-vs-final-body-crop-v7-with-hard-issue-allowlist",
+    "reconstructionPolicy":  "sealed-composed-body-editppt-single-authority-high-fidelity-object-level-editable",
+    "fixedSlideCm":  {
+                         "width":  25.4,
+                         "height":  14.288
+                     },
+    "fixedBodyRegionCm":  {
+                              "x":  0.81,
+                              "y":  2.3,
+                              "width":  23.78,
+                              "height":  11.18
+                          },
+    "geometryTolerancePercent":  0.1,
+    "generatedImagesDirectory":  "04_v5/design",
+    "finalOutputDirectory":  "08_final",
+    "releaseStatus":  "published-public-marketplace",
+    "apiKeyRequired":  false,
+    "marketplacePreviewIdentity":  "editable-ppt-public",
+    "repositoryVisibility":  "public",
+    "supportedPlatform":  "Windows 10/11 x64"
 }

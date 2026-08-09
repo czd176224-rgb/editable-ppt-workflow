@@ -48,7 +48,7 @@ function Test-RuntimeOwnershipSentinel {
         return $false
     }
     try {
-        $Ownership = Get-Content -Raw -LiteralPath $Sentinel | ConvertFrom-Json
+        $Ownership = Get-Content -Raw -Encoding UTF8 -LiteralPath $Sentinel | ConvertFrom-Json
         return (
             $Ownership.schemaVersion -eq 1 -and
             $Ownership.owner -eq "editable-ppt-workflow" -and
@@ -158,4 +158,36 @@ function Initialize-EditablePptRuntimeRoot {
     }
     Write-RuntimeOwnershipSentinel $NormalizedRoot
     return $NormalizedRoot
+}
+
+function Remove-StaleEditablePptWorkflowPackages {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$CurrentWorkflowRoot
+    )
+
+    $NormalizedRoot = Get-NormalizedRuntimePath $RuntimeRoot
+    $NormalizedCurrent = Get-NormalizedRuntimePath $CurrentWorkflowRoot
+    if (-not (Test-RuntimeOwnershipSentinel $NormalizedRoot)) {
+        throw "Refusing workflow cleanup without a matching runtime ownership sentinel: $NormalizedRoot"
+    }
+    if (-not (Test-RuntimePathWithin $NormalizedCurrent $NormalizedRoot)) {
+        throw "Current workflow package is outside the owned runtime root: $NormalizedCurrent"
+    }
+    if (-not (Test-Path -LiteralPath $NormalizedCurrent -PathType Container)) {
+        throw "Current workflow package is unavailable: $NormalizedCurrent"
+    }
+    foreach ($Directory in Get-ChildItem -LiteralPath $NormalizedRoot -Directory -Filter "workflow-*" -Force) {
+        $Candidate = Get-NormalizedRuntimePath $Directory.FullName
+        if (Test-RuntimePathEqual $Candidate $NormalizedCurrent) {
+            continue
+        }
+        if (-not (Test-RuntimePathWithin $Candidate $NormalizedRoot)) {
+            throw "Refusing workflow cleanup outside the owned runtime root: $Candidate"
+        }
+        if (($Directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove a stale workflow package through a reparse point: $Candidate"
+        }
+        [System.IO.Directory]::Delete($Candidate, $true)
+    }
 }

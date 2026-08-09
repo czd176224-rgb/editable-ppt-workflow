@@ -1,0 +1,274 @@
+import json
+import os
+import subprocess
+import sys
+import zipfile
+import pytest
+from pathlib import Path
+
+from PIL import Image
+from pypdf import PdfReader
+
+
+ROOT = Path(__file__).resolve().parents[1]
+EDIT_RUNTIME = ROOT / "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime"
+WORD_RUNTIME = ROOT / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts"
+sys.path.insert(0, str(EDIT_RUNTIME))
+sys.path.insert(0, str(WORD_RUNTIME))
+
+
+def text(relative: str) -> str:
+    return (ROOT / relative).read_text(encoding="utf-8-sig")
+
+
+def require_export_checkout() -> None:
+    if not (ROOT / ".git").exists():
+        pytest.skip("public export requires the private reviewed Git checkout")
+
+
+def test_release_identity_is_immutable_v2_tag():
+    package = json.loads(text("package-info.json"))
+    assert package["pluginVersion"] == "1.1.0"
+    assert package["releaseTag"] == "v1.1.0"
+    installer = text("install.ps1")
+    assert "--ref $ReleaseTag" in installer
+    assert "--ref main" not in installer
+
+
+def test_no_pymupdf_or_fitz_in_active_runtime_contract():
+    active = [
+        ROOT / "verify.ps1",
+        ROOT / "plugins/editable-ppt-workflow/scripts/install_runtime.ps1",
+        ROOT / "plugins/editable-ppt-workflow/scripts/check_current_runtime.py",
+        ROOT / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/requirements.txt",
+        ROOT / "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/pyproject.toml",
+    ]
+    active += list((ROOT / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts").glob("*.py"))
+    active += list((ROOT / "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime").glob("*.py"))
+    lowered = "\n".join(path.read_text(encoding="utf-8-sig").lower() for path in active)
+    assert "pymupdf" not in lowered
+    assert "import fitz" not in lowered
+    assert '"fitz"' not in lowered
+
+
+def test_officecli_is_optional_preinstalled_and_never_downloaded():
+    installer = text("plugins/editable-ppt-workflow/scripts/install_runtime.ps1")
+    assert "Invoke-RestMethod" not in installer
+    assert "d.officecli.ai" not in installer
+    assert "officecli_optional" in installer
+    doctor = text("plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/doctor.py")
+    assert "officecli_optional" in doctor
+    assert "workflow_ready" in doctor
+
+
+def test_uninstall_runtime_path_matches_installer_and_preserves_projects():
+    installer = text("plugins/editable-ppt-workflow/scripts/install_runtime.ps1")
+    uninstaller = text("uninstall.ps1")
+    expected = "plugin-runtimes\\editable-ppt-workflow-fixed-canvas-cm-v2"
+    assert expected in installer
+    assert expected in uninstaller
+    assert "User-created Word and PPT project folders were not searched or modified" in uninstaller
+
+
+def test_notice_and_release_runbook_are_public_assets():
+    allowlist = json.loads(text("public-release-files.json"))["files"]
+    assert "tests" in allowlist
+    assert "NOTICE" in allowlist
+    assert "docs/RELEASE.md" in allowlist
+    assert "docs/SECURITY_AND_PROVENANCE.md" in allowlist
+
+
+def test_export_rejects_untracked_allowlisted_descendants(tmp_path: Path):
+    require_export_checkout()
+    poison = ROOT / "plugins/editable-ppt-workflow/UNTRACKED_RELEASE_POISON.txt"
+    poison.write_text("must not ship", encoding="utf-8")
+    output = tmp_path / "public"
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+            cwd=ROOT, capture_output=True, text=True, timeout=90,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert not (output / poison.relative_to(ROOT)).exists()
+        source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
+        assert poison.relative_to(ROOT).as_posix() not in source_manifest["files"]
+        assert "sourceCommit" not in source_manifest
+        assert source_manifest["authority"] == "tracked-public-source"
+        assert source_manifest["releaseTag"] == "v1.1.0"
+        assert len(source_manifest["indexTreeSha256"]) == 64
+    finally:
+        poison.unlink(missing_ok=True)
+
+
+def test_package_rejects_untracked_nested_files_in_exported_snapshot(tmp_path: Path):
+    require_export_checkout()
+    output = tmp_path / "public"
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    poison = output / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/UNTRACKED_NESTED.py"
+    poison.write_text("raise RuntimeError('must not ship')\n", encoding="utf-8")
+    dist = tmp_path / "dist"
+    packaged = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(output / "scripts/package_release.ps1"), "-SourceRoot", str(output),
+         "-OutputDirectory", str(dist)],
+        cwd=output, capture_output=True, text=True, timeout=90,
+    )
+    assert packaged.returncode != 0
+    assert "source manifest file set mismatch" in packaged.stdout + packaged.stderr
+
+
+def test_export_scan_report_package_chain_has_non_circular_authorities(tmp_path: Path):
+    require_export_checkout()
+    output = tmp_path / "public"
+    exported = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert exported.returncode == 0, exported.stdout + exported.stderr
+    source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
+    assert source_manifest["schemaVersion"] == "public-source-manifest-v1"
+    assert "public-source-manifest.json" not in source_manifest["files"]
+    assert "public-release-audit.json" not in source_manifest["files"]
+    audited = subprocess.run(
+        [sys.executable, "scripts/check_public_release.py", ".", "--write-report", "public-release-audit.json"],
+        cwd=output, capture_output=True, text=True, timeout=90,
+    )
+    assert audited.returncode == 0, audited.stdout + audited.stderr
+    audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
+    assert audit["schemaVersion"] == "public-release-audit-v1"
+    assert audit["releaseTag"] == "v1.1.0"
+    packaged = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(output / "scripts/package_release.ps1"), "-SourceRoot", str(output),
+         "-OutputDirectory", str(tmp_path / "dist")],
+        cwd=output, capture_output=True, text=True, timeout=90,
+    )
+    assert packaged.returncode == 0, packaged.stdout + packaged.stderr
+
+
+def test_git_archive_uses_head_bytes_not_dirty_manifest_or_untracked_files(tmp_path: Path):
+    require_export_checkout()
+    output = tmp_path / "public"
+    exported = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert exported.returncode == 0, exported.stdout + exported.stderr
+    for args in (["init", "-b", "release"], ["config", "user.email", "release@example.invalid"],
+                 ["config", "user.name", "Release Test"], ["add", "-A"], ["commit", "-m", "public"]):
+        subprocess.run(["git", *args], cwd=output, check=True, capture_output=True)
+    committed_manifest = subprocess.run(
+        ["git", "show", "HEAD:public-source-manifest.json"], cwd=output,
+        check=True, capture_output=True,
+    ).stdout
+    manifest_path = output / "public-source-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    manifest["files"]["INJECTED.txt"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (output / "INJECTED.txt").write_text("must not ship", encoding="utf-8")
+    dist = tmp_path / "dist"
+    packaged = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(output / "scripts/package_release.ps1"), "-SourceRoot", str(output),
+         "-OutputDirectory", str(dist)], cwd=output, capture_output=True, text=True, timeout=90,
+    )
+    assert packaged.returncode == 0, packaged.stdout + packaged.stderr
+    with zipfile.ZipFile(dist / "editable-ppt-workflow-1.1.0-windows.zip") as bundle:
+        assert "INJECTED.txt" not in bundle.namelist()
+        assert bundle.read("public-source-manifest.json") == committed_manifest
+
+
+def test_exported_snapshot_runs_complete_release_gate(tmp_path: Path):
+    if os.getenv("EDITABLE_PPT_NESTED_PUBLIC_GATE") == "1":
+        pytest.skip("avoid recursive release-gate invocation")
+    require_export_checkout()
+    output = tmp_path / "public"
+    exported = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert exported.returncode == 0, exported.stdout + exported.stderr
+    environment = {**os.environ, "EDITABLE_PPT_NESTED_PUBLIC_GATE": "1"}
+    gated = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(output / "scripts/release_gate.ps1"), "-SkipPortableSmoke"],
+        cwd=output, capture_output=True, text=True, timeout=3600, env=environment,
+    )
+    assert gated.returncode == 0, gated.stdout + gated.stderr
+
+
+def test_ci_and_release_use_the_complete_release_gate():
+    ci = text(".github/workflows/ci.yml")
+    release = text(".github/workflows/release.yml")
+    for required in ("release_gate.ps1", "package_release.ps1", "Portable clean-install smoke"):
+        assert required in ci + release
+    assert "GITHUB_REF_NAME" in release
+    assert "releaseTag" in release
+
+
+def test_public_scanner_rejects_private_provenance_fields(tmp_path: Path):
+    require_export_checkout()
+    output = tmp_path / "public"
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
+    manifest["sourceCommit"] = "a" * 40
+    (output / "public-source-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    checked = subprocess.run(
+        ["python", "scripts/check_public_release.py", "."], cwd=output,
+        capture_output=True, text=True, timeout=90,
+    )
+    assert checked.returncode != 0
+    assert "private-development provenance" in checked.stdout
+
+
+def test_permissive_pdf_replacement_synthesizes_and_renders_pages(tmp_path: Path):
+    from deck_text_hints import synthesize_pdf
+    from _input_normalization import render_pdf_pages
+
+    page_dirs = []
+    for index, color in enumerate(("red", "blue"), 1):
+        page_dir = tmp_path / f"input-{index}"
+        page_dir.mkdir()
+        Image.new("RGB", (170, 80), color).save(page_dir / "source.png")
+        page_dirs.append(page_dir)
+    pdf = tmp_path / "pages.pdf"
+    synthesize_pdf(page_dirs, pdf)
+    assert len(PdfReader(pdf).pages) == 2
+    outputs = render_pdf_pages(pdf, tmp_path / "rendered", 72)
+    assert len(outputs) == 2
+    assert all(Image.open(path).size == (170, 80) for path in outputs)
+
+
+def test_editppt_runtime_supports_installed_package_import_boundary():
+    cli_root = ROOT / "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli"
+    probe = subprocess.run(
+        [sys.executable, "-c", "from editppt.runtime.build_pptx_from_manifest import normalize_manifest; print('ok')"],
+        cwd=ROOT,
+        env={**__import__("os").environ, "PYTHONPATH": f"{cli_root}{__import__('os').pathsep}{WORD_RUNTIME}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
+def test_readme_and_quickstart_install_verified_exact_release_zip():
+    docs = text("README.md") + text("docs/QUICKSTART.zh-CN.md")
+    assert "releases/download/v1.1.0/editable-ppt-workflow-1.1.0-windows.zip" in docs
+    assert "SHA256SUMS.txt" in docs
+    assert "Get-FileHash" in docs
+    assert "raw.githubusercontent.com" not in docs

@@ -3,7 +3,7 @@ $SafetyScript = Join-Path $PSScriptRoot "runtime_root_safety.ps1"
 . $SafetyScript
 
 $PluginRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$DefaultRuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow"
+$DefaultRuntimeRoot = Join-Path $env:USERPROFILE ".codex\plugin-runtimes\editable-ppt-workflow-fixed-canvas-cm-v2"
 $TestRoot = Join-Path $env:USERPROFILE (".codex\runtime-safety-smoke-" + [guid]::NewGuid().ToString("N"))
 $UnownedRoot = "$TestRoot-unowned"
 $ProtectedRoot = Join-Path $PluginRoot ("runtime-safety-smoke-" + [guid]::NewGuid().ToString("N"))
@@ -30,6 +30,23 @@ try {
         -Force | Out-Null
     if (Test-Path -LiteralPath (Join-Path $Initialized "replace-me.txt")) {
         throw "Force did not replace the owned runtime root."
+    }
+    $CurrentWorkflow = Join-Path $Initialized "workflow-current"
+    $OldWorkflow = Join-Path $Initialized "workflow-old"
+    $UnrelatedRuntimeData = Join-Path $Initialized "preserve-runtime-data"
+    New-Item -ItemType Directory -Path $CurrentWorkflow, $OldWorkflow, $UnrelatedRuntimeData | Out-Null
+    Set-Content -LiteralPath (Join-Path $OldWorkflow "old.txt") -Value "old"
+    Remove-StaleEditablePptWorkflowPackages `
+        -RuntimeRoot $Initialized `
+        -CurrentWorkflowRoot $CurrentWorkflow
+    if (-not (Test-Path -LiteralPath $CurrentWorkflow -PathType Container)) {
+        throw "Current workflow package was removed during stale-version cleanup."
+    }
+    if (Test-Path -LiteralPath $OldWorkflow) {
+        throw "Stale workflow package was not removed."
+    }
+    if (-not (Test-Path -LiteralPath $UnrelatedRuntimeData -PathType Container)) {
+        throw "Unrelated runtime data was removed during stale-version cleanup."
     }
 
     New-Item -ItemType Directory -Path $UnownedRoot | Out-Null

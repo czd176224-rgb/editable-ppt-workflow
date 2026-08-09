@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN" data-ui="three-step">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>演示文稿视觉确认</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true">P</span>
+      <div>
+        <p class="eyebrow">PRESENTATION DESIGN CONSOLE</p>
+        <h1>风格合同</h1>
+      </div>
+    </div>
+    <div class="project-facts" id="project-facts" aria-live="polite"></div>
+  </header>
+
+  <main id="app" class="workspace" aria-live="polite" data-confirmation-scope="global-style-only">
+    <section class="loading-panel">
+      <div class="spinner" aria-hidden="true"></div>
+      <p>正在读取分页内容与视觉建议…</p>
+    </section>
+  </main>
+
+  <dialog id="color-dialog" class="color-dialog" aria-labelledby="color-dialog-title">
+    <form method="dialog" class="color-dialog-shell">
+      <header class="color-dialog-header">
+        <div>
+          <p class="eyebrow">CUSTOM COLOR</p>
+          <h2 id="color-dialog-title">选择颜色</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="关闭颜色选择器">×</button>
+      </header>
+      <div class="color-dialog-body">
+        <label class="spectrum-field">
+          <span>颜色</span>
+          <input id="color-spectrum" type="color" value="#17365D" aria-label="颜色色域">
+        </label>
+        <div class="color-values">
+          <label>红色 R<input id="color-r" type="number" min="0" max="255"></label>
+          <label>绿色 G<input id="color-g" type="number" min="0" max="255"></label>
+          <label>蓝色 B<input id="color-b" type="number" min="0" max="255"></label>
+          <label class="hex-field">十六进制<input id="color-hex" type="text" maxlength="7" spellcheck="false"></label>
+        </div>
+        <div class="color-comparison" aria-label="颜色对比">
+          <div><span id="color-current"></span><small>当前</small></div>
+          <div><span id="color-new"></span><small>新增</small></div>
+        </div>
+      </div>
+      <p id="color-error" class="color-error" role="alert"></p>
+      <footer class="color-dialog-actions">
+        <button id="color-reset" type="button" class="text-button">恢复默认</button>
+        <span class="dialog-spacer"></span>
+        <button id="color-cancel" value="cancel" class="secondary-button">取消</button>
+        <button id="color-confirm" value="default" class="primary-button">确定</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="/static/color.js" defer></script>
+  <script src="/static/visual_system.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

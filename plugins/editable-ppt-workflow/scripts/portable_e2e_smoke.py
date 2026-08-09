@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -12,18 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
-from pptx import Presentation
-from pptx.util import Inches
-
-
-def _canonical(value: dict) -> bytes:
-    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-
-
-def _write(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+from docx import Document
 
 
 def _run(command: list[str], *, env: dict[str, str]) -> dict:
@@ -42,162 +30,92 @@ def smoke(editppt: Path, output: Path) -> dict:
         shutil.rmtree(output)
     output.mkdir(parents=True)
     project = output / "project"
-    project.mkdir()
-    source_text = "便携安装完整链路"
-    contract = {
-        "schema_version": "2.0",
-        "page_number": 1,
-        "source_text": source_text,
-        "source_hash": hashlib.sha256(source_text.encode()).hexdigest(),
-    }
-    _write(project / "01_page_contracts" / "page_001.json", contract)
-    style = {
-        "schema_version": "1.0",
-        "canvas": "ppt169",
-        "canvas_profile": {
-            "image_size": "1792x1008",
-            "slide_width_inches": 13.333333,
-            "slide_height_inches": 7.5,
-            "fit": "contain",
-            "allow_crop": False,
-        },
-        "image_quality": "auto",
-        "generation_mode": "continuous",
-        "max_concurrency": 1,
-        "automatic_repair_budget": 1,
-    }
-    style_bytes = _canonical(style)
-    style_path = project / "02_style" / "style_execution.json"
-    style_path.parent.mkdir()
-    style_path.write_bytes(style_bytes)
-    _write(
-        project / "workflow_run.json",
-        {
-            "schema_version": "1.0",
-            "workflow_contract_version": "word-only-v1",
-            "project_name": "portable-e2e",
-            "created_at": "2026-07-27T00:00:00Z",
-            "word_source": {},
-            "pagination": {"page_count": 1, "locked_page_order": [1]},
-            "style_confirmation": {
-                "status": "confirmed",
-                "confirmed_at": "2026-07-27T00:00:00Z",
-                "execution_file": "02_style/style_execution.json",
-                "execution_sha256": hashlib.sha256(style_bytes).hexdigest(),
-            },
-            "jobs": [
-                {
-                    "slide_id": "slide_001",
-                    "page_number": 1,
-                    "status": "accepted",
-                    "contract_file": "01_page_contracts/page_001.json",
-                    "expected_output": "06_images/generated/page_001.png",
-                    "generation": {"image": "06_images/generated/page_001.png"},
-                    "qa_result": {"status": "pass", "repair_scope": "none", "issues": []},
-                }
-            ],
-            "final_pptx": None,
-        },
-    )
-    generated = project / "06_images" / "generated" / "page_001.png"
-    generated.parent.mkdir(parents=True)
-    Image.new("RGB", (1792, 1008), "white").save(generated)
-
-    presentation = Presentation()
-    presentation.slide_width = Inches(13.333333)
-    presentation.slide_height = Inches(7.5)
-    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-    slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1)).text = source_text
-    pptx = project / "07_editable" / "page_001.pptx"
-    pptx.parent.mkdir()
-    presentation.save(pptx)
-
-    fake = output / "renderer"
-    fake.mkdir()
-    (fake / "render_pptx.py").write_text(
-        "from pathlib import Path\n"
-        "from PIL import Image\n"
-        "from pptx import Presentation\n"
-        "def _r(p,o):\n"
-        " o=Path(o); o.mkdir(parents=True,exist_ok=True); n=len(Presentation(p).slides)\n"
-        " for i in range(1,n+1): Image.new('RGB',(16,9),'white').save(o/f'slide_{i:03d}.png')\n"
-        " return n\n"
-        "render_powerpoint=_r\nrender_libreoffice=_r\n",
+    page_title = "便携安装完整链路"
+    body_text = "正文重建和固定框架均可执行。"
+    source = output / "source.docx"
+    document = Document()
+    document.add_paragraph("第 1 页")
+    document.add_paragraph(page_title)
+    document.add_paragraph(body_text)
+    document.save(source)
+    logo = output / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 48">'
+        '<rect width="120" height="48" fill="#22577A"/></svg>',
         encoding="utf-8",
     )
-    workflow_env = dict(os.environ)
-    edit_env = dict(workflow_env)
-    existing_pythonpath = edit_env.get("PYTHONPATH")
-    edit_env["PYTHONPATH"] = (
-        os.pathsep.join((str(fake), existing_pythonpath))
-        if existing_pythonpath
-        else str(fake)
-    )
 
-    # Sync cache identity and claim the accepted reconstruction using the
-    # explicitly installed current workflow package, not repository code.
+    from confirm_ui.server import _wait, create_app
+    from editppt.runtime.fixed_region_runtime import CONTENT_BOX, SLIDE
+    from prepare_run import prepare
+    import workflow_state
+
+    prepared = prepare(source, project, logo)
+    if prepared.get("page_count") != 1:
+        raise RuntimeError("portable prepare did not create exactly one V4 page")
+    client = create_app(project).test_client()
+    recommendations = client.get("/api/recommendations").get_json()
+    selected = recommendations["design_directions"]["selected"]
+    candidate = recommendations["design_directions"]["candidates"][selected]
+    confirmation = {
+        "stage": "final",
+        "direction": selected,
+        "template_selection": candidate["template_selection"],
+        "canvas": "ppt169",
+        **{
+            key: candidate[key]
+            for key in (
+                "visual_style", "color", "icons", "typography", "image_rendering",
+                "style_axes", "layout_preferences", "information_density",
+                "background_system", "image_role", "evidence_strength",
+                "composition_tendency", "brand_device",
+            )
+        },
+        "regional_style": {"enabled": False},
+        "production_profile": "balanced",
+        "additional_requirements": "保持Word主叙事和逐页证据边界",
+    }
+    response = client.post("/api/confirm", json=confirmation)
+    if response.status_code != 200 or _wait(project, "final", 5) != 0:
+        raise RuntimeError(f"portable V4 confirmation failed: {response.get_json()}")
+
+    workflow_env = dict(os.environ)
     workflow_python = Path(sys.executable)
-    sync = subprocess.run(
-        [str(workflow_python), "-m", "workflow_state", "next", "--project", str(project)],
-        capture_output=True,
-        text=True,
-        env=workflow_env,
-        check=False,
-    )
-    if sync.returncode:
-        raise RuntimeError(sync.stdout + sync.stderr)
-    request = json.loads(sync.stdout)
-    attempt = request["requests"][0]["attempt"]
-    # The generic editppt dispatcher belongs to image reconstruction runs, so
-    # use the installed workflow CLI module for this current page lease.
-    dispatched = subprocess.run(
-        [
-            str(workflow_python),
-            "-m",
-            "workflow_state",
-            "dispatch",
-            "--project",
-            str(project),
-            "--page",
-            "1",
-            "--agent",
-            "portable",
-            "--attempt",
-            str(attempt),
-        ],
-        capture_output=True,
-        text=True,
-        env=workflow_env,
-        check=False,
-    )
-    if dispatched.returncode:
-        raise RuntimeError(dispatched.stdout + dispatched.stderr)
-    descriptor = project / "07_editable" / "page_001.json"
-    recorded = _run(
-        [
-            str(editppt),
-            "run",
-            "record",
-            str(project),
-            "--page",
-            "1",
-            "--agent-id",
-            "portable",
-            "--attempt",
-            str(attempt),
-            "--pptx",
-            str(pptx),
-            "--artifact",
-            str(descriptor),
-        ],
-        env=edit_env,
-    )
-    finalized = _run([str(editppt), "run", "finalize", str(project)], env=edit_env)
-    if recorded.get("state") != "complete" or finalized.get("status") != "complete":
-        raise RuntimeError("portable record/finalize did not reach completion")
-    if not (project / "08_final" / "deck.pptx").is_file():
-        raise RuntimeError("portable final deck is missing")
-    return {"record": recorded, "finalize": finalized}
+    state = workflow_state.load(project)
+    if state.get("workflow_contract_version") != "word-ppt-workflow-v4" or state.get("style_confirmation", {}).get("status") != "confirmed":
+        raise RuntimeError("portable prepare/confirmation did not reach the current V4 boundary")
+
+    page_dir = output / "editable-page"
+    page_dir.mkdir()
+    manifest = {
+        "workflow_contract_version": "fixed-canvas-cm-v2",
+        "reconstruction_contract_version": "editable-image-v3",
+        "slide": dict(SLIDE),
+        "content_box": dict(CONTENT_BOX),
+        "source": {"width_px": 1700, "height_px": 800},
+        "text_boxes": [{"object_id": "word-p1", "name": "body-paragraph-1", "text": body_text, "box_px": [80, 60, 1200, 100]}],
+        "tables": [],
+        "shapes": [{"object_id": "decor-1", "name": "decorative-panel", "type": "rect", "box_px": [40, 30, 1500, 650], "fill": "#F4F4F4"}],
+        "images": [],
+        "visual_inventory": [],
+        "background_strategy": "native slide background plus editable decorative panel",
+        "quality_checks": {
+            "font_size_calibrated": True,
+            "visual_inventory_matched": True,
+            "background_strategy_checked": True,
+            "shape_corner_geometry_checked": True,
+        },
+    }
+    (page_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    built = subprocess.run([str(editppt), "page", "build", str(page_dir)], capture_output=True, text=True, env=workflow_env, check=False)
+    if built.returncode:
+        raise RuntimeError(built.stdout + built.stderr)
+    validated = subprocess.run([str(editppt), "page", "validate", str(page_dir)], capture_output=True, text=True, env=workflow_env, check=False)
+    if validated.returncode:
+        raise RuntimeError(validated.stdout + validated.stderr)
+    if not (page_dir / "page.pptx").is_file() or not (page_dir / "preview.png").is_file():
+        raise RuntimeError("portable V4 object build did not create PPTX and preview")
+    return {"workflow": "word-ppt-workflow-v4", "editppt": "v4-build-validate-ok"}
 
 
 def main() -> int:

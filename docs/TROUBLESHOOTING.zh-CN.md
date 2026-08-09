@@ -1,46 +1,29 @@
-# 常见故障
+# 常见故障（V4）
 
-## 双击 setup.cmd 后立即关闭
+## `await_style_confirmation`
 
-从解压后的文件夹运行，不要在 ZIP 预览窗口中直接运行。也可以右键文件夹空白处打开 PowerShell，执行：
+完成当前 UI 的最终确认后重跑。该 UI 是临时版本化适配层；不要手工修改风格 JSON。
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install.ps1
-```
+## Image2 生成失败或 `page_blocked`
 
-## 找不到 Codex CLI
+确认 Codex 已登录、账户具备图片能力且网络可用。比例超出 17:8 的 1% 相对误差会触发修复或阻断。解决记录的认证、限流或输出问题后，再显式释放被阻断页面。
 
-先安装并打开 Codex Desktop，再重试安装。如果已经安装，完全退出 Codex 后重新打开一次，让桌面应用完成 CLI 环境准备。
+## `qa_backend_pending` / `reconstruction_backend_pending`
 
-## 找不到 Python
+打开 Codex 桌面版或 CLI 并使用 ChatGPT 登录，确认本地 `codex app-server` 可启动。未登录、订阅能力不可用、超时、结构化输出无效、签名不一致或对象清单不合格时都保持 pending，不会使用通用模板或假设通过。解决原因后重复同一命令。
 
-安装 Python 3.10 或更高版本，并在安装界面选择把 Python 加入 PATH。重新打开 PowerShell，运行：
+## `assembly_pending`
 
-```powershell
-python --version
-```
+页面已完成但最终原子组装或机械 QA 未成功。检查记录的错误、关闭正在占用目标 PPTX 的 Office 程序，然后重跑。失败尝试不会发布半成品。
 
-## 找不到 PowerPoint 或 LibreOffice
+## 内容或图片不符合预期
 
-PowerPoint 和 LibreOffice 都不是基础结构校验的强制条件。若需要无标记 Word 的物理分页或最终回渲染证明，推荐安装 Microsoft Office，也可以安装 LibreOffice 作为后备；缺失时插件应给出非阻塞提示。
+检查对应 Word 页正文、批注和材料绑定。页内图片默认仅作参考；需要直接出现时，在本页批注中明确指定图片。风格要求应在 UI 合同中确认。
 
-## Marketplace 下载失败
+## 安装后找不到插件
 
-确认能够访问 GitHub，并检查公司网络、防火墙或代理设置。公开版安装不要求 GitHub 登录，也不要求安装 GitHub CLI。
-
-## 安装完成但 @ 找不到插件
-
-完全退出 Codex Desktop，重新打开并新建任务。不要继续使用安装之前已经打开的旧任务。
-
-## 图片生成失败
-
-确认 Codex 已登录、当前账户具有图片生成能力且网络正常。单页失败会进入自动重试；持续失败时保存终端错误信息再提交问题。
-
-## 页面内容不理想
-
-先检查 Word 的分页标记、当前页原文和页内附件是否正确。风格需要调整时，应重新开始任务并在一屏实时网页中修改风格要求。插件不会把旧项目的风格或内容自动带入新项目。
+完全退出并重启 Codex Desktop，再新建任务。运行 `.\verify.ps1` 检查 V4 元数据与运行时。
 
 ## 卸载
 
-双击 `uninstall.cmd`，输入 `YES`。卸载器只删除插件登记、公开 Marketplace 登记和带有所有权标记的插件隔离运行时；不会搜索或删除用户项目。
+运行 `uninstall.cmd` 并按提示确认。卸载器不删除用户项目。

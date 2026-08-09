@@ -106,12 +106,18 @@ def test_gateway_batches_pairs_in_reference_final_order_and_reuses_ledger(
     with Image.open(first_pair[1]) as cropped:
         assert cropped.size == (1904, 896)
     ledger = json.loads((project / "04_v5/request-ledger.json").read_text(encoding="utf-8"))
-    semantic_inputs = next(iter(ledger["requests"].values()))["semantic_inputs"]
-    assert semantic_inputs["body_comparison_artifacts"][0]["artifact_location"].endswith(
+    semantic_inputs = [item["semantic_inputs"] for item in ledger["requests"].values()]
+    page_one_inputs = next(
+        item for item in semantic_inputs
+        if item["body_comparison_artifacts"][0]["artifact_location"].endswith(
+            "04_v5/final-pages/page_001/rendered/body-comparison.png"
+        )
+    )
+    assert page_one_inputs["body_comparison_artifacts"][0]["artifact_location"].endswith(
         "04_v5/final-pages/page_001/rendered/body-comparison.png"
     )
-    assert semantic_inputs["body_comparison_artifacts"][0]["sha256"] == _sha(first_pair[1])
-    assert semantic_inputs["policy"] == "accepted-composed-body-vs-final-body-balanced-v7"
+    assert page_one_inputs["body_comparison_artifacts"][0]["sha256"] == _sha(first_pair[1])
+    assert all(item["policy"] == "accepted-composed-body-vs-final-body-balanced-v7" for item in semantic_inputs)
     assert all("sha256" not in call["prompt"].lower() for call in calls)
     assert all(str(project) not in call["prompt"] for call in calls)
 

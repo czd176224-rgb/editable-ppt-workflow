@@ -26,6 +26,16 @@ EXPECTED_EDITPPT_CLI_VERSION = "0.3.0"
 POWERPOINT_COM_LIFECYCLE_TIMEOUT_SECONDS = 60
 
 
+def _editable_python_path(editppt_path: str | None) -> Path | None:
+    candidates: list[Path] = []
+    installed_executable = os.environ.get("EDITPPT_EXE")
+    if installed_executable:
+        candidates.append(Path(installed_executable).parent / "python.exe")
+    if editppt_path:
+        candidates.append(Path(editppt_path).parent / "python.exe")
+    return next((path for path in candidates if path.is_file()), None)
+
+
 def background_text_detection_status() -> dict:
     """Report the mandatory local zero-token background text detector."""
     return capability_status()
@@ -362,8 +372,8 @@ def diagnose(check_powerpoint: bool = False, smoke_test: bool = False) -> dict:
     editable_cli_version = None
     editppt_path = editppt_command.get("path")
     if editppt_path:
-        editable_python = Path(editppt_path).parent / "python.exe"
-        if editable_python.is_file():
+        editable_python = _editable_python_path(editppt_path)
+        if editable_python is not None:
             completed = subprocess.run(
                 [str(editable_python), "-c", "import importlib.metadata; print(importlib.metadata.version('image-to-editable-ppt-cli'))"],
                 capture_output=True,

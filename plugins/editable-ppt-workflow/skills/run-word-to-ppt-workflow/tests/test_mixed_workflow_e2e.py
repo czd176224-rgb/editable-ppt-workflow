@@ -311,7 +311,9 @@ def test_three_page_mixed_sample_generates_every_uncached_v4_body_then_stops_clo
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(batch_generation.subprocess, "run", fake_backend)
-    completed = run_production(project, page_timeout=10, finalize=False)
+    batch = batch_generation.run_batch(project, timeout=10)
+    assert [item["status"] for item in batch["results"]] == ["qa", "qa", "qa"]
+    completed = workflow_state.next_action(project)
     assert completed["stage"] == "qa_backend_pending"
     assert completed["pending_pages"] == [1, 2, 3]
     assert len(backend_calls) == 3

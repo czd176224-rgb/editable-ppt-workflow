@@ -325,28 +325,15 @@ def _rewrite_pptx(
 def _directory_reparse_point(link: Path, target: Path):
     """Create a real directory reparse point without Windows symlink privilege."""
     if os.name == "nt":
-        child_env = os.environ.copy()
-        child_env["EDITPPT_TEST_JUNCTION_PATH"] = str(link)
-        child_env["EDITPPT_TEST_JUNCTION_TARGET"] = str(target)
         command = [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            (
-                "$ErrorActionPreference='Stop'; "
-                "New-Item -ItemType Junction "
-                "-Path $env:EDITPPT_TEST_JUNCTION_PATH "
-                "-Target $env:EDITPPT_TEST_JUNCTION_TARGET | Out-Null"
-            ),
+            "cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target),
         ]
         completed = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
             check=False,
-            env=child_env,
         )
         assert completed.returncode == 0, completed.stderr or completed.stdout
     else:

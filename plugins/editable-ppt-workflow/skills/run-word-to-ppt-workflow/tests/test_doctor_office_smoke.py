@@ -19,6 +19,22 @@ import extract_docx_pages  # noqa: E402
 import render_pptx  # noqa: E402
 
 
+def test_editable_python_prefers_installer_executable_over_cmd_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    executable = tmp_path / "runtime" / "editable-ppt" / "Scripts" / "editppt.exe"
+    python = executable.parent / "python.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    python.touch()
+    wrapper = tmp_path / "bin" / "editppt.CMD"
+    wrapper.parent.mkdir()
+    wrapper.write_text(f'@echo off\n"{executable}" %*\n', encoding="ascii")
+    monkeypatch.setenv("EDITPPT_EXE", str(executable))
+
+    assert doctor._editable_python_path(str(wrapper)) == python
+
+
 def test_core_office_smoke_never_uses_detected_officecli(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         doctor,

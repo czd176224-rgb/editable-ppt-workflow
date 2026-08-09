@@ -4,7 +4,7 @@
   "releaseTag": "v1.1.0",
   "pluginVersion": "1.1.0",
   "workflowContractVersion": "word-ppt-workflow-v5",
-  "sourceManifestSha256": "4aaad35d62a9dec9b2517719e5d10e98e4f3b9811b984c0d7914f6353816809c",
+  "sourceManifestSha256": "93ce1477657febdfa5ad6123b3fbb9fb22b1ef5ae2ae5f7a979b546d14810e30",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -731,8 +731,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/doctor.py",
-      "bytes": 20728,
-      "sha256": "51bdb1e079b884756e54ee2291f91da7c9abb524ccdc300b80cd691756a11d05"
+      "bytes": 21149,
+      "sha256": "26c65189c53fa0499cdea07e94ff882c222d36daa373d9ef9145ef0449673d86"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/editable_page_cache.py",
@@ -1201,8 +1201,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_doctor_office_smoke.py",
-      "bytes": 16703,
-      "sha256": "3512afb38db1cbe66a0991a2f014f3dd53541345effa712e90aa596ef73147fe"
+      "bytes": 17316,
+      "sha256": "d6ad8723c7f6e52a5fbdd19064bb5dccf9ecbb136c6a95cb9e7aaa62d51f1bbe"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_effective_page_authority.py",
@@ -1497,7 +1497,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 52028,
-      "sha256": "4aaad35d62a9dec9b2517719e5d10e98e4f3b9811b984c0d7914f6353816809c"
+      "sha256": "93ce1477657febdfa5ad6123b3fbb9fb22b1ef5ae2ae5f7a979b546d14810e30"
     },
     {
       "path": "README.md",

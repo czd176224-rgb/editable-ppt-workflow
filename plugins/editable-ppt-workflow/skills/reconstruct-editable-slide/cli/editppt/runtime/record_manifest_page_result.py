@@ -101,7 +101,11 @@ def record_manifest_page(run: Path, *, page_id: str, agent_id: str) -> dict:
     env["PYTHONPATH"] = os.pathsep.join(
         value for value in (str(WORKFLOW_SCRIPTS), env.get("PYTHONPATH")) if value
     )
-    completed = subprocess.run(command, text=True, capture_output=True, env=env)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        command, text=True, encoding="utf-8", errors="replace", capture_output=True, env=env,
+    )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "page validation failed"
         raise ValueError(detail)

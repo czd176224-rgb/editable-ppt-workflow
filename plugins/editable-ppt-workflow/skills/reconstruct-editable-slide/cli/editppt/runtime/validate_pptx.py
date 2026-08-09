@@ -4,6 +4,7 @@ import hashlib
 import json
 import posixpath
 import re
+import sys
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -550,6 +551,10 @@ def validate_deck(args):
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(output + "\n", encoding="utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
     print(output)
     raise SystemExit(0 if report["passed"] else 1)
 

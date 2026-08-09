@@ -73,6 +73,8 @@ def finalize_manifest_run(run: Path) -> dict:
         env["PYTHONPATH"] = os.pathsep.join(
             value for value in (str(WORKFLOW_SCRIPTS), env.get("PYTHONPATH")) if value
         )
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -84,6 +86,8 @@ def finalize_manifest_run(run: Path) -> dict:
                 str(temporary_report),
             ],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             env=env,
         )

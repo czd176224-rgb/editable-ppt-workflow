@@ -1,4 +1,4 @@
-# Editable PPT Workflow 2.0.1
+# Editable PPT Workflow 2.0.2
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
@@ -21,9 +21,9 @@ The production dispatcher exposes V6 only. It does not migrate or resume V4/V5 s
 
 ## Install
 
-Download the immutable `v2.0.1` Windows release ZIP:
+Download the immutable `v2.0.2` Windows release ZIP:
 
-`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.1/editable-ppt-workflow-2.0.1-windows.zip`
+`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.2/editable-ppt-workflow-2.0.2-windows.zip`
 
 Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
 

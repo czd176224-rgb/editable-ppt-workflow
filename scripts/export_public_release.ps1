@@ -77,18 +77,24 @@ foreach ($relative in $Allowlist.files) {
 
 $PackagePath = Join-Path $OutputPath "package-info.json"
 $Package = Get-Content -Raw -Encoding UTF8 -LiteralPath $PackagePath | ConvertFrom-Json
-$Package.marketplace = "editable-ppt-public"
-$Package.marketplacePreviewIdentity = "editable-ppt-public"
-$Package.repository = "czd176224-rgb/editable-ppt-workflow"
-$Package.releaseStatus = "published-public-marketplace"
-$Package.repositoryVisibility = "public"
-Write-Utf8NoBom $PackagePath (($Package | ConvertTo-Json -Depth 20) + "`n")
+if (
+    $Package.marketplace -ne "editable-ppt-public" -or
+    $Package.marketplacePreviewIdentity -ne "editable-ppt-public" -or
+    $Package.repository -ne "czd176224-rgb/editable-ppt-workflow" -or
+    $Package.releaseStatus -ne "published-public-marketplace" -or
+    $Package.repositoryVisibility -ne "public"
+) {
+    throw "Public source metadata is not already sealed for the public marketplace."
+}
 
 $MarketplacePath = Join-Path $OutputPath ".agents\plugins\marketplace.json"
 $Marketplace = Get-Content -Raw -Encoding UTF8 -LiteralPath $MarketplacePath | ConvertFrom-Json
-$Marketplace.name = "editable-ppt-public"
-$Marketplace.interface.displayName = "Editable PPT Workflow $($Package.pluginVersion)"
-Write-Utf8NoBom $MarketplacePath (($Marketplace | ConvertTo-Json -Depth 20) + "`n")
+if (
+    $Marketplace.name -ne "editable-ppt-public" -or
+    $Marketplace.interface.displayName -ne "Editable PPT Workflow $($Package.pluginVersion)"
+) {
+    throw "Public marketplace metadata is not already sealed for this plugin version."
+}
 
 $SourceFiles = [ordered]@{}
 Get-ChildItem -LiteralPath $OutputPath -File -Recurse -Force | Sort-Object FullName | ForEach-Object {

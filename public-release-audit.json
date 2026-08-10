@@ -1,18 +1,18 @@
 {
   "schemaVersion": "public-release-audit-v1",
   "reportType": "public-release-audit",
-  "releaseTag": "v2.0.1",
-  "pluginVersion": "2.0.1",
+  "releaseTag": "v2.0.2",
+  "pluginVersion": "2.0.2",
   "workflowContractVersion": "word-ppt-workflow-v6",
-  "sourceManifestSha256": "7a4f7ea6a590031fd036611bc6f93e4ee604cb6d02ddf3cdf6b7c9ac3f677823",
+  "sourceManifestSha256": "becaa36282830299d071cba7bcfd859d39407278c18e93a8877640d58548b30f",
   "root": ".",
   "passed": true,
   "errors": [],
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
-      "bytes": 789,
-      "sha256": "511fa19cc30a49d00af9dd398965e42a7755a764d3f3ff0bd4c9c7cfe059f284"
+      "bytes": 436,
+      "sha256": "2721c16c64cc82c129d3a9be3ba9820b2b7a8c9e1177193edb55063d43a6c650"
     },
     {
       "path": ".gitattributes",
@@ -37,12 +37,12 @@
     {
       "path": "docs/QUICKSTART.zh-CN.md",
       "bytes": 780,
-      "sha256": "e184a11d5828e94e3b9bfd4a4054d4e50bcdfe06569892771dfef7613b8e9ec1"
+      "sha256": "8bc5dcffd256d6123c9156721a27439abe03f88dfb8c0328aa08d814499f0842"
     },
     {
       "path": "docs/RELEASE.md",
       "bytes": 848,
-      "sha256": "d38c58ade4e822b885f4ae935ee15cc585cd703ee783d3352957c26a5d5310aa"
+      "sha256": "1040f4d489b962f2a2f4dc179568fa7310d193541e2a90cff6d73ad6f6b345a9"
     },
     {
       "path": "docs/SECURITY_AND_PROVENANCE.md",
@@ -76,18 +76,18 @@
     },
     {
       "path": "package-info.json",
-      "bytes": 2550,
-      "sha256": "c00b395c89d17c1db2e3ffb84f7b1d87544e077a8aea56e4fb8402c4cbefe493"
+      "bytes": 2035,
+      "sha256": "f2d29eb45da2447661272646f8247fd13b406e969e9bd242f41d954f9fc01c64"
     },
     {
       "path": "plugins/editable-ppt-workflow/.codex-plugin/plugin.json",
       "bytes": 1788,
-      "sha256": "bd4031bde60b1893930b3568bcfde9cdcd41e84c00f01fc24ec77afa4237f996"
+      "sha256": "12cf86b50ed9f3d1f9764925df3924177ddbb9654e0d967eafe512a93b3fefb2"
     },
     {
       "path": "plugins/editable-ppt-workflow/README.md",
       "bytes": 886,
-      "sha256": "e67c59ae702b4d4efc1afed763ee557a5c1cb2ceba830cb172e978fc133bf561"
+      "sha256": "21f1ba329939444a5f9137ac917b3aa119fdaeb9de525603fb83eb3314fc9517"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/check_current_runtime.py",
@@ -1377,7 +1377,7 @@
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_task6_metadata_v4.py",
       "bytes": 2788,
-      "sha256": "89d243fb04ada676fcc40541ac9c920de7005ef0482c33939ed51d0213fc5ba6"
+      "sha256": "119bbbdf00193879465e63f7ef56d9b7775099cb93c588376e51297f4b91c7e4"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_v3_decision_pipeline.py",
@@ -1582,12 +1582,12 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 60060,
-      "sha256": "7a4f7ea6a590031fd036611bc6f93e4ee604cb6d02ddf3cdf6b7c9ac3f677823"
+      "sha256": "becaa36282830299d071cba7bcfd859d39407278c18e93a8877640d58548b30f"
     },
     {
       "path": "README.md",
       "bytes": 1751,
-      "sha256": "7c5b809e5d573e2775718d61d4da1b8f63b61cbe2482fa134ea27bb1307f0100"
+      "sha256": "0f04737f3179b596f9e153937ff3314dd98727014f8c6ed91f10ce6312c49add"
     },
     {
       "path": "scripts/build_release_archive.py",
@@ -1606,8 +1606,8 @@
     },
     {
       "path": "scripts/export_public_release.ps1",
-      "bytes": 6257,
-      "sha256": "1ff529981eb9a914fc7e1fca1937eb2b57ffe660cb025e5a08d42aaae7cb7a88"
+      "bytes": 6353,
+      "sha256": "bda6e64d207d588c98d26e6e407d801e59d484e3bdaf7b8ee1e12f2d3d247909"
     },
     {
       "path": "scripts/package_release.ps1",
@@ -1632,7 +1632,7 @@
     {
       "path": "tests/test_install_receipt_state_machine.py",
       "bytes": 12315,
-      "sha256": "95810a721a6c1c76708142b63b5d25419f6cbc7a776d2150dd03661cffbdab9f"
+      "sha256": "f4a7c241b76c811c4feef4a6cfe50947bac1a58a2d9e6920bdd5f4d623cec5b5"
     },
     {
       "path": "tests/test_public_distribution.py",
@@ -1642,7 +1642,7 @@
     {
       "path": "tests/test_release_hardening_v2.py",
       "bytes": 13017,
-      "sha256": "261f5c01f5516a1e328c963763f495148c18e86efbcdf22feea4a0caf0bf72cc"
+      "sha256": "c0037ecd9f24d1019459b612c0d0b4cd474f701120517cf74c74d7be3918d5ca"
     },
     {
       "path": "tests/test_skill_role_names.py",

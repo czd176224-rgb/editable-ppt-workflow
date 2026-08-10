@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from workflow_v6_contract import new_page, new_project  # noqa: E402
+from workflow_v6_image import build_generate_command, generate_page_body  # noqa: E402
+from workflow_v6_state import create, load, save  # noqa: E402
+
+
+def _project(tmp_path: Path) -> Path:
+    project = tmp_path / "project"
+    state = new_project(
+        word_source={"path": "00_source/source.docx"},
+        logo_source={"path": "00_source/logo.svg"},
+        pages=[new_page(1, title="标题")],
+    )
+    state["style_confirmation"] = {
+        "status": "confirmed",
+        "contract": {"visual_style": "简洁专业"},
+    }
+    create(project, state)
+    for folder, payload in (
+        ("effective_pages", {
+            "artifact_version": "effective-page-v6",
+            "page_number": 1,
+            "word_original": "正文",
+            "comment_directives": [],
+        }),
+        ("reference_materials", {
+            "artifact_version": "reference-materials-v6",
+            "page_number": 1,
+            "references": [{"kind": "word_image", "status": "available", "purpose": "参考"}],
+            "search_requests": [],
+        }),
+    ):
+        path = project / "02_v6" / folder / "page_001.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return project
+
+
+def test_generate_command_never_uses_edit_or_image_inputs(tmp_path: Path):
+    command = build_generate_command(
+        prompt_file=tmp_path / "prompt.txt",
+        output=tmp_path / "out.png",
+        trace=tmp_path / "trace.json",
+    )
+    assert command[2] == "generate"
+    assert "edit" not in command
+    assert "--image" not in command
+    assert command[command.index("--size") + 1] == "1904x896"
+
+
+def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    reviews = iter([
+        {"accepted": False, "score": 4, "issues": ["正文重叠"]},
+        {"accepted": False, "score": 4, "issues": ["正文仍重叠"]},
+    ])
+
+    receipt = generate_page_body(
+        project,
+        page_number=1,
+        runner=runner,
+        reviewer=lambda *args, **kwargs: next(reviews),
+    )
+
+    assert len(calls) == 2
+    assert all(command[2] == "generate" and "--image" not in command for command in calls)
+    assert receipt["selected"]["attempt"] == 1
+    assert receipt["state"] == "accepted_fallback_first"
+    assert "qa_no_effective_improvement" in receipt["degraded_reasons"]
+    assert load(project)["pages"][0]["state"] == "accepted_fallback_first"
+
+
+def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    reviews = iter([
+        {"accepted": False, "score": 3, "issues": ["问题一", "问题二"]},
+        {"accepted": True, "score": 6, "issues": []},
+    ])
+    receipt = generate_page_body(
+        project,
+        page_number=1,
+        runner=runner,
+        reviewer=lambda *args, **kwargs: next(reviews),
+    )
+    assert receipt["selected"]["attempt"] == 2
+    assert receipt["state"] == "accepted"

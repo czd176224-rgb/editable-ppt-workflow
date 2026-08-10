@@ -1,7 +1,7 @@
 {
   "name": "editable-ppt-public",
   "interface": {
-    "displayName": "Editable PPT Workflow 2.0.0"
+    "displayName": "Editable PPT Workflow 2.0.1"
   },
   "plugins": [
     {

@@ -16,7 +16,7 @@ try {
         $last = [Math]::Min($offset + 11, $wordTests.Count - 1)
         $batch = @($wordTests[$offset..$last] | ForEach-Object { $_.FullName })
         & python -m pytest -p no:cacheprovider @batch -q
-        if ($LASTEXITCODE -ne 0) { throw "Word V4 test split failed at offset $offset." }
+        if ($LASTEXITCODE -ne 0) { throw "Word V6 test split failed at offset $offset." }
     }
     foreach ($suite in @(
         "plugins/editable-ppt-workflow/skills/generate-slide-body-image/tests",

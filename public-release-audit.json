@@ -4,7 +4,7 @@
   "releaseTag": "v2.0.0",
   "pluginVersion": "2.0.0",
   "workflowContractVersion": "word-ppt-workflow-v6",
-  "sourceManifestSha256": "0eabc50d5fddb81a93a80d200ac87c582e61d51719b11c748c1c55db98519eb1",
+  "sourceManifestSha256": "4f552fc7b0a18f1fb5bc49275d0db1d92b68dc861be267f5be5784dc16008b79",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -36,8 +36,8 @@
     },
     {
       "path": "docs/QUICKSTART.zh-CN.md",
-      "bytes": 608,
-      "sha256": "f6ab8db6bbba8f05e3c34d729666f577f9dbc112155df4c372504d0a4d8935c5"
+      "bytes": 780,
+      "sha256": "1446594bc53953c74969dfcfe1703848fd912e3771ec905575efa93f16b91173"
     },
     {
       "path": "docs/RELEASE.md",
@@ -62,7 +62,7 @@
     {
       "path": "install.ps1",
       "bytes": 10963,
-      "sha256": "55c22eb8013a2d484bb0a8791172a9a832aff045c8716d67f2520a03359e23ba"
+      "sha256": "4e77606b33a326826512653b615dced6edf3bdb7dd80eb6b8f66d6bc67f2800f"
     },
     {
       "path": "LICENSE",
@@ -1582,12 +1582,12 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 59938,
-      "sha256": "0eabc50d5fddb81a93a80d200ac87c582e61d51719b11c748c1c55db98519eb1"
+      "sha256": "4f552fc7b0a18f1fb5bc49275d0db1d92b68dc861be267f5be5784dc16008b79"
     },
     {
       "path": "README.md",
-      "bytes": 1571,
-      "sha256": "625b42cf84a7fd1e25ba9aa44b0c5c25cb7fd6631975b8e990cd00ad2683e5eb"
+      "bytes": 1751,
+      "sha256": "12c5b3da01f73dd267955b7ea4f194917a47ee3d264c999a143d3778129400a6"
     },
     {
       "path": "scripts/build_release_archive.py",
@@ -1627,7 +1627,7 @@
     {
       "path": "tests/test_install_receipt_state_machine.py",
       "bytes": 12315,
-      "sha256": "ad295a79aea06aae7dbe498831cf0a43b4c05b3ec83dc9fc1da2ed6c90640bfb"
+      "sha256": "89650672c6a0d10a66d36d5ed4ae88fb42b37e2544e3e2b7b98cae58e10671dc"
     },
     {
       "path": "tests/test_public_distribution.py",
@@ -1637,12 +1637,12 @@
     {
       "path": "tests/test_release_hardening_v2.py",
       "bytes": 13017,
-      "sha256": "5a735afadc25f8ad40a561f5e335f39a441a68906408ad6d112554e4e81cd4fe"
+      "sha256": "d0669a657feb39d1fc3a25536494fb751f857f3c8f4f2d36aadfc78d4bf39482"
     },
     {
       "path": "tests/test_skill_role_names.py",
-      "bytes": 2752,
-      "sha256": "c3cd36b866c51ac5d7b670dbf81fc8500ee84bf0a1d693480aad05281bc91ee5"
+      "bytes": 2718,
+      "sha256": "bf35f3880216f8ac1c97b313096c38d4aac4911c0db18179ba05c31eb9491178"
     },
     {
       "path": "uninstall.cmd",

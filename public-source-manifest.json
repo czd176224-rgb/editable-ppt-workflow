@@ -4,7 +4,7 @@
     "releaseTag":  "v2.0.0",
     "pluginVersion":  "2.0.0",
     "workflowContractVersion":  "word-ppt-workflow-v6",
-    "indexTreeSha256":  "bb2f3ef8f4614d60296803496e7c57c517d55b1af092375da9e5ed04b81c5a35",
+    "indexTreeSha256":  "88c58d3a915cb494054d425f77b7c2c26aa5e5004e6e8d7ad3d82166cb5328fc",
     "files":  {
                   ".agents/plugins/marketplace.json":  "577f652f031fe9b67596b1efdc0aea0930dc652bf00ed9851f326a80f5f5d59e",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -23,8 +23,8 @@
                   "plugins/editable-ppt-workflow/.codex-plugin/plugin.json":  "95225c574cbd4344d45ec5a84a892c97252a616659e0b22a6f6a98f154d17f6f",
                   "plugins/editable-ppt-workflow/README.md":  "1677babc95cb9def5cf4c05c84a911d1150d62a2beb7308770f9adfe131a4456",
                   "plugins/editable-ppt-workflow/scripts/check_current_runtime.py":  "9e7b28473c9f5e7c4ef40879be6067d59fbe00c9819ae8a1f24edfa6126eb218",
-                  "plugins/editable-ppt-workflow/scripts/install_runtime.ps1":  "b9297d4520cde5488620333d44a8c581e2c72d68721fa7c151aefa1258e1b57f",
-                  "plugins/editable-ppt-workflow/scripts/portable_e2e_smoke.py":  "2429de85de01801ce0e0b99774bcde6b696babd137dca4588a95e2b88ab75a80",
+                  "plugins/editable-ppt-workflow/scripts/install_runtime.ps1":  "aaf933109a0dc220554f5a019a15b0eab62dec5712ec72053e64997a23f1b4f9",
+                  "plugins/editable-ppt-workflow/scripts/portable_e2e_smoke.py":  "ab2090f651fc9b21ed9f805ede489a344235b5cfe56de7218259f7c7bb24deaf",
                   "plugins/editable-ppt-workflow/scripts/runtime_office.py":  "0a14ee38ee7de18d9058a52c748bee4205a5a95b6772f47c8c74350c4dd99053",
                   "plugins/editable-ppt-workflow/scripts/runtime_root_safety.ps1":  "af477b3251a5865d75d906b7e2f7519fecd8f7b377974524b14a8c893730778e",
                   "plugins/editable-ppt-workflow/scripts/test_install_runtime_safety.ps1":  "2acb6f513a4242a76cde31719ce08bdba299635e50e0753f1fa43e741bdaa7a8",
@@ -337,6 +337,6 @@
                   "uninstall.ps1":  "068c8c903f83bb4f1013464067f889ee894b83f26f070e4b603face83aea1329",
                   "update.cmd":  "cb026bf23ed4e81bc69b28de2bea348849dcd7bd8428f1be0c2eb21334078465",
                   "update.ps1":  "800f15c1362fa2d8b498616c734c9675a0f6f9d596b03ffdab0625bc10b226fd",
-                  "verify.ps1":  "4e572ef1a353d458d14abf6c0f7660dcf2b43d9e85ad214c01996a1fd2c00fd5"
+                  "verify.ps1":  "3b00ce7a153413fb1bb3355ec88f6a4f892f365cf9deeb671ebea533b2f2a93e"
               }
 }

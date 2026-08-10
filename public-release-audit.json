@@ -4,15 +4,15 @@
   "releaseTag": "v2.0.0",
   "pluginVersion": "2.0.0",
   "workflowContractVersion": "word-ppt-workflow-v6",
-  "sourceManifestSha256": "dddd7568a5b9623a3cf4caa49185e097748a7e91c14cef8a75ec0eb3ab67f3b8",
+  "sourceManifestSha256": "e59e6cc82eca65f52f7421d23c4ff8ef5f516da78502743f93d426838e915bfd",
   "root": ".",
   "passed": true,
   "errors": [],
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
-      "bytes": 436,
-      "sha256": "ca6aac975ca384237bae46af94dbfa03edbe305a182ef4100ed054503c4887ef"
+      "bytes": 789,
+      "sha256": "577f652f031fe9b67596b1efdc0aea0930dc652bf00ed9851f326a80f5f5d59e"
     },
     {
       "path": ".gitattributes",
@@ -76,8 +76,8 @@
     },
     {
       "path": "package-info.json",
-      "bytes": 2035,
-      "sha256": "ec6fc7fe2f8f48e8e9a076c525c830b641dd5c720bb37880e8cfc32998fe1cc1"
+      "bytes": 2550,
+      "sha256": "dc9bfadf88ee5aef887cf76bba92db8afab4b708baa0b3b3b2d21b18e652dc35"
     },
     {
       "path": "plugins/editable-ppt-workflow/.codex-plugin/plugin.json",
@@ -96,13 +96,13 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/install_runtime.ps1",
-      "bytes": 14351,
-      "sha256": "b9297d4520cde5488620333d44a8c581e2c72d68721fa7c151aefa1258e1b57f"
+      "bytes": 14424,
+      "sha256": "aaf933109a0dc220554f5a019a15b0eab62dec5712ec72053e64997a23f1b4f9"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/portable_e2e_smoke.py",
-      "bytes": 5524,
-      "sha256": "2429de85de01801ce0e0b99774bcde6b696babd137dca4588a95e2b88ab75a80"
+      "bytes": 5038,
+      "sha256": "ab2090f651fc9b21ed9f805ede489a344235b5cfe56de7218259f7c7bb24deaf"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/runtime_office.py",
@@ -1582,7 +1582,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 60060,
-      "sha256": "dddd7568a5b9623a3cf4caa49185e097748a7e91c14cef8a75ec0eb3ab67f3b8"
+      "sha256": "e59e6cc82eca65f52f7421d23c4ff8ef5f516da78502743f93d426838e915bfd"
     },
     {
       "path": "README.md",
@@ -1671,8 +1671,8 @@
     },
     {
       "path": "verify.ps1",
-      "bytes": 7979,
-      "sha256": "4e572ef1a353d458d14abf6c0f7660dcf2b43d9e85ad214c01996a1fd2c00fd5"
+      "bytes": 7940,
+      "sha256": "3b00ce7a153413fb1bb3355ec88f6a4f892f365cf9deeb671ebea533b2f2a93e"
     }
   ]
 }

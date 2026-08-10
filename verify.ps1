@@ -114,13 +114,13 @@ try {
 }
 
 if ($PortableSmokeTest) {
-    # install_runtime already executed the isolated editppt.exe for a real V4
+    # install_runtime already executed the isolated editppt.exe for a real V6
     # object build/validate. Recheck the installed package from the workflow
     # venv here; the report below attests the separate editable CLI execution.
     & $WorkflowPython -c "import editppt; print('portable-editppt-package-import=ok')"
     if ($LASTEXITCODE -ne 0) { throw "Portable editppt package import verification failed." }
 } else {
-    & $EditablePython -c "import editppt, workflow_state, final_mechanical_qa; print('editable-runtime-imports=ok')"
+    & $EditablePython -c "import editppt; print('editable-runtime-imports=ok')"
     if ($LASTEXITCODE -ne 0) { throw "Editable-PPT runtime import verification failed." }
 }
 if ($RunningOnWindows -and -not $PortableSmokeTest) {
@@ -141,7 +141,7 @@ if ($PortableSmokeTest) {
         throw "Portable runtime report is missing: $ReportPath"
     }
     $Report = Get-Content -Raw -Encoding UTF8 -LiteralPath $ReportPath | ConvertFrom-Json
-    if ($Report.portable_smoke_test -ne $true -or $Report.workflow_imports -ne "ok" -or $Report.editppt_cli -ne "v4-build-validate-ok" -or $Report.win32com_import -ne "skipped-portable") {
+    if ($Report.portable_smoke_test -ne $true -or $Report.workflow_imports -ne "ok" -or $Report.editppt_cli -ne "v6-build-validate-ok" -or $Report.win32com_import -ne "skipped-portable") {
         throw "Portable runtime report did not record a successful clean-install smoke."
     }
 } else {
@@ -158,4 +158,4 @@ if ($PortableSmokeTest) {
     }
 }
 
-Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v5, every-page Image2 visual authority, high-fidelity editable reconstruction, paired final QA, authentic-pixel custody, mandatory Office validation, fixed-canvas-cm-v2."
+Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v6, generate-only Image2 bodies, light pre-reconstruction QA, editable reconstruction, fixed-layer mechanical assembly, optional Office validation, fixed-canvas-cm-v2."

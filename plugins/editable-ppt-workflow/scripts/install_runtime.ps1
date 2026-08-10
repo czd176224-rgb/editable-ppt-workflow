@@ -247,17 +247,17 @@ if ($PortableSmokeTest) {
     $PreviousPythonPath = $env:PYTHONPATH
     $env:PYTHONPATH = if ($PreviousPythonPath) { "$WorkflowScripts;$PreviousPythonPath" } else { $WorkflowScripts }
     try {
-        & $WorkflowPython -c "import flask, jsonschema, PIL, pypdf, pypdfium2, docx, pptx; import confirm_ui.server, workflow_state; print('workflow-import-smoke=ok')"
+        & $WorkflowPython -c "import flask, jsonschema, PIL, pypdf, pypdfium2, docx, pptx; import confirm_ui.server, workflow_v6_contract, workflow_v6_source, workflow_v6_image, workflow_v6_reconstruction; print('workflow-import-smoke=ok')"
         if ($LASTEXITCODE -ne 0) { throw "Workflow import smoke test failed." }
         & $WorkflowPython (Join-Path $PSScriptRoot "portable_e2e_smoke.py") --editppt $EditExe --output (Join-Path $RuntimeRoot "portable-e2e")
-        if ($LASTEXITCODE -ne 0) { throw "Editable-PPT V4 object build/validate portable E2E failed." }
+        if ($LASTEXITCODE -ne 0) { throw "Editable-PPT V6 object build/validate portable E2E failed." }
     } finally {
         $env:PYTHONPATH = $PreviousPythonPath
     }
     [ordered]@{
         portable_smoke_test = $true
         workflow_imports = "ok"
-        editppt_cli = "v4-build-validate-ok"
+        editppt_cli = "v6-build-validate-ok"
         win32com_import = "skipped-portable"
         officecli_optional = $OfficeCliOptional
         workflow_python = $WorkflowPython

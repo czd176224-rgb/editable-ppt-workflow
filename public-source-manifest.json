@@ -4,7 +4,7 @@
     "releaseTag":  "v2.0.0",
     "pluginVersion":  "2.0.0",
     "workflowContractVersion":  "word-ppt-workflow-v6",
-    "indexTreeSha256":  "1aae4253c8fb08b7b918fb48427ec7f8fa4ca0f69b696dd7d995848a5b02c14e",
+    "indexTreeSha256":  "ffa3e493fd05c6ae31a529b283e072a68c0e00f21725ec0a22a5074c5e814966",
     "files":  {
                   ".agents/plugins/marketplace.json":  "577f652f031fe9b67596b1efdc0aea0930dc652bf00ed9851f326a80f5f5d59e",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -325,7 +325,7 @@
                   "scripts/check_public_release.py":  "d1f08a007fb1c8a6b731bff91c51c68a1760348cc6f0205acb5626a0bd58572c",
                   "scripts/export_public_release.ps1":  "1ff529981eb9a914fc7e1fca1937eb2b57ffe660cb025e5a08d42aaae7cb7a88",
                   "scripts/package_release.ps1":  "74c284d75ca12b661358c875e3096d3d6764a4695c9b09941acb3fd3dd5a580d",
-                  "scripts/release_gate.ps1":  "744397d9613db6127d9c24f5b8a8c330d309bb26b1a9fa3d5269df1027d0c4d6",
+                  "scripts/release_gate.ps1":  "560de2a9442ae0942610fb573fb8351c0a17fe227af2166d82cc0ee83fd471b6",
                   "SECURITY.md":  "7022374d01cef689dd1bbd041cfec37ba125079de8284065cbb7e163c38fad96",
                   "setup.cmd":  "c68237ab30e42c93e1858eede32c0cf4d2990cadd78f42586fef4eecefc302c1",
                   "tests/test_install_receipt_state_machine.py":  "89650672c6a0d10a66d36d5ed4ae88fb42b37e2544e3e2b7b98cae58e10671dc",

@@ -4,7 +4,7 @@
   "releaseTag": "v2.0.0",
   "pluginVersion": "2.0.0",
   "workflowContractVersion": "word-ppt-workflow-v6",
-  "sourceManifestSha256": "4f552fc7b0a18f1fb5bc49275d0db1d92b68dc861be267f5be5784dc16008b79",
+  "sourceManifestSha256": "91582e611fa9bb9dcdcb2b902df0954160c61551b56fe251c75e6931ff548a38",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1582,7 +1582,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 59938,
-      "sha256": "4f552fc7b0a18f1fb5bc49275d0db1d92b68dc861be267f5be5784dc16008b79"
+      "sha256": "91582e611fa9bb9dcdcb2b902df0954160c61551b56fe251c75e6931ff548a38"
     },
     {
       "path": "README.md",
@@ -1600,6 +1600,11 @@
       "sha256": "d1f08a007fb1c8a6b731bff91c51c68a1760348cc6f0205acb5626a0bd58572c"
     },
     {
+      "path": "scripts/check_python_syntax.py",
+      "bytes": 871,
+      "sha256": "f3348a162ab67df7391a8a0c61a01b2252b811cbefa684a393cca3ffd28387d5"
+    },
+    {
       "path": "scripts/export_public_release.ps1",
       "bytes": 6257,
       "sha256": "1ff529981eb9a914fc7e1fca1937eb2b57ffe660cb025e5a08d42aaae7cb7a88"
@@ -1611,8 +1616,8 @@
     },
     {
       "path": "scripts/release_gate.ps1",
-      "bytes": 5952,
-      "sha256": "744397d9613db6127d9c24f5b8a8c330d309bb26b1a9fa3d5269df1027d0c4d6"
+      "bytes": 5229,
+      "sha256": "560de2a9442ae0942610fb573fb8351c0a17fe227af2166d82cc0ee83fd471b6"
     },
     {
       "path": "SECURITY.md",

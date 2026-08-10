@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,33 @@ from background_text_detector import capability_status
 REQUIRED_MODULES = ["flask", "jsonschema", "PIL", "pypdf", "pypdfium2", "docx", "pptx"]
 EXPECTED_EDITPPT_CLI_VERSION = "0.3.0"
 POWERPOINT_COM_LIFECYCLE_TIMEOUT_SECONDS = 60
+
+
+def resolve_codex_auth_file() -> Path:
+    configured = os.getenv("CODEX_AUTH_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    codex_home = os.getenv("CODEX_HOME")
+    if codex_home:
+        candidate = Path(codex_home).expanduser() / "auth.json"
+        if candidate.is_file():
+            return candidate
+    return Path.home() / ".codex/auth.json"
+
+
+def codex_dns_status(host: str = "chatgpt.com") -> dict:
+    try:
+        addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, 443)})
+    except OSError as exc:
+        return {"host": host, "available": False, "addresses": [], "fake_ip": False, "detail": str(exc)}
+    fake = any(address.startswith("198.18.") or address.startswith("198.19.") for address in addresses)
+    return {
+        "host": host,
+        "available": bool(addresses) and not fake,
+        "addresses": addresses,
+        "fake_ip": fake,
+        "detail": "proxy fake-IP DNS result" if fake else "resolved",
+    }
 
 
 def _editable_python_path(editppt_path: str | None) -> Path | None:
@@ -349,7 +377,7 @@ def external_skill_status() -> dict:
     if editppt_path:
         candidates.append(Path(editppt_path).resolve().parent.parent / "generate-slide-body-image")
     script = next((path / "scripts/codex_gpt_image.py" for path in candidates if (path / "scripts/codex_gpt_image.py").is_file()), None)
-    auth_file = Path(os.getenv("CODEX_AUTH_FILE", Path.home() / ".codex/auth.json"))
+    auth_file = resolve_codex_auth_file()
     codex_command = resolve_command(os.getenv("EDITABLE_PPT_CODEX_EXECUTABLE", "codex"))
     return {
         "codex_gpt_image_script": str(script) if script else None,
@@ -406,6 +434,7 @@ def diagnose(check_powerpoint: bool = False, smoke_test: bool = False) -> dict:
             "available": external.get("codex_app_server_available", external["codex_oauth_available"]),
             "api_key_required": False,
         },
+        "codex_dns": codex_dns_status(),
         "cjk_fonts": fonts,
         "runtime_versions": {
             "image_to_editable_ppt_cli": editable_cli_version,

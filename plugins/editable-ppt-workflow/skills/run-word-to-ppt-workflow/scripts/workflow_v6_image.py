@@ -40,6 +40,48 @@ def _reference_prompt_items(references: Mapping[str, Any]) -> list[dict[str, Any
     return values
 
 
+_STYLE_FIELDS = (
+    "visual_style",
+    "color",
+    "icons",
+    "typography",
+    "image_rendering",
+    "style_axes",
+    "layout_preferences",
+    "information_density",
+    "regional_style",
+    "background_system",
+    "composition_tendency",
+    "brand_device",
+)
+
+
+def _visual_style_only(style_contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Exclude legacy fields that can be misread as per-page content or image quotas."""
+    return {
+        key: copy.deepcopy(style_contract[key])
+        for key in _STYLE_FIELDS
+        if key in style_contract
+    }
+
+
+def _media_policy(style_contract: Mapping[str, Any], references: Mapping[str, Any]) -> dict[str, Any]:
+    policy = str(style_contract.get("image_usage_policy", "content-driven"))
+    if policy not in {"content-driven", "visual-preference", "source-only"}:
+        policy = "content-driven"
+    available = _reference_prompt_items(references)
+    return {
+        "policy": policy,
+        "available_reference_count": len(available),
+        "no_per_page_image_quota": True,
+        "rules": [
+            "Use photographs or illustrations only when the page comment or an available page reference justifies them.",
+            "When no page material justifies an image, prefer typography, tables, diagrams, restrained geometry, and whitespace.",
+            "Never fabricate documentary news, meeting, person, company, product, or logo imagery merely to fill space.",
+        ],
+    }
+
+
 def build_prompt(
     *,
     effective_page: Mapping[str, Any],
@@ -48,8 +90,21 @@ def build_prompt(
     qa_feedback: list[str] | None = None,
 ) -> str:
     payload = {
-        "effective_page": dict(effective_page),
-        "global_style_contract": dict(style_contract),
+        "content_authority": {
+            "complete_word_original_for_context": effective_page.get("word_original", ""),
+            "fixed_page_title": {
+                "text": effective_page.get("fixed_page_title", ""),
+                "render_in_body": False,
+                "role": "context only; a native PPT fixed layer adds it later",
+            },
+            "renderable_body_content": effective_page.get(
+                "body_render_content", effective_page.get("word_original", "")
+            ),
+            "comment_directives": copy.deepcopy(effective_page.get("comment_directives", [])),
+            "invalidated_requirements": copy.deepcopy(effective_page.get("invalidated_requirements", [])),
+        },
+        "global_visual_style_only": _visual_style_only(style_contract),
+        "page_media_policy": _media_policy(style_contract, references),
         "reference_descriptions": _reference_prompt_items(references),
         "geometry": {
             "canvas_pixels": "1904x896",
@@ -60,11 +115,16 @@ def build_prompt(
     if qa_feedback:
         payload["qa_feedback"] = list(qa_feedback)
     return (
-        "Generate a complete 1904x896, 17:8 PowerPoint body image. Use a professional, information-rich "
-        "composition consistent with the confirmed global style. Page comments are authoritative and may "
-        "modify or replace facts in the Word original. Ignore invalidated attachment/search requirements. "
-        "Reference materials are descriptive inspiration only; do not reproduce exact pixels. Do not draw "
-        "the native page title, fixed logo, footer, or page number. This is a fresh generation, never an edit.\n"
+        "Generate a complete 1904x896, 17:8 PowerPoint body image. This is a fresh generation, never an edit. "
+        "The renderable body content and active page comments are the only textual and factual authority. "
+        "Comments may modify or replace Word facts. You may organize, group, shorten, and visualize that authority, "
+        "but you must not invent any fact, category, capability, organization, person, number, conclusion, or summary. "
+        "Empty space must remain whitespace or restrained non-semantic decoration; never fill it with invented content. "
+        "The fixed_page_title is context only: do not render it, repeat it, paraphrase it as a page heading, or place a "
+        "replacement page heading anywhere in the body. Do not draw the fixed logo, footer, or page number. Section "
+        "headings explicitly present in renderable_body_content remain allowed. Reference descriptions affect visual "
+        "understanding only and do not authorize new body facts. The global contract controls visual treatment only and "
+        "does not require any image on any page. Follow page_media_policy exactly.\n"
         + json.dumps(payload, ensure_ascii=False, sort_keys=True)
     )
 

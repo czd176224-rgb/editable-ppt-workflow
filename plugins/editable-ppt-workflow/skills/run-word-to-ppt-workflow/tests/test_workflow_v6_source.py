@@ -70,3 +70,25 @@ def test_initialize_v6_project_uses_explicit_word_pages_without_legacy_state(tmp
         (project / "02_v6" / "page_sources" / "page_001.json").read_text(encoding="utf-8")
     )
     assert "第一页正文" in page["word_original"]
+    assert page["fixed_page_title"] == "第一页标题"
+    assert page["body_render_content"] == "第一页正文"
+
+
+def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    paragraph = "聚焦港澳、内地、国际三地市场，以承建地产为主业，培育实业、金融投资业务，实现利润10%增长。"
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph(paragraph)
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    state = initialize_v6_project(word, logo, project)
+    effective = json.loads((project / "02_v6/effective_pages/page_001.json").read_text(encoding="utf-8"))
+
+    assert state["pages"][0]["title"] != paragraph
+    assert len(state["pages"][0]["title"]) <= 28
+    assert effective["body_render_content"] == paragraph
+    assert effective["word_original"] == paragraph

@@ -13,7 +13,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_contract import new_page, new_project  # noqa: E402
-from workflow_v6_image import build_generate_command, generate_page_body  # noqa: E402
+from workflow_v6_image import build_generate_command, build_prompt, generate_page_body  # noqa: E402
 from workflow_v6_state import create, load, save  # noqa: E402
 
 
@@ -59,6 +59,34 @@ def test_generate_command_never_uses_edit_or_image_inputs(tmp_path: Path):
     assert "edit" not in command
     assert "--image" not in command
     assert command[command.index("--size") + 1] == "1904x896"
+
+
+def test_prompt_separates_fixed_title_facts_and_visual_only_style():
+    prompt = build_prompt(
+        effective_page={
+            "word_original": "三、文投收购事项\n当前进展",
+            "fixed_page_title": "三、文投收购事项",
+            "body_render_content": "当前进展",
+            "comment_directives": [],
+            "invalidated_requirements": [],
+        },
+        style_contract={
+            "visual_style": "editorial",
+            "image_role": {"role": "evidence", "proportion": "high"},
+            "evidence_strength": "strict",
+            "image_usage_policy": "content-driven",
+            "additional_requirements": "每页至少三张图片",
+        },
+        references={"references": []},
+    )
+
+    assert '"render_in_body": false' in prompt
+    assert '"renderable_body_content": "当前进展"' in prompt
+    assert "must not invent any fact, category, capability" in prompt
+    assert "does not require any image on any page" in prompt
+    assert "每页至少三张图片" not in prompt
+    assert '"image_role"' not in prompt
+    assert '"policy": "content-driven"' in prompt
 
 
 def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path):

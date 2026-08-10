@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
@@ -169,6 +170,25 @@ def _render_slot(canvas: Image.Image, source: Path, slot: Mapping[str, Any]) -> 
         raise ValueError("unsupported authentic asset fit policy")
 
 
+def _placement_record(asset: Mapping[str, Any], slot: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "material_id": asset["material_id"],
+        "asset_id": asset["asset_id"],
+        "evidence_id": asset["evidence_id"],
+        "entity": asset["entity"],
+        "material_role": asset["material_role"],
+        "source_artifact_id": asset["source_artifact_id"],
+        "source_path": asset["source_path"],
+        "box_px": list(slot["box_px"]),
+        "slot_id": slot["slot_id"],
+        "fit": slot["fit"],
+        "occurrences": 1,
+        "replace_imagined_lookalikes": True,
+        "source_page_url": str(asset["source"].get("source_page_url") or ""),
+        "publisher": str(asset["source"].get("publisher") or ""),
+    }
+
+
 def _prepare_deterministic_panel(
     canvas: Image.Image, slot_plan: list[dict[str, Any]],
 ) -> None:
@@ -239,22 +259,7 @@ def compose_candidate_body(
     for asset, slot in zip(ordered_assets, slot_plan, strict=True):
         source = root / asset["source_path"]
         _render_slot(canvas, source, slot)
-        placements.append({
-            "material_id": asset["material_id"],
-            "asset_id": asset["asset_id"],
-            "evidence_id": asset["evidence_id"],
-            "entity": asset["entity"],
-            "material_role": asset["material_role"],
-            "source_artifact_id": asset["source_artifact_id"],
-            "source_path": asset["source_path"],
-            "box_px": list(slot["box_px"]),
-            "slot_id": slot["slot_id"],
-            "fit": slot["fit"],
-            "occurrences": 1,
-            "replace_imagined_lookalikes": True,
-            "source_page_url": str(asset["source"].get("source_page_url") or ""),
-            "publisher": str(asset["source"].get("publisher") or ""),
-        })
+        placements.append(_placement_record(asset, slot))
     destination = Path(output).resolve()
     try:
         destination.relative_to(root)
@@ -277,14 +282,90 @@ def compose_candidate_body(
     }
 
 
+def _accepted_composed_result(
+    root: Path, page_number: int, output: Path,
+) -> dict[str, Any] | None:
+    receipt_path = root / "04_v5" / "design" / f"page_{page_number:03d}.json"
+    if not receipt_path.is_file():
+        return None
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    acceptance = receipt.get("acceptance")
+    if not isinstance(acceptance, Mapping) or (
+        acceptance.get("outcome") != "pass"
+        or acceptance.get("reviewed_visual_authority") != "accepted_composed_body"
+    ):
+        return None
+    reviewed = acceptance.get("reviewed_composed_body")
+    if not isinstance(reviewed, Mapping):
+        raise ValueError("accepted composed-body receipt is missing")
+    promotion_fields = {
+        "path", "artifact_id", "slot_plan", "slot_plan_identity", "authentic_placements",
+    }
+    if not promotion_fields.issubset(reviewed):
+        return None
+    accepted = _project_file(root, reviewed.get("path"), "accepted composed body")
+    artifact_id = "sha256:" + _sha256_file(accepted)
+    if reviewed.get("artifact_id") != artifact_id:
+        raise ValueError("accepted composed body changed after semantic QA")
+    with Image.open(accepted) as opened:
+        opened.verify()
+    with Image.open(accepted) as opened:
+        if opened.size != (1904, 896):
+            raise ValueError("accepted composed body must be exactly 1904x896")
+
+    intent = json.loads(
+        (root / "04_v5" / "intents" / f"page_{page_number:03d}.json")
+        .read_text(encoding="utf-8")
+    )
+    requirements = [
+        item for item in intent.get("material_requirements", [])
+        if item.get("requirement_type") == "authentic_presence"
+    ]
+    manifest_assets = _manifest_assets(root, requirements)
+    ordered, current_slot_plan = _ordered_assets_for_slots(
+        root, page_number=page_number, manifest_assets=manifest_assets,
+    )
+    if reviewed.get("slot_plan") != current_slot_plan:
+        raise ValueError("accepted composed body slot plan is stale")
+    if reviewed.get("slot_plan_identity") != slot_plan_identity(current_slot_plan):
+        raise ValueError("accepted composed body slot identity is stale")
+    placements = reviewed.get("authentic_placements")
+    expected_placements = [
+        _placement_record(asset, slot)
+        for asset, slot in zip(ordered, current_slot_plan, strict=True)
+    ]
+    if placements != expected_placements:
+        raise ValueError("accepted composed body placement closure is invalid")
+
+    destination = Path(output).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.stem}.{uuid.uuid4().hex}.tmp.png")
+    try:
+        shutil.copyfile(accepted, temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {
+        "page_number": page_number,
+        "composed_body": destination.relative_to(root).as_posix(),
+        "composed_body_artifact_id": artifact_id,
+        "slot_plan": current_slot_plan,
+        "slot_plan_identity": reviewed["slot_plan_identity"],
+        "authentic_placements": [dict(item) for item in placements],
+    }
+
+
 def compose_authentic_page(project: Path, *, page_number: int) -> dict[str, Any]:
     root = Path(project).resolve()
-    composed = compose_candidate_body(
-        root,
-        page_number,
-        root / "04_v5" / "design" / f"page_{page_number:03d}.png",
-        root / "04_v5" / "compose" / f"page_{page_number:03d}.composed.png",
-    )
+    output = root / "04_v5" / "compose" / f"page_{page_number:03d}.composed.png"
+    composed = _accepted_composed_result(root, page_number, output)
+    if composed is None:
+        composed = compose_candidate_body(
+            root,
+            page_number,
+            root / "04_v5" / "design" / f"page_{page_number:03d}.png",
+            output,
+        )
     composed_path = root / composed["composed_body"]
     composed_record = ContentCatalog(root).record_file(
         f"page-{page_number:03d}-composed-body", composed_path,

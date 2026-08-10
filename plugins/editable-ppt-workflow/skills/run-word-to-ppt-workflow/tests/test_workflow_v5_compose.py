@@ -6,12 +6,17 @@ import sys
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from workflow_v5_compose import _placement_boxes, compose_authentic_page  # noqa: E402
+from workflow_v5_compose import (  # noqa: E402
+    _placement_boxes,
+    compose_authentic_page,
+    compose_candidate_body,
+)
 
 
 def test_compose_binds_one_original_asset_without_semantic_qa(tmp_path: Path) -> None:
@@ -136,6 +141,93 @@ def test_page3_one_need_composes_three_required_assets(tmp_path: Path) -> None:
     assert len(result["authentic_placements"]) == 3
     assert len({item["evidence_id"] for item in result["authentic_placements"]}) == 3
     assert len(result["slot_plan"]) == 3
+
+
+def test_compose_publishes_the_already_accepted_composed_body(tmp_path: Path) -> None:
+    project = _multi_asset_project(tmp_path, page=3, groups=[3])
+    accepted = project / "04_v5/design/page_003.acceptance-composed.png"
+    accepted_result = compose_candidate_body(
+        project,
+        3,
+        project / "04_v5/design/page_003.png",
+        accepted,
+    )
+    (project / "04_v5/design/page_003.json").write_text(json.dumps({
+        "acceptance": {
+            "outcome": "pass",
+            "reviewed_visual_authority": "accepted_composed_body",
+            "reviewed_composed_body": {
+                "path": accepted.relative_to(project).as_posix(),
+                "artifact_id": accepted_result["composed_body_artifact_id"],
+                "slot_plan": accepted_result["slot_plan"],
+                "slot_plan_identity": accepted_result["slot_plan_identity"],
+                "authentic_placements": accepted_result["authentic_placements"],
+            },
+        },
+    }), encoding="utf-8")
+    (project / "04_v5/design/page_003.png").unlink()
+
+    result = compose_authentic_page(project, page_number=3)
+
+    published = project / result["composed_body"]["path"]
+    assert published.read_bytes() == accepted.read_bytes()
+    assert result["composed_body"]["artifact_id"] == accepted_result["composed_body_artifact_id"]
+    assert result["authentic_placements"] == accepted_result["authentic_placements"]
+
+
+def test_compose_rejects_tampered_accepted_placement_metadata(tmp_path: Path) -> None:
+    project = _multi_asset_project(tmp_path, page=3, groups=[3])
+    accepted = project / "04_v5/design/page_003.acceptance-composed.png"
+    accepted_result = compose_candidate_body(
+        project,
+        3,
+        project / "04_v5/design/page_003.png",
+        accepted,
+    )
+    tampered = [dict(item) for item in accepted_result["authentic_placements"]]
+    tampered[0]["source_path"] = "00_source/unrelated.png"
+    (project / "04_v5/design/page_003.json").write_text(json.dumps({
+        "acceptance": {
+            "outcome": "pass",
+            "reviewed_visual_authority": "accepted_composed_body",
+            "reviewed_composed_body": {
+                "path": accepted.relative_to(project).as_posix(),
+                "artifact_id": accepted_result["composed_body_artifact_id"],
+                "slot_plan": accepted_result["slot_plan"],
+                "slot_plan_identity": accepted_result["slot_plan_identity"],
+                "authentic_placements": tampered,
+            },
+        },
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="placement closure"):
+        compose_authentic_page(project, page_number=3)
+
+
+def test_compose_rebuilds_legacy_acceptance_without_promotion_metadata(tmp_path: Path) -> None:
+    project = _multi_asset_project(tmp_path, page=3, groups=[3])
+    accepted = project / "04_v5/design/page_003.acceptance-composed.png"
+    accepted_result = compose_candidate_body(
+        project,
+        3,
+        project / "04_v5/design/page_003.png",
+        accepted,
+    )
+    (project / "04_v5/design/page_003.json").write_text(json.dumps({
+        "acceptance": {
+            "outcome": "pass",
+            "reviewed_visual_authority": "accepted_composed_body",
+            "reviewed_composed_body": {
+                "path": accepted.relative_to(project).as_posix(),
+                "artifact_id": accepted_result["composed_body_artifact_id"],
+            },
+        },
+    }), encoding="utf-8")
+
+    result = compose_authentic_page(project, page_number=3)
+
+    assert (project / result["composed_body"]["path"]).is_file()
+    assert len(result["authentic_placements"]) == 3
 
 
 def test_page4_six_logo_needs_compose_six_required_assets(tmp_path: Path) -> None:

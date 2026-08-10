@@ -466,9 +466,10 @@ def generate_v5_design(project: Path, *, page_number: int, timeout: int = 900) -
 
         acceptance_image = output
         acceptance_composed = None
+        acceptance_composition = None
         if slot_plan:
             acceptance_composed = directory / f"page_{page_number:03d}.acceptance-composed.png"
-            compose_candidate_body(
+            acceptance_composition = compose_candidate_body(
                 root, page_number, output, acceptance_composed,
             )
             acceptance_image = acceptance_composed
@@ -511,7 +512,7 @@ def generate_v5_design(project: Path, *, page_number: int, timeout: int = 900) -
             repaired_composed = None
             if slot_plan:
                 repaired_composed = directory / f"page_{page_number:03d}.semantic-repair.composed.png"
-                compose_candidate_body(
+                repaired_composition = compose_candidate_body(
                     root, page_number, semantic_output, repaired_composed,
                 )
                 repaired_acceptance = repaired_composed
@@ -530,6 +531,7 @@ def generate_v5_design(project: Path, *, page_number: int, timeout: int = 900) -
                 generation_slot_plan_id = current_slot_plan_id
                 if repaired_composed is not None and acceptance_composed is not None:
                     os.replace(repaired_composed, acceptance_composed)
+                    acceptance_composition = repaired_composition
                 trace_path = semantic_trace
 
         if not accepted:
@@ -604,6 +606,9 @@ def generate_v5_design(project: Path, *, page_number: int, timeout: int = 900) -
                     {
                         "path": acceptance_composed.relative_to(root).as_posix(),
                         "artifact_id": "sha256:" + _sha256_file(acceptance_composed),
+                        "slot_plan": acceptance_composition["slot_plan"],
+                        "slot_plan_identity": acceptance_composition["slot_plan_identity"],
+                        "authentic_placements": acceptance_composition["authentic_placements"],
                     }
                     if acceptance_composed is not None else None
                 ),

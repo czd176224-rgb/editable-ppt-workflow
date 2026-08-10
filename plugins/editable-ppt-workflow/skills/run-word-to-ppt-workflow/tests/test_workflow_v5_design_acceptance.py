@@ -190,6 +190,10 @@ def test_required_authentic_assets_are_composed_before_the_only_semantic_review(
         "asset_id": "asset-1", "evidence_id": "evidence-1", "sha256": digest,
         "entity": "", "material_role": "authentic_published_image",
     }])
+    slot_plan = design.build_asset_slot_plan([{
+        "asset_id": "asset-1", "evidence_id": "evidence-1", "sha256": digest,
+        "entity": "", "material_role": "authentic_published_image",
+    }])
 
     def image_backend(command, **_kwargs):
         events.append("image")
@@ -202,7 +206,30 @@ def test_required_authentic_assets_are_composed_before_the_only_semantic_review(
     def compose_backend(_project, _page, raw, composed):
         events.append("compose")
         Image.open(raw).save(composed)
-        return {}
+        slot = slot_plan[0]
+        return {
+            "page_number": 1,
+            "composed_body": composed.relative_to(project).as_posix(),
+            "composed_body_artifact_id": "sha256:" + design._sha256_file(composed),
+            "slot_plan": slot_plan,
+            "slot_plan_identity": design.slot_plan_identity(slot_plan),
+            "authentic_placements": [{
+                "material_id": "material-1",
+                "asset_id": "asset-1",
+                "evidence_id": "evidence-1",
+                "entity": "",
+                "material_role": "authentic_published_image",
+                "source_artifact_id": "sha256:" + digest,
+                "source_path": source.relative_to(project).as_posix(),
+                "box_px": list(slot["box_px"]),
+                "slot_id": slot["slot_id"],
+                "fit": slot["fit"],
+                "occurrences": 1,
+                "replace_imagined_lookalikes": True,
+                "source_page_url": "",
+                "publisher": "",
+            }],
+        }
 
     def qa_backend(*_args, image, **_kwargs):
         events.append("qa:" + Path(image).name)

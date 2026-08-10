@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Mapping
 from xml.etree import ElementTree
 
-from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
@@ -39,8 +37,6 @@ FRAME_NAMES = (
     "fixed-frame-footer",
     "fixed-frame-page-number",
 )
-_SVG_NS = "http://schemas.microsoft.com/office/drawing/2016/SVG/main"
-_SVG_EXT_URI = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"
 _EMU_TOLERANCE = 2
 
 
@@ -169,25 +165,21 @@ def contained_logo_box(logo_svg: Path) -> dict[str, float]:
 
 
 def _add_svg_logo(slide, logo_svg: Path) -> None:
+    """Add the original SVG as the picture payload without a raster fallback."""
     fitted = contained_logo_box(logo_svg)
-    fallback = BytesIO()
-    Image.new("RGBA", (4, 4), (255, 255, 255, 0)).save(fallback, format="PNG")
-    fallback.seek(0)
-    picture = slide.shapes.add_picture(
-        fallback,
-        Cm(fitted["x"]),
-        Cm(fitted["y"]),
-        Cm(fitted["w"]),
-        Cm(fitted["h"]),
-    )
-    picture.name = "fixed-frame-logo"
     _part, svg_rid = _svg_part(slide, logo_svg)
-    extension = parse_xml(
-        f'<a:extLst {nsdecls("a", "r")} xmlns:asvg="{_SVG_NS}">'
-        f'<a:ext uri="{_SVG_EXT_URI}"><asvg:svgBlip r:embed="{svg_rid}"/></a:ext>'
-        f"</a:extLst>"
+    shape_id = slide.shapes._next_shape_id
+    picture = parse_xml(
+        f'<p:pic {nsdecls("a", "p", "r")}>'
+        f'<p:nvPicPr><p:cNvPr id="{shape_id}" name="fixed-frame-logo"/>'
+        f'<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>'
+        f'<p:blipFill><a:blip r:embed="{svg_rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>'
+        f'<p:spPr><a:xfrm><a:off x="{int(Cm(fitted["x"]))}" y="{int(Cm(fitted["y"]))}"/>'
+        f'<a:ext cx="{int(Cm(fitted["w"]))}" cy="{int(Cm(fitted["h"]))}"/></a:xfrm>'
+        f'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
+        f'</p:pic>'
     )
-    picture._element.blipFill.blip.append(extension)
+    slide.shapes._spTree.insert_element_before(picture, "p:extLst")
 
 
 def _title_style(execution: Mapping[str, Any], frame: Mapping[str, Any]) -> tuple[str, float, str]:
@@ -342,6 +334,20 @@ def inspect_fixed_frame(
             or str(run.font.color.rgb) != PAGE_NUMBER_STYLE["color"].lstrip("#")
         ):
             issues.append("fixed page number does not use the built-in neutral style")
+    logo = by_name.get("fixed-frame-logo", [])
+    if logo and logo_svg is not None:
+        try:
+            blip_fill = logo[0]._element.blipFill
+            relationship_id = blip_fill.blip.rEmbed
+            part = slide.part.related_part(relationship_id)
+            if part.content_type != "image/svg+xml":
+                issues.append("fixed logo media is not the original SVG content type")
+            if bytes(part.blob) != Path(logo_svg).read_bytes():
+                issues.append("fixed logo SVG bytes do not match the locked source")
+            if blip_fill.find("{http://schemas.openxmlformats.org/drawingml/2006/main}srcRect") is not None:
+                issues.append("fixed logo must not use a crop rectangle")
+        except (AttributeError, KeyError, OSError):
+            issues.append("fixed logo does not directly embed the locked SVG")
     expected_geometry = {
         "fixed-frame-title": TITLE_BOX_CM,
         "fixed-frame-logo": contained_logo_box(logo_svg) if logo_svg is not None else None,

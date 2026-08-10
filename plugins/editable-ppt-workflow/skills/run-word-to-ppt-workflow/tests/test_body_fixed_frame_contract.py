@@ -220,6 +220,12 @@ def test_fixed_frame_is_added_as_native_objects_with_exact_title_and_svg_logo(tm
         style_execution=_style()["execution"],
         logo_svg=logo,
     )["passed"] is True
+    with zipfile.ZipFile(pptx) as archive:
+        svg_files = [name for name in archive.namelist() if name.endswith(".svg")]
+        png_files = [name for name in archive.namelist() if name.startswith("ppt/media/") and name.endswith(".png")]
+        assert len(svg_files) == 1
+        assert archive.read(svg_files[0]) == logo.read_bytes()
+        assert png_files == []
 
 
 def test_fixed_frame_geometry_is_identical_across_pages(tmp_path: Path) -> None:

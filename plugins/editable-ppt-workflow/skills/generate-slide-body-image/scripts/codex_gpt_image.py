@@ -110,8 +110,15 @@ def read_text(path: Path) -> str:
 
 
 def codex_auth_file() -> Path:
-    raw = os.getenv("CODEX_AUTH_FILE", DEFAULT_CODEX_AUTH_FILE)
-    return Path(raw).expanduser()
+    configured = os.getenv("CODEX_AUTH_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    codex_home = os.getenv("CODEX_HOME")
+    if codex_home:
+        candidate = Path(codex_home).expanduser() / "auth.json"
+        if candidate.is_file():
+            return candidate
+    return Path(DEFAULT_CODEX_AUTH_FILE).expanduser()
 
 
 def openai_codex_client_id(args: argparse.Namespace) -> str:

@@ -1,4 +1,4 @@
-"""Unified V5 production entry and explicit diagnostic tool dispatcher."""
+"""Generate-only V6 production entry and explicit diagnostic dispatcher."""
 
 from __future__ import annotations
 
@@ -9,14 +9,9 @@ from pathlib import Path
 
 
 TOOLS = {
-    "batch-generate": "batch_generation.py",
     "confirm-ui": "confirm_ui/server.py",
     "doctor": "doctor.py",
-    "prepare": "prepare_run.py",
-    "run": "run_workflow.py",
-    "v5": "workflow_v5_cli.py",  # Backward-compatible diagnostics alias.
-    "v5-diagnostics": "workflow_v5_cli.py",
-    "workflow": "workflow_state.py",
+    "v6": "workflow_v6_cli.py",
 }
 
 

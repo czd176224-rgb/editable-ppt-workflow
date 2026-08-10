@@ -17,6 +17,7 @@ from typing import Any, ContextManager, Mapping
 
 _LAYERS = frozenset({"generations", "pages", "renders"})
 _INDEX_NAME = "index.json"
+_ENTRY_DIRECTORY_KEY_LENGTH = 24
 
 
 @dataclass(frozen=True)
@@ -173,7 +174,7 @@ class CacheStore:
 
     @staticmethod
     def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
-        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
         os.replace(temporary, path)
 
@@ -186,7 +187,10 @@ class CacheStore:
             raise ValueError(f"unknown workflow cache layer: {layer}")
         if not self._valid_key(key):
             raise ValueError("workflow cache key must be a lowercase SHA-256 digest")
-        return self.root / layer / key
+        # Keep the full SHA-256 identity in the signed manifest and index, but
+        # use a compact on-disk directory on Windows.  Nested reconstruction
+        # artifacts otherwise exceed MAX_PATH before they can be reopened.
+        return self.root / layer / key[:_ENTRY_DIRECTORY_KEY_LENGTH]
 
     @staticmethod
     def _relative_file_path(value: Any) -> Path | None:
@@ -241,7 +245,7 @@ class CacheStore:
     @contextmanager
     def staging(self, layer: str, key: str) -> ContextManager[Path]:
         self._entry_path(layer, key)
-        staged = self.root / "temporary" / f"{layer}-{key}-{uuid.uuid4().hex}"
+        staged = self.root / "temporary" / f"{layer}-{key[:12]}-{uuid.uuid4().hex[:8]}"
         staged.mkdir()
         try:
             yield staged
@@ -274,7 +278,11 @@ class CacheStore:
         manifest_sha256 = _sha256_file(staged / "manifest.json")
         with self._mutation_lock():
             if entry.exists():
-                raise FileExistsError(f"immutable workflow cache entry already exists: {entry}")
+                existing = self._read_index()
+                exact = existing is not None and self._index_entry(layer, key) in existing["entries"]
+                if exact:
+                    raise FileExistsError(f"immutable workflow cache entry already exists: {entry}")
+                raise ValueError("workflow cache directory-key collision")
             index = self._read_index()
             if index is None:
                 raise ValueError("workflow cache index is invalid")
@@ -348,7 +356,12 @@ class CacheStore:
             child.name for child in layer_root.iterdir()
             if child.is_dir() and not child.is_symlink()
         }
-        if indexed != actual or any(not self._valid_key(key) for key in indexed):
+        expected = {key[:_ENTRY_DIRECTORY_KEY_LENGTH] for key in indexed}
+        if (
+            any(not self._valid_key(key) for key in indexed)
+            or len(expected) != len(indexed)
+            or expected != actual
+        ):
             raise ValueError("workflow cache sealed layer index is inconsistent")
         hits: list[CacheHit] = []
         for key in sorted(indexed):
@@ -363,7 +376,7 @@ class CacheStore:
         if not self._valid_key(manifest_sha256):
             raise ValueError("transaction manifest identity must be a lowercase SHA-256 digest")
         entry = self._entry_path(layer, key)
-        quarantine = self.root / "temporary" / f"aborted-{layer}-{key}-{uuid.uuid4().hex}"
+        quarantine = self.root / "temporary" / f"aborted-{layer}-{key[:12]}-{uuid.uuid4().hex[:8]}"
         with self._mutation_lock():
             index = self._read_index()
             manifest_path = entry / "manifest.json"
@@ -394,6 +407,6 @@ class CacheStore:
         with self._mutation_lock():
             if self.lookup(layer, key) is not None or not os.path.lexists(entry):
                 return None
-            quarantine = self.root / "temporary" / f"corrupt-{layer}-{key}-{uuid.uuid4().hex}"
+            quarantine = self.root / "temporary" / f"corrupt-{layer}-{key[:12]}-{uuid.uuid4().hex[:8]}"
             os.replace(entry, quarantine)
             return quarantine

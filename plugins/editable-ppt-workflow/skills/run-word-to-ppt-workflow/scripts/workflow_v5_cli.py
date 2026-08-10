@@ -8,7 +8,6 @@ from pathlib import Path
 
 from workflow_v5_dag import DagStore, ready_node_ids
 from workflow_v5_migration import migrate_v4_project
-from workflow_v5_material_reuse import acquire_best_legacy_candidate
 from workflow_v5_material_search import resolve_v5_material_searches
 from workflow_v5_compose import compose_authentic_page
 from workflow_v5_assembly import assemble_v5_deck
@@ -69,6 +68,7 @@ def _ready(project: Path) -> dict:
 
 
 def _reuse_material(project: Path, *, page: int, material_id: str) -> dict:
+    """Compatibility alias for the single cache/reuse/search material resolver."""
     intent_path = project / "04_v5" / "intents" / f"page_{page:03d}.json"
     intent = json.loads(intent_path.read_text(encoding="utf-8"))
     expected = {
@@ -76,20 +76,10 @@ def _reuse_material(project: Path, *, page: int, material_id: str) -> dict:
     }
     if material_id not in expected:
         raise ValueError("material_id is not required by this page intent")
-    worker = f"material-reuse:{material_id}"
-    store = DagStore(project)
-    node_id = f"material:{material_id}"
-    store.claim(node_id, worker_id=worker)
-    try:
-        receipt = acquire_best_legacy_candidate(
-            project, page_number=page, material_id=material_id,
-            source_text=intent["source_text"],
-        )
-        store.complete(node_id, worker_id=worker, result_key=receipt["artifact_id"])
-        return receipt
-    except Exception as exc:
-        store.fail(node_id, worker_id=worker, reason=str(exc), retryable=True)
-        raise
+    outcome = _resolve_materials(project, material_ids=[material_id])[material_id]
+    if outcome["outcome"] != "success":
+        raise ValueError(outcome["reason"])
+    return outcome["receipt"]
 
 
 def _compose(project: Path, *, page: int) -> dict:

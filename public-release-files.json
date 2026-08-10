@@ -19,6 +19,7 @@
     "plugins/editable-ppt-workflow",
     "public-release-files.json",
     "scripts/check_public_release.py",
+    "scripts/check_python_syntax.py",
     "scripts/build_release_archive.py",
     "scripts/export_public_release.ps1",
     "scripts/package_release.ps1",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import uuid
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,6 +14,7 @@ from workflow_v6_contract import validate_project
 
 
 STATE_FILE = "workflow_v6.json"
+LOCK_DIRECTORY = ".workflow_v6.lock"
 
 
 def state_path(project: Path) -> Path:
@@ -46,3 +49,36 @@ def create(project: Path, value: Mapping[str, Any]) -> Path:
     if path.exists():
         raise FileExistsError(f"V6 state already exists: {path}")
     return save(project, value)
+
+
+@contextmanager
+def mutation_lock(project: Path, timeout: float = 30.0):
+    lock = Path(project).resolve() / LOCK_DIRECTORY
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out acquiring V6 state mutation lock")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock.rmdir()
+        except FileNotFoundError:
+            pass
+
+
+def update_page(project: Path, page_number: int, page: Mapping[str, Any]) -> Path:
+    """Atomically merge one page result without overwriting concurrent pages."""
+    with mutation_lock(project):
+        state = load(project)
+        if page_number < 1 or page_number > len(state["pages"]):
+            raise ValueError("V6 page number is out of range")
+        if page.get("page_number") != page_number:
+            raise ValueError("V6 page update identity is invalid")
+        state["pages"][page_number - 1] = dict(page)
+        return save(project, state)

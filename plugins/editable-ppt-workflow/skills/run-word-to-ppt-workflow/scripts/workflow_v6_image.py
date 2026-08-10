@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping
 
 from workflow_v6_contract import transition_page
 from workflow_v6_qa import improved, review_candidate
-from workflow_v6_state import load, save
+from workflow_v6_state import load, update_page
 
 
 IMAGE_CLI = (
@@ -98,6 +98,31 @@ def _run(command: list[str], timeout: int) -> None:
         raise RuntimeError(completed.stderr or completed.stdout or "Image2 generation failed")
 
 
+def _verified_existing_receipt(root: Path, page_number: int) -> dict[str, Any] | None:
+    receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    if not receipt_path.is_file():
+        return None
+    try:
+        receipt = _read_json(receipt_path)
+        selected = receipt["selected"]
+        image = root / selected["path"]
+        trace = image.with_name(image.name.replace(".png", ".trace.json"))
+        trace_value = _read_json(trace)
+    except (KeyError, OSError, ValueError):
+        return None
+    if (
+        receipt.get("artifact_version") != "image2-generate-v6"
+        or receipt.get("page_number") != page_number
+        or selected.get("operation") != "generate"
+        or not image.is_file()
+        or trace_value.get("operation") != "generate"
+        or trace_value.get("model") != "gpt-image-2"
+        or trace_value.get("input_images") != []
+    ):
+        return None
+    return receipt
+
+
 def generate_page_body(
     project: Path,
     *,
@@ -117,6 +142,20 @@ def generate_page_body(
     if page_index < 0 or page_index >= len(state["pages"]):
         raise ValueError("V6 page number is out of range")
     page = state["pages"][page_index]
+    existing = _verified_existing_receipt(root, page_number)
+    if existing is not None and page["state"] in {"prepared", "generating", "qa_review", "technical_failed"}:
+        if page["state"] in {"prepared", "technical_failed"}:
+            page = transition_page(page, "generating")
+        if page["state"] == "generating":
+            page = transition_page(page, "qa_review")
+        page["first_candidate"] = copy.deepcopy(existing["selected"])
+        page["selected_candidate"] = copy.deepcopy(existing["selected"])
+        page["degraded_reasons"] = list(dict.fromkeys([
+            *page["degraded_reasons"], "resumed_verified_generate_receipt",
+        ]))
+        page = transition_page(page, "accepted_fallback_first")
+        update_page(root, page_number, page)
+        return existing
     effective = _read_json(root / "02_v6" / "effective_pages" / f"page_{page_number:03d}.json")
     references = _read_json(root / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json")
     style = dict(state["style_confirmation"]["contract"])
@@ -126,8 +165,7 @@ def generate_page_body(
 
     if page["state"] in {"prepared", "technical_failed"}:
         page = transition_page(page, "generating")
-    state["pages"][page_index] = page
-    save(root, state)
+    update_page(root, page_number, page)
 
     candidates = []
     first_qa = None
@@ -150,8 +188,7 @@ def generate_page_body(
             if attempt == 1:
                 page["technical_failure"] = {"stage": "image2_generate", "attempt": attempt}
                 page = transition_page(page, "technical_failed")
-                state["pages"][page_index] = page
-                save(root, state)
+                update_page(root, page_number, page)
                 raise
             degraded_reason = "later_generation_failed"
             break
@@ -206,8 +243,7 @@ def generate_page_body(
     else:
         page["selected_candidate"] = copy.deepcopy(selected)
         page = transition_page(page, "accepted")
-    state["pages"][page_index] = page
-    save(root, state)
+    update_page(root, page_number, page)
     receipt = {
         "artifact_version": "image2-generate-v6",
         "page_number": page_number,

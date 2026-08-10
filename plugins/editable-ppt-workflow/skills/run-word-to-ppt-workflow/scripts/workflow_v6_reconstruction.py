@@ -15,7 +15,7 @@ from pptx import Presentation
 
 from fixed_frame import apply_fixed_frame, inspect_fixed_frame
 from workflow_v6_contract import geometry_contract, transition_page
-from workflow_v6_state import load, save
+from workflow_v6_state import load, update_page
 
 
 EDITPPT_CLI = (
@@ -129,8 +129,7 @@ def finalize_reconstructed_page(
     if fixed.get("passed") is not True:
         raise ValueError("V6 fixed-layer validation failed: " + "; ".join(fixed.get("issues", [])))
     page = transition_page(page, "page_complete")
-    state["pages"][page_index] = page
-    save(root, state)
+    update_page(root, page_number, page)
     report = {
         "artifact_version": "final-page-v6",
         "page_number": page_number,

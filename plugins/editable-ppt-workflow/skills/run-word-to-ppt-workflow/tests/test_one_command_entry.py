@@ -27,7 +27,7 @@ import page_requirement_summary  # noqa: E402
 import natural_comment_resolver  # noqa: E402
 import run_workflow  # noqa: E402
 import style_recommendations  # noqa: E402
-from workflow_v5_dag import DagStore  # noqa: E402
+from workflow_v5_dag import DagStore, build_project_dag  # noqa: E402
 import workflow_state  # noqa: E402
 from codex_subscription_runtime import CodexRuntimeUnavailable, CodexStructuredResult  # noqa: E402
 from style_recommendations import build_recommendations  # noqa: E402
@@ -167,6 +167,8 @@ def test_confirmed_run_initializes_v5_and_returns_skill_ready_work(
     assert {item["kind"] for item in result["ready_work"]} == {"design"}
     assert all(item["executor"] == "codex_skill_orchestrator" for item in result["ready_work"])
     assert all(item["skill"] == "generate-slide-body-image" for item in result["ready_work"])
+    assert all(item["user_stage"] == "designing" for item in result["ready_work"])
+    assert all(item["label"] == "正在设计幻灯片" for item in result["ready_work"])
     assert result["orchestrator_contract"] == {
         "owner": "run-word-to-ppt-workflow",
         "execution_surface": "codex_skill",
@@ -175,6 +177,69 @@ def test_confirmed_run_initializes_v5_and_returns_skill_ready_work(
         "schedule_only": False,
     }
     assert (project / "04_v5" / "dag.json").is_file()
+
+
+def test_ready_page_validation_is_presented_as_editable_page_finalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = DagStore(tmp_path)
+    store.initialize(build_project_dag([{
+        "page_number": 1,
+        "authority_key": "sha256:" + "a" * 64,
+        "material_ids": [],
+    }]))
+    worker = "test"
+    for node_id in (
+        "project:source",
+        "page:001:intent",
+        "project:style",
+        "page:001:design",
+        "page:001:compose",
+        "page:001:reconstruct",
+    ):
+        authority = "editppt" if node_id.endswith(":reconstruct") else None
+        store.claim(node_id, worker_id=worker, execution_authority=authority)
+        store.complete(node_id, worker_id=worker, result_key="sha256:" + "b" * 64)
+    monkeypatch.setattr(run_workflow, "_ensure_v5", lambda *_args, **_kwargs: {
+        "dag": store.snapshot(), "mode": "resumed", "migration": None,
+    })
+
+    result = run_workflow._v5_resume_contract(
+        tmp_path, timeout=30, schedule_only=False,
+    )
+
+    assert result["ready_nodes"] == 1
+    assert result["ready_work"][0]["kind"] == "page_validate"
+    assert result["ready_work"][0]["action"] == "finalize_editable_page"
+    assert result["ready_work"][0]["user_stage"] == "making_editable"
+    assert result["ready_work"][0]["label"] == "正在制作可编辑页面"
+
+
+def test_ready_intent_is_presented_as_page_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = DagStore(tmp_path)
+    store.initialize(build_project_dag([{
+        "page_number": 1,
+        "authority_key": "sha256:" + "a" * 64,
+        "material_ids": [],
+    }]))
+    store.claim("project:source", worker_id="test")
+    store.complete(
+        "project:source", worker_id="test", result_key="sha256:" + "b" * 64,
+    )
+    monkeypatch.setattr(run_workflow, "_ensure_v5", lambda *_args, **_kwargs: {
+        "dag": store.snapshot(), "mode": "resumed", "migration": None,
+    })
+
+    result = run_workflow._v5_resume_contract(
+        tmp_path, timeout=30, schedule_only=False,
+    )
+    intent = next(item for item in result["ready_work"] if item["kind"] == "intent")
+
+    assert intent["action"] == "prepare_page_inputs"
+    assert intent["user_stage"] == "preparing"
+    assert intent["label"] == "正在准备分页内容"
 
 
 def test_repeated_confirmed_run_resumes_same_v5_dag_without_reconfirmation_or_reset(

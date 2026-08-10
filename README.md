@@ -1,4 +1,4 @@
-# Editable PPT Workflow 1.1.0
+# Editable PPT Workflow 1.2.0
 
 `word-ppt-workflow-v5` 将一个已分页 Word 和一个 SVG 企业 Logo 转为“一页 Word 对应一页 PPT”的高保真对象级可编辑演示文稿。
 
@@ -35,13 +35,13 @@ Windows 10/11、Python 3.10+、Codex 桌面版/CLI 的 ChatGPT 登录和图片�
 
 ChatGPT/Codex 订阅与 API 账单彼此独立：本插件只走 Codex 管理的 OAuth 和订阅能力，不读取 `OPENAI_API_KEY`，也不安装 OpenAI Python SDK；仍受用户订阅计划的图片、模型与速率额度约束。
 
-公开安装固定到不可变标签 `v1.1.0`。推荐下载完整 Release ZIP 并核验 SHA-256：
+公开安装固定到不可变标签 `v1.2.0`。推荐下载完整 Release ZIP 并核验 SHA-256：
 
 ```powershell
-$Version = "1.1.0"
+$Version = "1.2.0"
 $Asset = "editable-ppt-workflow-$Version-windows.zip"
-$ZipUrl = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0/editable-ppt-workflow-1.1.0-windows.zip"
-$Base = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0"
+$ZipUrl = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.2.0/editable-ppt-workflow-1.2.0-windows.zip"
+$Base = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.2.0"
 Invoke-WebRequest $ZipUrl -OutFile $Asset
 Invoke-WebRequest "$Base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
 $Expected = ((Get-Content SHA256SUMS.txt | Where-Object { $_ -match [regex]::Escape($Asset) }) -split "\s+")[0].ToLowerInvariant()

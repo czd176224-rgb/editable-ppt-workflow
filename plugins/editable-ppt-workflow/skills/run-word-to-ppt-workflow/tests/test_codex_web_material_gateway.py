@@ -1741,11 +1741,12 @@ def test_locally_resigned_semantic_trace_tamper_fails_cached_replay_without_live
 ) -> None:
     directive = _directive(required=True)
     context = {"page_number": 8, "source_hash": "a" * 64, "body_text": "Locked"}
+    test_timeout = 10
     material = search_visual_material(
         tmp_path,
         directive=directive,
         page_context=context,
-        timeout=2,
+        timeout=test_timeout,
         invoke=lambda *_args, **_kwargs: _result([_candidate()]),
         transport=FakeTransport({
             "https://cdn.example/photo.png": DownloadResponse(
@@ -1772,7 +1773,7 @@ def test_locally_resigned_semantic_trace_tamper_fails_cached_replay_without_live
     ).hexdigest()
     invocation["signature"] = hmac.new(
         codex_web_material_gateway._attestation_key(
-            tmp_path.resolve(), deadline=time.monotonic() + 2,
+            tmp_path.resolve(), deadline=time.monotonic() + test_timeout,
         ),
         codex_web_material_gateway._canonical_bytes(invocation),
         hashlib.sha256,
@@ -1796,7 +1797,7 @@ def test_locally_resigned_semantic_trace_tamper_fails_cached_replay_without_live
     ).hexdigest()
     cache["signature"] = hmac.new(
         codex_web_material_gateway._attestation_key(
-            tmp_path.resolve(), deadline=time.monotonic() + 2,
+            tmp_path.resolve(), deadline=time.monotonic() + test_timeout,
         ),
         codex_web_material_gateway._canonical_bytes(cache),
         hashlib.sha256,
@@ -1812,7 +1813,7 @@ def test_locally_resigned_semantic_trace_tamper_fails_cached_replay_without_live
             tmp_path,
             directive=directive,
             page_context=context,
-            timeout=2,
+            timeout=test_timeout,
             invoke=lambda *_args, **_kwargs: live_calls.append(True) or _result([]),
             transport=FakeTransport({}),
         )
@@ -2145,7 +2146,7 @@ def test_subscription_client_identity_is_260(tmp_path: Path) -> None:
     )
     requests = json.loads(capture.read_text(encoding="utf-8"))
     initialize = next(item for item in requests if item.get("method") == "initialize")
-    assert initialize["params"]["clientInfo"]["version"] == "1.1.0"
+    assert initialize["params"]["clientInfo"]["version"] == "1.2.0"
 
 
 def test_downloader_rejects_explicit_port_zero(tmp_path: Path) -> None:

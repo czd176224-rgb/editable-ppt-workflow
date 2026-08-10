@@ -19,7 +19,8 @@ from style_recommendations import (
 )
 from workflow_v5_dag import DagStore, ready_node_ids
 from workflow_v5_migration import migrate_v4_project
-from workflow_v5_ui import ConfirmationLifecycle
+from workflow_v5_scheduler import dispatch_wave
+from workflow_v5_ui import ConfirmationLifecycle, user_stage_for
 
 
 CONFIRM_UI = Path(__file__).resolve().parent / "confirm_ui" / "server.py"
@@ -36,13 +37,13 @@ _V5_POLICY = {
 
 _V5_ACTIONS = {
     "source_lock": ("verify_sources", None),
-    "intent": ("compile_intent", None),
+    "intent": ("prepare_page_inputs", None),
     "style": ("confirm_style_once", None),
     "material": ("reuse_discovery_or_search_once", None),
     "design": ("generate_body_once", "generate-slide-body-image"),
     "compose": ("bind_authentic_pixels", None),
     "reconstruct": ("editppt_manifest_reconstruction", "reconstruct-editable-slide"),
-    "page_validate": ("deterministic_page_validation", "reconstruct-editable-slide"),
+    "page_validate": ("finalize_editable_page", "reconstruct-editable-slide"),
     "visual_qa": ("review_final_reconstructed_preview", None),
     "assemble": ("assemble_from_manifests_and_fixed_layers", "reconstruct-editable-slide"),
     "office_validate": ("mandatory_office_validation", "validate-ppt-output"),
@@ -127,7 +128,9 @@ def _ensure_v5(project: Path, *, timeout: float) -> dict:
         }
 
 
-def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -> dict:
+def _v5_resume_contract(
+    project: Path, *, timeout: float, schedule_only: bool, max_concurrency: int = 1,
+) -> dict:
     ensured = _ensure_v5(project, timeout=timeout)
     dag = ensured["dag"]
     # Derive status and readiness from one immutable snapshot so a concurrent
@@ -140,11 +143,14 @@ def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -
         if node["node_id"] not in ready_ids:
             continue
         action, skill = _V5_ACTIONS[node["kind"]]
+        presentation = user_stage_for(node["kind"], status=node["status"])
         work = {
             "node_id": node["node_id"],
             "kind": node["kind"],
             "page_number": node["page_number"],
             "action": action,
+            "user_stage": presentation["stage"],
+            "label": presentation["label"],
             "attempts": node["attempts"],
             "executor": "codex_skill_orchestrator",
         }
@@ -180,11 +186,13 @@ def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -
         "node_statuses": dict(sorted(counts.items())),
         "ready_nodes": len(ready_work),
         "ready_work": ready_work,
+        "dispatch_wave": dispatch_wave(dag, max_concurrency=max_concurrency),
         "orchestrator_contract": {
             "owner": "run-word-to-ppt-workflow",
             "execution_surface": "codex_skill",
             "python_spawns_page_subagents": False,
             "reconstruction_dispatch": "one_codex_page_subagent_per_ready_page",
+            "dispatch_wave_is_authoritative": True,
             "schedule_only": schedule_only,
         },
     }
@@ -253,7 +261,10 @@ def run(
     # state projection only. The outer Codex Skill owns provider calls and page
     # subagent dispatch; the legacy V4 production runner is never entered here.
     return _v5_resume_contract(
-        output, timeout=timeout, schedule_only=not execute,
+        output,
+        timeout=timeout,
+        schedule_only=not execute,
+        max_concurrency=state["scheduler"]["concurrency"],
     )
 
 

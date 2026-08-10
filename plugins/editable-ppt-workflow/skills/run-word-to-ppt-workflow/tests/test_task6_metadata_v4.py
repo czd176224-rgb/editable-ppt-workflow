@@ -12,8 +12,8 @@ def test_release_metadata_is_consistently_v5_version() -> None:
     package = json.loads((REPO / "package-info.json").read_text(encoding="utf-8"))
     manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     marketplace = json.loads((REPO / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
-    assert package["pluginVersion"] == manifest["version"] == "1.1.0"
-    assert package["releaseTag"] == "v1.1.0"
+    assert package["pluginVersion"] == manifest["version"] == "1.2.0"
+    assert package["releaseTag"] == "v1.2.0"
     assert package["promptContractVersion"] == "page-prompt-v8"
     assert package["qaPolicyVersion"] == "risk-qa-v5"
     assert package["apiKeyRequired"] is False
@@ -23,7 +23,7 @@ def test_release_metadata_is_consistently_v5_version() -> None:
         else "editable-ppt-local-preview-v110"
     )
     assert package["marketplacePreviewIdentity"] == marketplace["name"] == expected_marketplace
-    assert marketplace["interface"]["displayName"].endswith("1.1.0")
+    assert marketplace["interface"]["displayName"].endswith("1.2.0")
     assert package["workflowContractVersion"] == "word-ppt-workflow-v5"
     assert package["bodyImageAspectPolicy"] == "17:8-relative-error-at-most-0.01"
     assert package["everyPageCallsImage2"] is True

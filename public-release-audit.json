@@ -4,7 +4,7 @@
   "releaseTag": "v1.2.0",
   "pluginVersion": "1.2.0",
   "workflowContractVersion": "word-ppt-workflow-v5",
-  "sourceManifestSha256": "2a6d1bac16f7be180426ee2cb591498987216ff3d94664972a2c27d7b689e418",
+  "sourceManifestSha256": "84a6bd8e89c0191460f18b706332bb366bf8a0881f92f95545fac95758c92ea1",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -901,8 +901,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/run_workflow.py",
-      "bytes": 12369,
-      "sha256": "8ac7f05b56cedeb283ded9bf1e9034f416b7255343b57dcad2aaee5e79fc1024"
+      "bytes": 12373,
+      "sha256": "548468d56e9ea21097d367b55a1473b650aa2dca23b6327318db2afe54267cb2"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/source_assets.py",
@@ -1512,7 +1512,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 52551,
-      "sha256": "2a6d1bac16f7be180426ee2cb591498987216ff3d94664972a2c27d7b689e418"
+      "sha256": "84a6bd8e89c0191460f18b706332bb366bf8a0881f92f95545fac95758c92ea1"
     },
     {
       "path": "README.md",

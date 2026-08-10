@@ -165,6 +165,11 @@ def test_confirmed_run_initializes_v5_and_returns_skill_ready_work(
     assert result["confirmation"] == "confirmed"
     assert result["ready_nodes"] == len(result["ready_work"]) > 0
     assert {item["kind"] for item in result["ready_work"]} == {"design"}
+    assert result["dispatch_wave"]["mode"] == "parallel_pages"
+    assert result["dispatch_wave"]["max_concurrency"] == 4
+    assert result["dispatch_wave"]["selected_node_ids"] == [
+        item["node_id"] for item in result["ready_work"]
+    ]
     assert all(item["executor"] == "codex_skill_orchestrator" for item in result["ready_work"])
     assert all(item["skill"] == "generate-slide-body-image" for item in result["ready_work"])
     assert all(item["user_stage"] == "designing" for item in result["ready_work"])
@@ -174,6 +179,7 @@ def test_confirmed_run_initializes_v5_and_returns_skill_ready_work(
         "execution_surface": "codex_skill",
         "python_spawns_page_subagents": False,
         "reconstruction_dispatch": "one_codex_page_subagent_per_ready_page",
+        "dispatch_wave_is_authoritative": True,
         "schedule_only": False,
     }
     assert (project / "04_v5" / "dag.json").is_file()

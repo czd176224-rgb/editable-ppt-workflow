@@ -25,7 +25,7 @@ python scripts\word_to_editable_ppt.py run --word D:\Input\source.docx --logo D:
 
 `run` is the preferred production entry. It creates the project when absent, pauses only for the single style confirmation, migrates the confirmed project to V5 exactly once, and returns the authoritative DAG status plus currently ready work. It never enters the legacy V4 QA, reconstruction or assembly chain.
 
-The outer `run-word-to-ppt-workflow` Codex Skill continues the returned ready V5 nodes until delivery. In particular, it dispatches one Codex page subagent for each ready `reconstruct` node using `reconstruct-editable-slide`. A standalone Python command cannot spawn those Codex subagents; therefore returning `v5_ready` is an orchestration handoff, not a completed deck and not a provider failure. Re-running `run` resumes the same DAG without reopening the confirmed UI or repeating valid work. `--schedule-only` only labels this projection as diagnostic; it does not activate a second execution path.
+The outer `run-word-to-ppt-workflow` Codex Skill continues the returned V5 work until delivery. Follow `dispatch_wave.selected_node_ids`, not the unbounded `ready_work` list: project nodes are serial, shared material nodes are one batch, and page-local nodes run in parallel only within the confirmed concurrency ceiling. Within that ceiling, pages closest to completion are dispatched first so QA and editable reconstruction can advance while other pages are still being designed. Each ready `reconstruct` node still uses one Codex page subagent with `reconstruct-editable-slide`. A standalone Python command cannot spawn those Codex subagents; therefore returning `v5_ready` is an orchestration handoff, not a completed deck and not a provider failure. Re-running `run` resumes the same DAG without reopening the confirmed UI or repeating valid work. `--schedule-only` only labels this projection as diagnostic; it does not activate a second execution path.
 
 Pending states are explicit:
 
@@ -39,7 +39,7 @@ Never hand-edit receipts or state to cross a pending boundary.
 
 ### Ready-work response
 
-After confirmation, `run` returns `workflow_contract_version`, `node_statuses`, `ready_nodes`, `ready_work` and `orchestrator_contract`. Each ready item names its DAG node, action, page and owning Skill when applicable. `python_spawns_page_subagents` is always `false`; the current Codex Skill invocation owns dispatch and keeps advancing the DAG. `v5_state=migrated` means the V5 DAG was created during this call, while `v5_state=resumed` means the existing DAG was preserved in place.
+After confirmation, `run` returns `workflow_contract_version`, `node_statuses`, `ready_nodes`, `ready_work`, `dispatch_wave` and `orchestrator_contract`. `ready_work` remains the complete compatibility projection; `dispatch_wave` is the authoritative bounded subset for the next launch. Each ready item names its DAG node, action, page and owning Skill when applicable. `python_spawns_page_subagents` is always `false`; the current Codex Skill invocation owns dispatch and keeps advancing the DAG. Scheduling is a read-only projection: only the existing atomic DAG claim/complete/fail transitions change state, so interruption and retry semantics remain intact. `v5_state=migrated` means the V5 DAG was created during this call, while `v5_state=resumed` means the existing DAG was preserved in place.
 
 ## Source and material rules
 

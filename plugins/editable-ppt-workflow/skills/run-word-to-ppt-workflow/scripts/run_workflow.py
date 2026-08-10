@@ -19,6 +19,7 @@ from style_recommendations import (
 )
 from workflow_v5_dag import DagStore, ready_node_ids
 from workflow_v5_migration import migrate_v4_project
+from workflow_v5_scheduler import dispatch_wave
 from workflow_v5_ui import ConfirmationLifecycle, user_stage_for
 
 
@@ -127,7 +128,9 @@ def _ensure_v5(project: Path, *, timeout: float) -> dict:
         }
 
 
-def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -> dict:
+def _v5_resume_contract(
+    project: Path, *, timeout: float, schedule_only: bool, max_concurrency: int,
+) -> dict:
     ensured = _ensure_v5(project, timeout=timeout)
     dag = ensured["dag"]
     # Derive status and readiness from one immutable snapshot so a concurrent
@@ -183,11 +186,13 @@ def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -
         "node_statuses": dict(sorted(counts.items())),
         "ready_nodes": len(ready_work),
         "ready_work": ready_work,
+        "dispatch_wave": dispatch_wave(dag, max_concurrency=max_concurrency),
         "orchestrator_contract": {
             "owner": "run-word-to-ppt-workflow",
             "execution_surface": "codex_skill",
             "python_spawns_page_subagents": False,
             "reconstruction_dispatch": "one_codex_page_subagent_per_ready_page",
+            "dispatch_wave_is_authoritative": True,
             "schedule_only": schedule_only,
         },
     }
@@ -256,7 +261,10 @@ def run(
     # state projection only. The outer Codex Skill owns provider calls and page
     # subagent dispatch; the legacy V4 production runner is never entered here.
     return _v5_resume_contract(
-        output, timeout=timeout, schedule_only=not execute,
+        output,
+        timeout=timeout,
+        schedule_only=not execute,
+        max_concurrency=state["scheduler"]["concurrency"],
     )
 
 

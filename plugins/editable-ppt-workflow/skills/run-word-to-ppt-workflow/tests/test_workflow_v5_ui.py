@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -100,3 +101,30 @@ def test_diagnostics_can_reveal_node_identity_without_changing_public_progress(t
 
     assert "node_id" not in public["events"][0]
     assert diagnostics["events"][0]["technical"]["event"] == "initialized"
+
+
+def test_internal_bookkeeping_nodes_share_their_parent_user_stage(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    event_path = project / "04_v5/dag-events.jsonl"
+    event_path.parent.mkdir(parents=True)
+    raw_events = [
+        {"event": "claimed", "node_id": "project:source", "kind": "source_lock", "status": "running", "page_number": None},
+        {"event": "completed", "node_id": "page:001:intent", "kind": "intent", "status": "complete", "page_number": 1},
+        {"event": "claimed", "node_id": "page:001:reconstruct", "kind": "reconstruct", "status": "running", "page_number": 1},
+        {"event": "completed", "node_id": "page:001:page_validate", "kind": "page_validate", "status": "complete", "page_number": 1},
+    ]
+    event_path.write_text(
+        "".join(json.dumps(item) + "\n" for item in raw_events),
+        encoding="utf-8",
+    )
+
+    public = read_progress_events(project, diagnostics=False)["events"]
+    diagnostics = read_progress_events(project, diagnostics=True)["events"]
+
+    assert public[0]["stage"] == public[1]["stage"] == "preparing"
+    assert public[0]["label"] == public[1]["label"] == "正在准备分页内容"
+    assert public[2]["stage"] == public[3]["stage"] == "making_editable"
+    assert public[2]["label"] == public[3]["label"] == "正在制作可编辑页面"
+    assert [item["technical"]["kind"] for item in diagnostics] == [
+        "source_lock", "intent", "reconstruct", "page_validate",
+    ]

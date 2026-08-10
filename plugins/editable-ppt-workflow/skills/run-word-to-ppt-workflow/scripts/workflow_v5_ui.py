@@ -14,17 +14,24 @@ from typing import Any, Iterator, Mapping
 _UI_STATE_VERSION = "v5-ui-lifecycle-v1"
 _STAGE = {
     "source_lock": ("preparing", "正在准备分页内容"),
-    "intent": ("preparing", "正在理解每页要求"),
+    "intent": ("preparing", "正在准备分页内容"),
     "style": ("preparing", "正在应用已确认的视觉合同"),
     "material": ("finding_materials", "正在查找明确要求的真实素材"),
     "design": ("designing", "正在设计幻灯片"),
     "compose": ("designing", "正在组合版式与真实素材"),
-    "reconstruct": ("making_editable", "正在将页面重建为可编辑对象"),
-    "page_validate": ("checking", "正在检查页面结构"),
+    "reconstruct": ("making_editable", "正在制作可编辑页面"),
+    "page_validate": ("making_editable", "正在制作可编辑页面"),
     "visual_qa": ("checking", "正在检查最终页面效果"),
     "assemble": ("checking", "正在按原顺序装配演示文稿"),
     "office_validate": ("checking", "正在完成最终 Office 检查"),
 }
+
+
+def user_stage_for(kind: Any, *, status: Any = None) -> dict[str, str]:
+    stage, label = _STAGE.get(kind, ("preparing", "正在准备项目"))
+    if kind == "office_validate" and status == "complete":
+        stage, label = "complete", "演示文稿已完成"
+    return {"stage": stage, "label": label}
 
 
 class ConfirmationLifecycle:
@@ -160,12 +167,10 @@ class ConfirmationLifecycle:
 
 def _project_event(raw: Mapping[str, Any], *, diagnostics: bool) -> dict[str, Any]:
     kind = raw.get("kind")
-    stage, label = _STAGE.get(kind, ("preparing", "正在准备项目"))
-    if kind == "office_validate" and raw.get("status") == "complete":
-        stage, label = "complete", "演示文稿已完成"
+    presentation = user_stage_for(kind, status=raw.get("status"))
     event = {
-        "stage": stage,
-        "label": label,
+        "stage": presentation["stage"],
+        "label": presentation["label"],
         "status": raw.get("status", "pending"),
         "page_number": raw.get("page_number"),
     }

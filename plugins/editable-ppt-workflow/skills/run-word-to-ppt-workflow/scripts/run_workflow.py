@@ -19,7 +19,7 @@ from style_recommendations import (
 )
 from workflow_v5_dag import DagStore, ready_node_ids
 from workflow_v5_migration import migrate_v4_project
-from workflow_v5_ui import ConfirmationLifecycle
+from workflow_v5_ui import ConfirmationLifecycle, user_stage_for
 
 
 CONFIRM_UI = Path(__file__).resolve().parent / "confirm_ui" / "server.py"
@@ -36,13 +36,13 @@ _V5_POLICY = {
 
 _V5_ACTIONS = {
     "source_lock": ("verify_sources", None),
-    "intent": ("compile_intent", None),
+    "intent": ("prepare_page_inputs", None),
     "style": ("confirm_style_once", None),
     "material": ("reuse_discovery_or_search_once", None),
     "design": ("generate_body_once", "generate-slide-body-image"),
     "compose": ("bind_authentic_pixels", None),
     "reconstruct": ("editppt_manifest_reconstruction", "reconstruct-editable-slide"),
-    "page_validate": ("deterministic_page_validation", "reconstruct-editable-slide"),
+    "page_validate": ("finalize_editable_page", "reconstruct-editable-slide"),
     "visual_qa": ("review_final_reconstructed_preview", None),
     "assemble": ("assemble_from_manifests_and_fixed_layers", "reconstruct-editable-slide"),
     "office_validate": ("mandatory_office_validation", "validate-ppt-output"),
@@ -140,11 +140,14 @@ def _v5_resume_contract(project: Path, *, timeout: float, schedule_only: bool) -
         if node["node_id"] not in ready_ids:
             continue
         action, skill = _V5_ACTIONS[node["kind"]]
+        presentation = user_stage_for(node["kind"], status=node["status"])
         work = {
             "node_id": node["node_id"],
             "kind": node["kind"],
             "page_number": node["page_number"],
             "action": action,
+            "user_stage": presentation["stage"],
+            "label": presentation["label"],
             "attempts": node["attempts"],
             "executor": "codex_skill_orchestrator",
         }

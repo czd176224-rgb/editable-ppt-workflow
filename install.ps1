@@ -20,8 +20,8 @@ $ReleaseTag = [string]$PackageInfo.releaseTag
 if (-not $MarketplaceSource -or -not $MarketplaceName -or $ReleaseTag -ne ("v" + [string]$PackageInfo.pluginVersion)) {
     throw "package-info.json must declare repository, marketplace, and an exact matching releaseTag."
 }
-if ($Manifest.version -ne $PackageInfo.pluginVersion -or $PackageInfo.workflowContractVersion -ne "word-ppt-workflow-v5") {
-    throw "Local plugin metadata is inconsistent with the current word-ppt-workflow-v5 contract."
+if ($Manifest.version -ne $PackageInfo.pluginVersion -or $PackageInfo.workflowContractVersion -ne "word-ppt-workflow-v6") {
+    throw "Local plugin metadata is inconsistent with the current word-ppt-workflow-v6 contract."
 }
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq "Core") {
     throw "This installer currently supports Windows only."

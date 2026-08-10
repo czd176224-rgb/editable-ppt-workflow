@@ -21,7 +21,11 @@ The production dispatcher exposes V6 only. It does not migrate or resume V4/V5 s
 
 ## Install
 
-Download the immutable `v2.0.0` Windows release ZIP, verify its SHA-256 file, extract it and run `install.ps1`. Restart Codex after installation or upgrade.
+Download the immutable `v2.0.0` Windows release ZIP:
+
+`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.0/editable-ppt-workflow-2.0.0-windows.zip`
+
+Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
 
 Repository development and release instructions are in [docs/RELEASE.md](docs/RELEASE.md).
 

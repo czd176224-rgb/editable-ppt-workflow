@@ -129,7 +129,7 @@ def _ensure_v5(project: Path, *, timeout: float) -> dict:
 
 
 def _v5_resume_contract(
-    project: Path, *, timeout: float, schedule_only: bool, max_concurrency: int,
+    project: Path, *, timeout: float, schedule_only: bool, max_concurrency: int = 1,
 ) -> dict:
     ensured = _ensure_v5(project, timeout=timeout)
     dag = ensured["dag"]

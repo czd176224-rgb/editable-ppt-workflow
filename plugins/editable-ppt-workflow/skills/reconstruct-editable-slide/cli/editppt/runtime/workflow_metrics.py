@@ -163,7 +163,7 @@ def _atomic_json(project: Path, path: Path, value: Mapping[str, Any]) -> None:
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ProjectPathError("metrics output must be a regular unlinked file")
     temporary = project_output_path(
-        project, path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        project, path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
     )
     try:
         temporary.write_text(
@@ -193,7 +193,8 @@ def _published_index(project: Path) -> dict[str, Any] | None:
 def _published_snapshot_complete(
     project: Path, index: Mapping[str, Any], revision: str
 ) -> bool:
-    expected_snapshot = (SNAPSHOT_ROOT / revision).as_posix()
+    revision_directory = revision[:16]
+    expected_snapshot = (SNAPSHOT_ROOT / revision_directory).as_posix()
     if index.get("snapshot") != expected_snapshot:
         return False
     page_files = index.get("page_metric_files")
@@ -202,14 +203,14 @@ def _published_snapshot_complete(
         return False
     expected_pages = {
         str(page.get("page_number")): (
-            SNAPSHOT_ROOT / revision / "pages" / f"page_{int(page.get('page_number', 0)):03d}.json"
+            SNAPSHOT_ROOT / revision_directory / "pages" / f"page_{int(page.get('page_number', 0)):03d}.json"
         ).as_posix()
         for page in pages
         if isinstance(page, Mapping)
     }
     if dict(page_files) != expected_pages:
         return False
-    files = [SNAPSHOT_ROOT / revision / "pipeline_metrics.json"] + [
+    files = [SNAPSHOT_ROOT / revision_directory / "pipeline_metrics.json"] + [
         Path(relative) for relative in expected_pages.values()
     ]
     try:
@@ -275,7 +276,7 @@ def publish_pipeline_metrics(project: Path) -> dict[str, Any]:
         evidence_status[page_number] = (consistent, error)
 
     report = build_pipeline_metrics(run, evidence, evidence_status)
-    snapshot_relative = SNAPSHOT_ROOT / revision
+    snapshot_relative = SNAPSHOT_ROOT / revision[:16]
     snapshot = project_output_path(project, project / snapshot_relative)
     snapshot.mkdir(parents=True, exist_ok=True)
     require_plain_project(snapshot)

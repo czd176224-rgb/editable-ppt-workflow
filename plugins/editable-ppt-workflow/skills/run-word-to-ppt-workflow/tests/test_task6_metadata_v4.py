@@ -12,14 +12,14 @@ def test_release_metadata_is_consistently_v6_version() -> None:
     package = json.loads((REPO / "package-info.json").read_text(encoding="utf-8"))
     manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     marketplace = json.loads((REPO / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
-    assert package["pluginVersion"] == manifest["version"] == "2.0.1"
-    assert package["releaseTag"] == "v2.0.1"
+    assert package["pluginVersion"] == manifest["version"] == "2.0.2"
+    assert package["releaseTag"] == "v2.0.2"
     assert package["workflowContractVersion"] == "word-ppt-workflow-v6"
     assert package["promptContractVersion"] == "page-prompt-v6-generate-only"
     assert package["qaPolicyVersion"] == "light-qa-v6"
     assert package["apiKeyRequired"] is False
     assert package["marketplacePreviewIdentity"] == marketplace["name"] == "editable-ppt-public"
-    assert marketplace["interface"]["displayName"].endswith("2.0.1")
+    assert marketplace["interface"]["displayName"].endswith("2.0.2")
     assert package["bodyImageAspectPolicy"] == "17:8-relative-error-at-most-0.01"
     assert package["everyPageCallsImage2"] is True
     assert package["initialImageEndpoint"] == "images/generations"

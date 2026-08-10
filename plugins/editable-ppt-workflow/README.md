@@ -1,4 +1,4 @@
-# Editable PPT Workflow 2.0.1
+# Editable PPT Workflow 2.0.2
 
 `word-ppt-workflow-v6` converts one paginated Word document and one SVG Logo into an object-level editable 16:9 PowerPoint.
 

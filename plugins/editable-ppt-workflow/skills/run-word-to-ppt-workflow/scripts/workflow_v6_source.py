@@ -14,6 +14,7 @@ from docx.oxml.ns import qn
 
 from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
+from build_page_contracts import split_page_title_body
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_state import create
 from style_recommendations import _recommendations
@@ -44,14 +45,6 @@ def _page_text(page: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             values.append(value.strip())
     return "\n\n".join(values)
-
-
-def _page_title(text: str, page_number: int) -> str:
-    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-    if not first:
-        return f"第{page_number}页"
-    first = re.sub(r"^第\s*\d+\s*页(?:\s*PPT)?\s*", "", first).strip()
-    return (first or f"第{page_number}页")[:80]
 
 
 def _hyperlinks_by_block(docx_path: Path) -> dict[int, list[str]]:
@@ -116,6 +109,8 @@ def compile_effective_page(
     comments: Sequence[Mapping[str, Any]],
     references: Sequence[Mapping[str, Any]],
     attachment_links: Sequence[str],
+    fixed_page_title: str | None = None,
+    body_render_content: str | None = None,
 ) -> dict[str, Any]:
     directives = [
         {
@@ -146,6 +141,9 @@ def compile_effective_page(
         "artifact_version": "effective-page-v6",
         "page_number": page_number,
         "word_original": word_text,
+        "fixed_page_title": fixed_page_title or f"第{page_number}页",
+        "body_render_content": body_render_content if body_render_content is not None else word_text,
+        "title_render_policy": "fixed_layer_only_never_render_in_body",
         "comment_directives": directives,
         "authority_order": ["page_comments", "word_original", "global_style", "references"],
         "effective_content_policy": (
@@ -182,6 +180,13 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
     for raw_page in pages_payload["pages"]:
         page_number = int(raw_page["page_number"])
         text = _page_text(raw_page)
+        page_comments = raw_page.get("page_comments", [])
+        title, body_render_content = split_page_title_body(
+            text,
+            page_number,
+            pagination_mode=str(pages_payload.get("pagination_mode", "")),
+            page_comments=page_comments,
+        )
         references = _asset_references(page_number, assets, project=project)
         links = _links_for_page(raw_page, links_by_block)
         for link in links:
@@ -195,7 +200,9 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             "artifact_version": "page-source-v6",
             "page_number": page_number,
             "word_original": text,
-            "comments": raw_page.get("page_comments", []),
+            "fixed_page_title": title,
+            "body_render_content": body_render_content,
+            "comments": page_comments,
             "references": references,
         }
         effective = compile_effective_page(
@@ -204,6 +211,8 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             comments=page_source["comments"],
             references=references,
             attachment_links=links,
+            fixed_page_title=title,
+            body_render_content=body_render_content,
         )
         _write_json(project / "02_v6" / "page_sources" / f"page_{page_number:03d}.json", page_source)
         _write_json(project / "02_v6" / "effective_pages" / f"page_{page_number:03d}.json", effective)
@@ -213,7 +222,7 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             "references": references,
             "search_requests": effective["search_requests"],
         })
-        state_pages.append(new_page(page_number, title=_page_title(text, page_number)))
+        state_pages.append(new_page(page_number, title=title))
 
     state = new_project(
         word_source={"path": "00_source/source.docx", "sha256": _sha256(locked_word)},

@@ -1,6 +1,6 @@
 {
   "name": "editable-ppt-workflow",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Convert paginated Word into editable 16:9 PPT with V6 generate-only Image2 bodies, light QA, object-level reconstruction, fixed layers, and mechanical assembly.",
   "author": {"name": "czd176224-rgb"},
   "skills": "./skills/",

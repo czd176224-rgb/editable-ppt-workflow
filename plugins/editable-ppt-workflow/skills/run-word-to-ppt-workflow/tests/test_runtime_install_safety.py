@@ -77,8 +77,8 @@ def test_runtime_install_safety_smoke():
     assert "runtime-root-safety-smoke=ok" in completed.stdout
 
 
-def test_portable_installer_injects_current_workflow_and_runs_real_v4_object_build_smoke():
-    """A --help-only smoke cannot prove that the separately installed CLI builds V4 objects."""
+def test_portable_installer_injects_current_workflow_and_runs_real_v6_object_build_smoke():
+    """A --help-only smoke cannot prove that the installed CLI builds V6 objects."""
     source = INSTALLER.read_text(encoding="utf-8")
 
     assert '$WorkflowPackageName = "workflow-"' in source
@@ -89,8 +89,8 @@ def test_portable_installer_injects_current_workflow_and_runs_real_v4_object_bui
     e2e = PORTABLE_E2E.read_text(encoding="utf-8")
     assert re.search(r'"page",\s*"build"', e2e)
     assert re.search(r'"page",\s*"validate"', e2e)
-    assert "from prepare_run import prepare" in e2e
-    assert '"word-ppt-workflow-v4"' in e2e
+    assert "from workflow_v6_source import initialize_v6_project" in e2e
+    assert '"word-ppt-workflow-v6"' in e2e
     assert '"reconstruction_contract_version": "editable-image-v3"' in e2e
 
 
@@ -112,16 +112,16 @@ def test_verify_imports_only_the_installed_current_workflow_copy():
     assert '& $WorkflowPython (Join-Path $WorkflowScripts "doctor.py")' in source
     assert '& $WorkflowPython (Join-Path $WorkflowSkill "scripts\doctor.py")' not in source
     assert '$env:CODEX_GPT_IMAGE_SKILL = Join-Path $RuntimeRoot "generate-slide-body-image"' in source
-    assert '& $EditablePython -c "import editppt, workflow_state, final_mechanical_qa;' in source
+    assert '& $EditablePython -c "import editppt;' in source
     assert 'import confirm_ui.server, workflow_state, final_mechanical_qa' not in source
 
 
-def test_portable_verify_reuses_attested_v4_cli_result_without_relaunching_editable_python():
+def test_portable_verify_reuses_attested_v6_cli_result_without_relaunching_editable_python():
     source = VERIFY.read_text(encoding="utf-8")
     portable = source.split("if ($PortableSmokeTest) {", 1)[1].split("} else {", 1)[0]
     assert '$WorkflowPython -c "import editppt;' in portable
     assert "$EditablePython -c" not in portable
-    assert '$Report.editppt_cli -ne "v4-build-validate-ok"' in source
+    assert '$Report.editppt_cli -ne "v6-build-validate-ok"' in source
 
 
 def test_editable_runtime_declares_windows_only_powerpoint_com_dependency():

@@ -2145,7 +2145,7 @@ def test_subscription_client_identity_is_260(tmp_path: Path) -> None:
     )
     requests = json.loads(capture.read_text(encoding="utf-8"))
     initialize = next(item for item in requests if item.get("method") == "initialize")
-    assert initialize["params"]["clientInfo"]["version"] == "1.1.0"
+    assert initialize["params"]["clientInfo"]["version"] == "1.2.0"
 
 
 def test_downloader_rejects_explicit_port_zero(tmp_path: Path) -> None:

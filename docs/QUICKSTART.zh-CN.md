@@ -10,13 +10,13 @@
 
 ## 安装
 
-下载不可变的 `v1.1.0` Windows Release ZIP，校验发布校验和后解压运行：
+下载不可变的 `v1.2.0` Windows Release ZIP，校验发布校验和后解压运行：
 
 ```powershell
-$Version = "1.1.0"
+$Version = "1.2.0"
 $Asset = "editable-ppt-workflow-$Version-windows.zip"
-$ZipUrl = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0/editable-ppt-workflow-1.1.0-windows.zip"
-$Base = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.1.0"
+$ZipUrl = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.2.0/editable-ppt-workflow-1.2.0-windows.zip"
+$Base = "https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v1.2.0"
 Invoke-WebRequest $ZipUrl -OutFile $Asset
 Invoke-WebRequest "$Base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
 $Expected = ((Get-Content SHA256SUMS.txt | Where-Object { $_ -match [regex]::Escape($Asset) }) -split "\s+")[0].ToLowerInvariant()

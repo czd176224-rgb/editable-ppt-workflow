@@ -1,4 +1,4 @@
-# Editable PPT Workflow 1.1.0
+# Editable PPT Workflow 1.2.0
 
 本插件的生产合同是 `word-ppt-workflow-v5`：分页 Word 与 SVG Logo 经一次全局风格确认后，逐页生成 Image2 视觉设计，按设计高保真重建为可编辑对象，完成固定图层后执行成对视觉 QA、顺序组装和强制 Office 验证。
 

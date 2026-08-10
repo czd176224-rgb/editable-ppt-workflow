@@ -1,6 +1,6 @@
 {
   "name": "editable-ppt-workflow",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Convert paginated Word into high-fidelity editable PPT with every-page Image2 design, authentic pixels, paired final QA, DAG recovery, and mandatory Office validation.",
   "author": {"name": "czd176224-rgb"},
   "skills": "./skills/",

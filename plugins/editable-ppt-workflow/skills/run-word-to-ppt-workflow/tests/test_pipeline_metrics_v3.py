@@ -228,7 +228,7 @@ def test_published_metric_index_and_pages_share_one_state_revision(tmp_path: Pat
     report = _report(project)
     revision = _state_revision(project)
     assert report["state_revision"] == revision
-    assert report["snapshot"] == f"09_reports/pipeline_metrics_snapshots/{revision}"
+    assert report["snapshot"] == f"09_reports/pipeline_metrics_snapshots/{revision[:16]}"
     assert set(report["page_metric_files"]) == {"1", "2"}
     for relative in report["page_metric_files"].values():
         page = _read_json(project / relative)

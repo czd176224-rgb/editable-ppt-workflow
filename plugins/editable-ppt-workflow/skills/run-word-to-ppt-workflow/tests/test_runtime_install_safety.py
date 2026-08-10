@@ -197,13 +197,13 @@ def test_background_detector_uses_packaged_editppt_runtime_not_checkout_siblings
     assert result["detection"]["background_text_detected"] is False
 
 
-def test_v5_assembly_uses_packaged_editppt_runtime_without_checkout_siblings(tmp_path: Path):
+def test_v6_assembly_uses_packaged_editppt_runtime_without_checkout_siblings(tmp_path: Path):
     workflow_root = tmp_path / "workflow-current"
     workflow_scripts = workflow_root / "scripts"
     shutil.copytree(WORD_WORKFLOW_SCRIPTS, workflow_scripts)
     shutil.copytree(WORD_WORKFLOW_SCRIPTS.parent / "schemas", workflow_root / "schemas")
     completed = subprocess.run(
-        [sys.executable, "-c", "import workflow_v5_assembly; print('assembly-import=ok')"],
+        [sys.executable, "-c", "import workflow_v6_reconstruction; print('assembly-import=ok')"],
         capture_output=True,
         text=True,
         cwd=tmp_path,

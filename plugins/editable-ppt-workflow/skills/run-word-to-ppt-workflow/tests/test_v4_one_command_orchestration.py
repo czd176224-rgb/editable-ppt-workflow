@@ -12,6 +12,9 @@ from types import SimpleNamespace
 from docx import Document
 from PIL import Image
 from pptx import Presentation
+import pytest
+
+pytestmark = pytest.mark.skip(reason="retired V4 one-command orchestration; production entry is V6-only")
 
 
 ROOT = Path(__file__).resolve().parents[1]

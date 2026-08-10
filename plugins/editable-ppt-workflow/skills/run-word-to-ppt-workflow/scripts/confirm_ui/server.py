@@ -46,7 +46,7 @@ from fixed_region_contract import (  # noqa: E402
     GEOMETRY_TOLERANCE_RATIO,
     SLIDE_SIZE_CM,
 )
-from style_contract import revise_style_contract  # noqa: E402
+from style_contract import compile_style_execution, revise_style_contract  # noqa: E402
 from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: E402
 from workflow_v5_dag import DagStore  # noqa: E402
 
@@ -273,6 +273,17 @@ def _expected_recommendation_stage(result_path: Path) -> int:
 
 def _project_facts(project: Path) -> dict[str, Any]:
     """Read immutable pagination facts produced by the Word prepare stage."""
+    v6_path = project / "workflow_v6.json"
+    if v6_path.is_file():
+        workflow = _read_json(v6_path)
+        pages = workflow.get("pages")
+        if not isinstance(pages, list) or not pages:
+            raise ValueError("V6 project pages are missing or invalid")
+        return {
+            "page_count": len(pages),
+            "pagination_mode": "explicit-markers-or-physical",
+            "one_page_to_one_slide": True,
+        }
     _authority, contracts = load_verified_project_page_contracts(project)
     workflow = _read_json(project / "workflow_run.json")
     pagination = workflow.get("pagination")
@@ -286,6 +297,30 @@ def _project_facts(project: Path) -> dict[str, Any]:
         "pagination_mode": mode,
         "one_page_to_one_slide": True,
     }
+
+
+def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
+    state = _read_json(project / "workflow_v6.json")
+    pages = []
+    for page in state.get("pages", []):
+        number = page.get("page_number")
+        source = _read_json(project / "02_v6" / "page_sources" / f"page_{number:03d}.json")
+        references = source.get("references", [])
+        pages.append({
+            "page_number": number,
+            "title": page.get("title"),
+            "text": source.get("word_original", ""),
+            "assets": [
+                {
+                    "asset_id": item.get("asset_id", item.get("url", "reference")),
+                    "media_type": item.get("media_type", item.get("kind", "reference")),
+                    "name": Path(item.get("path", item.get("url", "reference"))).name,
+                }
+                for item in references if isinstance(item, dict)
+            ],
+            "table_count": 0,
+        })
+    return pages
 
 
 def _field_value(value: Any, default: Any = "") -> Any:
@@ -599,10 +634,13 @@ def _recommendation_view(project: Path, recommendations: dict[str, Any]) -> dict
         view.update(_project_facts(project))
         view["stage"] = "final"
         view["fixed_region"] = _fixed_region_view()
-        summary_path = project / PAGE_REQUIREMENT_SUMMARY_PATH
-        if not summary_path.is_file():
-            raise ValueError("sealed page requirement summary is missing")
-        view.update(public_requirement_summary(project, _read_json(summary_path)))
+        if (project / "workflow_v6.json").is_file():
+            view.update({"page_requirement_summary": [], "comments_are_page_authority": True})
+        else:
+            summary_path = project / PAGE_REQUIREMENT_SUMMARY_PATH
+            if not summary_path.is_file():
+                raise ValueError("sealed page requirement summary is missing")
+            view.update(public_requirement_summary(project, _read_json(summary_path)))
         return view
     raise ValueError("recommendations.json must declare stage1, stage2, stage3, or final")
 
@@ -822,7 +860,11 @@ def create_app(
             project_facts = _project_facts(project)
             response = jsonify(
                 {
-                    "pages": project_pages(project, project_facts["page_count"]),
+                    "pages": (
+                        _v6_project_pages(project)
+                        if (project / "workflow_v6.json").is_file()
+                        else project_pages(project, project_facts["page_count"])
+                    ),
                     "page_count": project_facts["page_count"],
                 }
             )
@@ -1274,9 +1316,19 @@ def _wait(project: Path, stage: str, timeout: int) -> int:
                 # contract.  Freeze it at the wait boundary so both the
                 # documented confirm-ui flow and the one-command runner enter
                 # production with the same immutable identity.
-                from style_contract import freeze_style_contract
+                if (project / "workflow_v6.json").is_file():
+                    from workflow_v6_state import load as load_v6, save as save_v6
 
-                freeze_style_contract(project)
+                    state = load_v6(project)
+                    state["style_confirmation"] = {
+                        "status": "confirmed",
+                        "contract": compile_style_execution(_read_json(result_path)),
+                    }
+                    save_v6(project, state)
+                else:
+                    from style_contract import freeze_style_contract
+
+                    freeze_style_contract(project)
             print(result_path)
             return 0
         lock = _read_lock(project / LOCK_NAME)

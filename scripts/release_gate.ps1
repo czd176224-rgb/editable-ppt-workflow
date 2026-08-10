@@ -3,8 +3,6 @@ param([switch]$SkipPortableSmoke)
 $ErrorActionPreference = "Stop"
 $RepoRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $PreviousDontWriteBytecode = $env:PYTHONDONTWRITEBYTECODE
-$PreviousPycachePrefix = $env:PYTHONPYCACHEPREFIX
-$CompileCacheRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("editable-ppt-compile-cache-" + [guid]::NewGuid().ToString("N"))
 $env:PYTHONDONTWRITEBYTECODE = "1"
 function Get-Sha256([string]$Path) {
     $algorithm = [System.Security.Cryptography.SHA256]::Create(); $stream = [System.IO.File]::OpenRead($Path)
@@ -29,11 +27,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Release test suite failed: $suite" }
     }
 
-    $env:PYTHONPYCACHEPREFIX = $CompileCacheRoot
-    & python -m compileall -q plugins scripts
+    & python scripts/check_python_syntax.py
     if ($LASTEXITCODE -ne 0) { throw "Python compilation failed." }
-    if ($null -eq $PreviousPycachePrefix) { Remove-Item Env:PYTHONPYCACHEPREFIX -ErrorAction SilentlyContinue }
-    else { $env:PYTHONPYCACHEPREFIX = $PreviousPycachePrefix }
     & python plugins/editable-ppt-workflow/scripts/check_current_runtime.py --repo-root $RepoRoot
     if ($LASTEXITCODE -ne 0) { throw "Current-runtime policy scan failed." }
     if (Test-Path -LiteralPath (Join-Path $RepoRoot ".git") -PathType Container) {
@@ -92,11 +87,6 @@ try {
     }
 } finally {
     Pop-Location
-    if (Test-Path -LiteralPath $CompileCacheRoot -PathType Container) {
-        [System.IO.Directory]::Delete($CompileCacheRoot, $true)
-    }
     if ($null -eq $PreviousDontWriteBytecode) { Remove-Item Env:PYTHONDONTWRITEBYTECODE -ErrorAction SilentlyContinue }
     else { $env:PYTHONDONTWRITEBYTECODE = $PreviousDontWriteBytecode }
-    if ($null -eq $PreviousPycachePrefix) { Remove-Item Env:PYTHONPYCACHEPREFIX -ErrorAction SilentlyContinue }
-    else { $env:PYTHONPYCACHEPREFIX = $PreviousPycachePrefix }
 }

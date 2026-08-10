@@ -1,21 +1,21 @@
 {
   "name": "editable-ppt-workflow",
-  "version": "1.2.0",
-  "description": "Convert paginated Word into high-fidelity editable PPT with every-page Image2 design, authentic pixels, paired final QA, DAG recovery, and mandatory Office validation.",
+  "version": "2.0.0",
+  "description": "Convert paginated Word into editable 16:9 PPT with V6 generate-only Image2 bodies, light QA, object-level reconstruction, fixed layers, and mechanical assembly.",
   "author": {"name": "czd176224-rgb"},
   "skills": "./skills/",
   "interface": {
     "displayName": "分页 Word 独立生成可编辑 PPT",
-    "shortDescription": "逐页 Image2 设计、高保真可编辑重建、成对终检与 Office 验证",
-    "longDescription": "读取分页 Word 与 SVG Logo，一页 Word 对应一页 16:9 PPT。自然语言分页批注先编译为页面要求；批注可覆盖全局软风格，但不能改变 Word 事实、固定几何或 Logo。只有批注明确要求且 Word/附件未提供真实图片时，才通过 Codex App Server 与 ChatGPT OAuth 项目级批量检索一次。一次素材需求可封闭多张真实资产，每个资产保留独立来源与哈希。全项目只确认一次整体视觉合同。每个未命中有效缓存的页面使用完整 Word 原文、批注、视觉合同和共享真实素材槽位生成精确 1904×896 的 17:8 Image2 正文设计；确定性合成会在相同槽位覆盖真实源素材，合成后的正文图通过语义验收并成为可编辑重建的唯一视觉权威，失败时只允许一次定向修复。重建必须贴合其构图、层级、配色、留白和装饰，并保留原生文字、表格、形状和关键图片。加入标题、原始 SVG Logo、页脚和页码后，最终 QA 将合成正文原稿与最终可编辑页中精确裁出的正文区域同尺寸比较；只有硬性用户需求失败才阻塞，随后必须通过 Office 打开与逐页渲染验证。无需 OPENAI_API_KEY。",
+    "shortDescription": "V6 逐页生成、轻量审查、对象级可编辑重建与机械组装",
+    "longDescription": "读取分页 Word 与 SVG Logo，一页 Word 对应一页 16:9 PPT。全项目只确认一次视觉风格；批注可修改本页 Word 事实并指定搜索或材料用途。Word 图片、附件与搜索材料均只作为参考，不会触发图片编辑。每页正文统一通过 gpt-image-2 generate 生成 1904x896 的 17:8 设计，经轻量 QA 后对象级可编辑重建，再加入固定标题、原始 SVG Logo、页脚和页码。附件或搜索材料不可用、后续候选无有效改进时不会阻断：分别忽略失效材料或回退首个有效候选。最终只做 OpenXML、页数、固定层和可编辑对象机械验证；Office 检查为可选后处理。",
     "developerName": "czd176224-rgb",
     "category": "Productivity",
     "capabilities": ["Write"],
     "defaultPrompt": [
-      "锁定分页 Word 的页序、标题、正文、表格、逐页批注、页内图片和附件；批注不进入正文。",
-      "每个未命中有效缓存的页面都调用 Image2 生成完整 17:8 正文设计，比例相对误差不得超过 1%。",
-      "在共享槽位覆盖真实源素材，把验收通过的合成正文图作为唯一视觉权威，按其构图、层级、配色和视觉节奏做对象级可编辑重建。",
-      "精确加入标题、SVG Logo、页脚和页码后，成对审查合成正文原稿与最终页，并执行强制 Office 验证。"
+      "锁定分页 Word 的完整原文、批注、页内图片和附件链接；批注可修改本页事实。",
+      "每页只调用 gpt-image-2 generate 生成 1904x896、17:8 正文，参考材料永不作为 edit 输入。",
+      "轻量 QA 后进行对象级可编辑重建，并加入固定标题、SVG Logo、页脚和页码。",
+      "材料失效与无效重试不阻断，最终按 Word 顺序机械组装并验证。"
     ],
     "brandColor": "#3569B0"
   }

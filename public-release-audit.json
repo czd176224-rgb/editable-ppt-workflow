@@ -1,18 +1,18 @@
 {
   "schemaVersion": "public-release-audit-v1",
   "reportType": "public-release-audit",
-  "releaseTag": "v1.2.0",
-  "pluginVersion": "1.2.0",
-  "workflowContractVersion": "word-ppt-workflow-v5",
-  "sourceManifestSha256": "964ffb9e01175e184e1e297bbde53dded844e36b703cd2cc4e3a067be672e593",
+  "releaseTag": "v2.0.0",
+  "pluginVersion": "2.0.0",
+  "workflowContractVersion": "word-ppt-workflow-v6",
+  "sourceManifestSha256": "e59e6cc82eca65f52f7421d23c4ff8ef5f516da78502743f93d426838e915bfd",
   "root": ".",
   "passed": true,
   "errors": [],
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
-      "bytes": 437,
-      "sha256": "5c9e1467e6f11421ac7c2c7a8b354b80ec46a2419f56aca86576191930f65209"
+      "bytes": 789,
+      "sha256": "577f652f031fe9b67596b1efdc0aea0930dc652bf00ed9851f326a80f5f5d59e"
     },
     {
       "path": ".gitattributes",
@@ -36,13 +36,13 @@
     },
     {
       "path": "docs/QUICKSTART.zh-CN.md",
-      "bytes": 3075,
-      "sha256": "a7e91aed5fa794dad8205ba4326612b6f411e4571a3c04896a4b7612bb766257"
+      "bytes": 780,
+      "sha256": "1446594bc53953c74969dfcfe1703848fd912e3771ec905575efa93f16b91173"
     },
     {
       "path": "docs/RELEASE.md",
-      "bytes": 1706,
-      "sha256": "6a11f60c6947ad81e22b84a7d95ca426280f26dfd0c8027476294ef2119dbcc0"
+      "bytes": 848,
+      "sha256": "a8eea12077eee3d86b4c36640ef85e27f3c27750ca3fb210c0d45d7ce7ffc8a4"
     },
     {
       "path": "docs/SECURITY_AND_PROVENANCE.md",
@@ -62,7 +62,7 @@
     {
       "path": "install.ps1",
       "bytes": 10963,
-      "sha256": "55c22eb8013a2d484bb0a8791172a9a832aff045c8716d67f2520a03359e23ba"
+      "sha256": "4e77606b33a326826512653b615dced6edf3bdb7dd80eb6b8f66d6bc67f2800f"
     },
     {
       "path": "LICENSE",
@@ -76,33 +76,33 @@
     },
     {
       "path": "package-info.json",
-      "bytes": 2141,
-      "sha256": "4fbf438ecb7e5980f4d5d47566ecabdb2ed3d3e91328b36c7aba28c3ee6108f7"
+      "bytes": 2550,
+      "sha256": "dc9bfadf88ee5aef887cf76bba92db8afab4b708baa0b3b3b2d21b18e652dc35"
     },
     {
       "path": "plugins/editable-ppt-workflow/.codex-plugin/plugin.json",
-      "bytes": 2501,
-      "sha256": "39e565e07843cad7f3b2fefebe04c0370d4c40367644e16953ee1559bd99c518"
+      "bytes": 1788,
+      "sha256": "95225c574cbd4344d45ec5a84a892c97252a616659e0b22a6f6a98f154d17f6f"
     },
     {
       "path": "plugins/editable-ppt-workflow/README.md",
-      "bytes": 2976,
-      "sha256": "b70cd18069695fe6992a9bde5b0596c93dafc96a0faa4c738afa35a293171ea4"
+      "bytes": 886,
+      "sha256": "1677babc95cb9def5cf4c05c84a911d1150d62a2beb7308770f9adfe131a4456"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/check_current_runtime.py",
-      "bytes": 12538,
-      "sha256": "fe4d89a9ae6f990e86e7dff11c8ef893a0a8d713b59c99b10395a06708482c44"
+      "bytes": 12751,
+      "sha256": "9e7b28473c9f5e7c4ef40879be6067d59fbe00c9819ae8a1f24edfa6126eb218"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/install_runtime.ps1",
-      "bytes": 14351,
-      "sha256": "b9297d4520cde5488620333d44a8c581e2c72d68721fa7c151aefa1258e1b57f"
+      "bytes": 14424,
+      "sha256": "aaf933109a0dc220554f5a019a15b0eab62dec5712ec72053e64997a23f1b4f9"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/portable_e2e_smoke.py",
-      "bytes": 5524,
-      "sha256": "2429de85de01801ce0e0b99774bcde6b696babd137dca4588a95e2b88ab75a80"
+      "bytes": 5038,
+      "sha256": "ab2090f651fc9b21ed9f805ede489a344235b5cfe56de7218259f7c7bb24deaf"
     },
     {
       "path": "plugins/editable-ppt-workflow/scripts/runtime_office.py",
@@ -131,13 +131,13 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/generate-slide-body-image/scripts/codex_gpt_image.py",
-      "bytes": 34757,
-      "sha256": "8a3e143bb67becee0115b319e15036e396054c5315c053fb25c42f8e62c89518"
+      "bytes": 35008,
+      "sha256": "97d32f9e7d90fb735c7dd823def02c818b5611edf796a185f1a69dd9c6ad4abe"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/generate-slide-body-image/SKILL.md",
-      "bytes": 5789,
-      "sha256": "b5585faa2ad9ab13c8efa459225120c32354a88a11c52ec942d3baf2839f6a22"
+      "bytes": 1822,
+      "sha256": "85c5f95441fb592aa5b8637f9e6de03087e4a14a666b8b97de746f9de3c4b002"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/generate-slide-body-image/tests/test_generation_trace.py",
@@ -331,8 +331,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/workflow_metrics.py",
-      "bytes": 12067,
-      "sha256": "c54dcd832da6ad2484af96aaa9dfc26d4d97fb10b72a878ddc3fda79c724789f"
+      "bytes": 12145,
+      "sha256": "e769c23d6d76626251dc51c0f4ecb4508810026e207c7154dfaecc1c748093d0"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/workflow_state_store.py",
@@ -566,8 +566,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/cache_store.py",
-      "bytes": 17549,
-      "sha256": "a3097de6c1508aa867fdfa2bad0dcbd0a4799c57e0ebcc6c22e53bd065ad9233"
+      "bytes": 18283,
+      "sha256": "0a41389c31ff653fed9b3ea62acfcd5d95e626ed44911bb37bcfe1605120c821"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/codex_subscription_runtime.py",
@@ -591,8 +591,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/confirm_ui/server.py",
-      "bytes": 56976,
-      "sha256": "56aa6bafd8f3a206cd13d3ab94832c8d1888aceb666c8a49d16312b29e911ca1"
+      "bytes": 59228,
+      "sha256": "fd9d69aed5517be12f00d67a5de394edff20ef6613eb62cf833f81cdfe1f9bee"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/confirm_ui/static/app.js",
@@ -731,8 +731,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/doctor.py",
-      "bytes": 21149,
-      "sha256": "26c65189c53fa0499cdea07e94ff882c222d36daa373d9ef9145ef0449673d86"
+      "bytes": 22147,
+      "sha256": "367fe8c505eb8f0af299f2e0a492da4aaab7df52f8de3dea9fc263ffdb220f55"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/editable_page_cache.py",
@@ -946,8 +946,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/word_to_editable_ppt.py",
-      "bytes": 1323,
-      "sha256": "c259a77a24e68fa8895eb5e2146dcbb2b61c8ed2003a20d134811ef2d16ba350"
+      "bytes": 1093,
+      "sha256": "d7d8199560a3a0aac6ff63b766b465e0240d4ec9286ce7241f4f213d9a9bbf31"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_contract.py",
@@ -1090,9 +1090,44 @@
       "sha256": "8629147bce73474358753931948da05f14cc0d875bb493f60cc45b2a71d5a061"
     },
     {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_cli.py",
+      "bytes": 4643,
+      "sha256": "d708dfadf1da142a81b3e8497b6da8cad57d034f286e94984fccae51ad6d8a24"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_contract.py",
+      "bytes": 7862,
+      "sha256": "cd4836675d2aa38934d54bcb234a574f36fc8e503da8ca913db2829795a16735"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_image.py",
+      "bytes": 9976,
+      "sha256": "74f79f79fa3cc8e7544b7312de3d2328110f74f5366ff6b8a683a81d05755f06"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_qa.py",
+      "bytes": 4042,
+      "sha256": "039e4df4187800cc4c05048887bc63f98ef828a3572dd37796cce6c1612782d0"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py",
+      "bytes": 10490,
+      "sha256": "f7b068bbb1d761381ba7c6f0bc49c9a15b19fe705ca84673596207e72148d871"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_source.py",
+      "bytes": 9222,
+      "sha256": "e1d54b14da6c1d3972100227f6a6bcf681588746eb4669fc80099ed2ebe48937"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_state.py",
+      "bytes": 2549,
+      "sha256": "f6189c3354a94d03d87e8b693c3cef6bfcba074c394131a972738fc3500901d6"
+    },
+    {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/SKILL.md",
-      "bytes": 12462,
-      "sha256": "f8128a6254023c467ffdf9baf18314f7d1cdc99b539ba5022a112f382de66fd9"
+      "bytes": 3475,
+      "sha256": "87026bf8f6f2d30be8cc41ecd9d6c0bb2c0f2c23c73575db48f87c9053f0e6b7"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/template/.gitignore",
@@ -1191,8 +1226,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_current_runtime_scanner.py",
-      "bytes": 3150,
-      "sha256": "4205b3a14e8965f55d39e2f6e39d15f8bf067ebcbc294696387784becc8c8544"
+      "bytes": 3133,
+      "sha256": "818c80a0ea447dd1a457af55e1ae442aa73370f5b89d72d96ed3ae91ddede3fa"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_current_ui_adapter_v4.py",
@@ -1241,8 +1276,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_independent_page_workflow.py",
-      "bytes": 115060,
-      "sha256": "b9b928bcf3d40261161a562b838826e89e5fd250054b355e7c2d25652a06beeb"
+      "bytes": 115049,
+      "sha256": "66a4ff4e24e42d8e73851ef6a7bac5f4f7d153bd34a4331148f3c83a0f4b4be0"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_mixed_workflow_e2e.py",
@@ -1286,8 +1321,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_pipeline_metrics_v3.py",
-      "bytes": 14599,
-      "sha256": "5082544ffc8cdd51b871cf7057332d7100b93638a8bc15f8accdc76b5ea95e90"
+      "bytes": 14604,
+      "sha256": "8eabfedd51e7526ca4b74cc570eaffcc0ce04b51d6fae6867642144d54b4d2b8"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_production_runner.py",
@@ -1306,8 +1341,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_runtime_install_safety.py",
-      "bytes": 11493,
-      "sha256": "a70376f06210014ff5099401570c127947fa3cf0770e6af78833dcaf9f427e7d"
+      "bytes": 11499,
+      "sha256": "522bee6b7c0eb8b6eb363ce314f981d5cb34310d914bdb66212f512f1f9b52c8"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_style_contract.py",
@@ -1331,8 +1366,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_task6_fix_round1.py",
-      "bytes": 7294,
-      "sha256": "060342fe207f7caa70ceffd64b82c0242676eca9f711e8c54ea43ca5c33eb846"
+      "bytes": 7406,
+      "sha256": "de1eb6b5c11991e73deff810ab957042d0526397ab8c9272358268225652d062"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_task6_fix_round2.py",
@@ -1341,8 +1376,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_task6_metadata_v4.py",
-      "bytes": 3100,
-      "sha256": "8c30d32a54a7012fe98009802b775112618e72353bc6bbf2b68e676a5de140cb"
+      "bytes": 2788,
+      "sha256": "bd24aa87f546f157e49111902b2d4cec60fa34817afd46e630346e60543e9ed3"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_v3_decision_pipeline.py",
@@ -1371,8 +1406,8 @@
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_v4_one_command_orchestration.py",
-      "bytes": 21759,
-      "sha256": "a963c98f64aa97a5348baaaafab3de214b492be313d0febdb0ef3236e77b02ff"
+      "bytes": 21880,
+      "sha256": "d75639eb2088ca3f8d71b1dc460ce18cf74971f1184702a6d5b03c9a50c183da"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_v4_qa_gateway.py",
@@ -1380,9 +1415,14 @@
       "sha256": "8e1ee05ecb0c0183ded6008638d4cd1f7d00bf5d4308dbc71f491dd423136615"
     },
     {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_v6_runtime_diagnostics.py",
+      "bytes": 1082,
+      "sha256": "ebae247b2be385d17fc4e4e8e1500e4f6e89e60181a497411f47dd0aee698c98"
+    },
+    {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_word_only_contract.py",
-      "bytes": 16765,
-      "sha256": "11878bd6f55c6838a77671ae322ff26a992c2aa1f357d3146869fe1cf6953591"
+      "bytes": 16920,
+      "sha256": "5b5295c5f0cf19652ed8827c0616e624bae82622e8870e1b2735f7b87ae3b659"
     },
     {
       "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v3_contract.py",
@@ -1495,6 +1535,36 @@
       "sha256": "ed74d4ff1e724bcec51cd051e4840001e8296501acc1f7e8e42dfdb4fa75026a"
     },
     {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_cli.py",
+      "bytes": 683,
+      "sha256": "c26759d8bfd01db495d17fc7123b67c4fc172145f86e4731d4325ec61855cbe2"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_concurrency.py",
+      "bytes": 1053,
+      "sha256": "50a68db0f0f28d945d8e0c6b969c42e29adebfc4a283a62b275b0074867543c9"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_contract.py",
+      "bytes": 2951,
+      "sha256": "ab341e1250dc7d13e168871600907ec745f63fc48f98612ebf044144bb6608d4"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_image.py",
+      "bytes": 3812,
+      "sha256": "a7ddf779e4af0c27540ca34681b2a04c63cef16f37b3867dc0135433a4b9115a"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_reconstruction.py",
+      "bytes": 4901,
+      "sha256": "70205ec4ebb463ff3f06513f598b26edb069b4d552cd1160eb0c7763dd1669b3"
+    },
+    {
+      "path": "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_source.py",
+      "bytes": 2510,
+      "sha256": "9b9b2356a8679e10c7e3c46ab4b232106d9b5e7475194fce12307b4ae3bbd28a"
+    },
+    {
       "path": "plugins/editable-ppt-workflow/skills/validate-ppt-output/agents/openai.yaml",
       "bytes": 243,
       "sha256": "4f0ddd278ebeb6d9b3122715591f4f9bc15a73b9b7376b72b97a81c7b6abcb22"
@@ -1506,18 +1576,18 @@
     },
     {
       "path": "public-release-files.json",
-      "bytes": 824,
-      "sha256": "ad8dae1986677eeb5b782b2685ac314d88f1f0202270ccb6e0855a861591858a"
+      "bytes": 862,
+      "sha256": "c532a55518c014eeca1bc8bbcd767ced54cb16cc9d99c6c244585763858a5522"
     },
     {
       "path": "public-source-manifest.json",
-      "bytes": 52551,
-      "sha256": "964ffb9e01175e184e1e297bbde53dded844e36b703cd2cc4e3a067be672e593"
+      "bytes": 60060,
+      "sha256": "e59e6cc82eca65f52f7421d23c4ff8ef5f516da78502743f93d426838e915bfd"
     },
     {
       "path": "README.md",
-      "bytes": 4780,
-      "sha256": "a2e806f674a0ffd41a5306feb7fe63947122eb9303f00f6a11d3b0fa81bd43fd"
+      "bytes": 1751,
+      "sha256": "12c5b3da01f73dd267955b7ea4f194917a47ee3d264c999a143d3778129400a6"
     },
     {
       "path": "scripts/build_release_archive.py",
@@ -1528,6 +1598,11 @@
       "path": "scripts/check_public_release.py",
       "bytes": 9929,
       "sha256": "d1f08a007fb1c8a6b731bff91c51c68a1760348cc6f0205acb5626a0bd58572c"
+    },
+    {
+      "path": "scripts/check_python_syntax.py",
+      "bytes": 871,
+      "sha256": "f3348a162ab67df7391a8a0c61a01b2252b811cbefa684a393cca3ffd28387d5"
     },
     {
       "path": "scripts/export_public_release.ps1",
@@ -1541,8 +1616,8 @@
     },
     {
       "path": "scripts/release_gate.ps1",
-      "bytes": 5952,
-      "sha256": "744397d9613db6127d9c24f5b8a8c330d309bb26b1a9fa3d5269df1027d0c4d6"
+      "bytes": 5229,
+      "sha256": "560de2a9442ae0942610fb573fb8351c0a17fe227af2166d82cc0ee83fd471b6"
     },
     {
       "path": "SECURITY.md",
@@ -1557,7 +1632,7 @@
     {
       "path": "tests/test_install_receipt_state_machine.py",
       "bytes": 12315,
-      "sha256": "ad295a79aea06aae7dbe498831cf0a43b4c05b3ec83dc9fc1da2ed6c90640bfb"
+      "sha256": "89650672c6a0d10a66d36d5ed4ae88fb42b37e2544e3e2b7b98cae58e10671dc"
     },
     {
       "path": "tests/test_public_distribution.py",
@@ -1567,12 +1642,12 @@
     {
       "path": "tests/test_release_hardening_v2.py",
       "bytes": 13017,
-      "sha256": "5a735afadc25f8ad40a561f5e335f39a441a68906408ad6d112554e4e81cd4fe"
+      "sha256": "d0669a657feb39d1fc3a25536494fb751f857f3c8f4f2d36aadfc78d4bf39482"
     },
     {
       "path": "tests/test_skill_role_names.py",
-      "bytes": 2752,
-      "sha256": "c3cd36b866c51ac5d7b670dbf81fc8500ee84bf0a1d693480aad05281bc91ee5"
+      "bytes": 2718,
+      "sha256": "bf35f3880216f8ac1c97b313096c38d4aac4911c0db18179ba05c31eb9491178"
     },
     {
       "path": "uninstall.cmd",
@@ -1596,8 +1671,8 @@
     },
     {
       "path": "verify.ps1",
-      "bytes": 8038,
-      "sha256": "cb539b61679006bc0ec30cf294ef2bdbc0b84336ae02bd62a19d56a22272a161"
+      "bytes": 7940,
+      "sha256": "3b00ce7a153413fb1bb3355ec88f6a4f892f365cf9deeb671ebea533b2f2a93e"
     }
   ]
 }

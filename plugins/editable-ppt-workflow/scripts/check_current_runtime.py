@@ -90,10 +90,7 @@ REMOVED_V4_SEMANTICS = {
     "removed wrong-ratio acceptance": re.compile(r"16:9[-_ ]body|direct[-_ ]then[-_ ]centered[-_ ]contain", re.IGNORECASE),
     "removed flattened editability": re.compile(r"flattened[-_ ]editable|full[-_ ]body[-_ ]bitmap[-_ ]fallback", re.IGNORECASE),
 }
-ALLOWED_COMMANDS = frozenset({
-    "batch-generate", "confirm-ui", "doctor", "prepare", "run",
-    "v5", "v5-diagnostics", "workflow",
-})
+ALLOWED_COMMANDS = frozenset({"confirm-ui", "doctor", "v6"})
 REQUIRED_REQUIREMENTS = frozenset({"flask", "jsonschema", "pillow", "pypdf", "pypdfium2", "python-docx", "python-pptx"})
 
 
@@ -133,16 +130,16 @@ def _scan_tokens(skill_root: Path, repo_root: Path) -> list[str]:
 
 
 def _scan_v4_semantics(skill_root: Path, repo_root: Path) -> list[str]:
+    entry = skill_root / "scripts" / "word_to_editable_ppt.py"
+    cli = skill_root / "scripts" / "workflow_v6_cli.py"
     findings: list[str] = []
-    for name in V4_PRODUCTION_FILES:
-        path = skill_root / "scripts" / name
+    for path in (entry, cli):
         if not path.is_file():
-            findings.append(f"{_display(path, repo_root)}: required V4 production module is missing")
+            findings.append(f"{_display(path, repo_root)}: required V6 production module is missing")
             continue
-        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), start=1):
-            for label, pattern in REMOVED_V4_SEMANTICS.items():
-                if pattern.search(line):
-                    findings.append(f"{_display(path, repo_root)}:{line_number}: {label}: {line.strip()}")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        if "workflow_v4" in text or "workflow_v5" in text:
+            findings.append(f"{_display(path, repo_root)}: V6 production imports a legacy workflow")
     return findings
 
 
@@ -195,7 +192,7 @@ def _literal_strings(node: ast.AST) -> set[str]:
 
 
 def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
-    path = skill_root / "scripts/page_generation.py"
+    path = skill_root / "scripts/workflow_v6_image.py"
     if not path.is_file():
         return [f"{_display(path, repo_root)}: initial-generation builder is missing"]
     try:
@@ -207,14 +204,23 @@ def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
         for node in module.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    initial = functions.get("build_initial_request")
+    initial = functions.get("build_generate_command")
     if initial is None:
-        return [f"{_display(path, repo_root)}: build_initial_request is missing"]
-    literals = _literal_strings(initial)
+        return [f"{_display(path, repo_root)}: build_generate_command is missing"]
+    command_value = next(
+        (
+            node.value
+            for node in initial.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "command" for target in node.targets)
+        ),
+        None,
+    )
+    literals = _literal_strings(command_value) if command_value is not None else set()
     findings: list[str] = []
-    if not {"generate", "edit"} <= literals:
+    if "generate" not in literals or "edit" in literals or "--image" in literals:
         findings.append(
-            f"{_display(path, repo_root)}:{initial.lineno}: initial generation must select generate/edit from reference presence with matching endpoints"
+            f"{_display(path, repo_root)}:{initial.lineno}: V6 generation must use generate only without image inputs"
         )
     return findings
 

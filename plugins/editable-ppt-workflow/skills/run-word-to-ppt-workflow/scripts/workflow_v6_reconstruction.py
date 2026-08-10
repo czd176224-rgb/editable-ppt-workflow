@@ -8,26 +8,76 @@ import os
 import shutil
 import uuid
 import zipfile
+import copy
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Mapping
 
 from pptx import Presentation
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.opc.package import Part
+from pptx.opc.packuri import PackURI
 
 from fixed_frame import apply_fixed_frame, inspect_fixed_frame
 from workflow_v6_contract import geometry_contract, transition_page
-from workflow_v6_state import load, save
+from workflow_v6_state import load, update_page
 
 
-EDITPPT_CLI = (
-    Path(__file__).resolve().parents[2]
-    / "reconstruct-editable-slide" / "cli"
-)
-if EDITPPT_CLI.is_dir():
-    if str(EDITPPT_CLI) not in __import__("sys").path:
-        __import__("sys").path.append(str(EDITPPT_CLI))
-    from editppt.runtime.final_assembler import _copy_page_slide  # noqa: E402
-else:
-    from editppt.runtime.final_assembler import _copy_page_slide  # type: ignore # noqa: E402
+_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_RELATIONSHIP_ATTRIBUTES = {f"{{{_R}}}embed", f"{{{_R}}}id", f"{{{_R}}}link"}
+
+
+def _copy_image_relationship(relationship, destination_slide) -> str:
+    source_part = relationship.target_part
+    if source_part.content_type != "image/svg+xml":
+        _part, new_id = destination_slide.part.get_or_add_image_part(BytesIO(source_part.blob))
+        return new_id
+    digest = hashlib.sha256(source_part.blob).hexdigest()[:16]
+    partname = PackURI(f"/ppt/media/fixed-logo-{digest}.svg")
+    package = destination_slide.part.package
+    target = next((part for part in package.iter_parts() if part.partname == partname), None)
+    if target is None:
+        target = Part(partname, "image/svg+xml", package, source_part.blob)
+    return destination_slide.part.relate_to(target, RT.IMAGE)
+
+
+def _copy_page_slide(source_path: Path, destination: Presentation, destination_layout, page_number: int) -> None:
+    source = Presentation(source_path)
+    if len(source.slides) != 1:
+        raise ValueError("V6 reconstructed page package must contain one slide")
+    if source.slide_width != destination.slide_width or source.slide_height != destination.slide_height:
+        raise ValueError("all V6 reconstructed pages must share one slide size")
+    source_slide = source.slides[0]
+    destination_slide = destination.slides.add_slide(destination_layout)
+    mapping: dict[str, str] = {}
+    for relationship in source_slide.part.rels.values():
+        if relationship.reltype == RT.SLIDE_LAYOUT:
+            continue
+        if relationship.reltype == RT.IMAGE:
+            mapping[relationship.rId] = _copy_image_relationship(relationship, destination_slide)
+        elif relationship.is_external:
+            mapping[relationship.rId] = destination_slide.part.relate_to(
+                relationship.target_ref, relationship.reltype, is_external=True
+            )
+        else:
+            raise ValueError(f"unsupported V6 slide relationship: {relationship.reltype}")
+    copied_content = copy.deepcopy(source_slide.element.cSld)
+    copied_content.set("name", f"editable-ppt-v6-page:{page_number}")
+    for node in copied_content.iter():
+        for attribute, old_id in tuple(node.attrib.items()):
+            if attribute in _RELATIONSHIP_ATTRIBUTES:
+                if old_id not in mapping:
+                    raise ValueError(f"unresolved V6 slide relationship: {old_id}")
+                node.set(attribute, mapping[old_id])
+    destination_slide.element.replace(destination_slide.element.cSld, copied_content)
+    source_color_map = source_slide.element.clrMapOvr
+    if source_color_map is not None:
+        destination_color_map = destination_slide.element.clrMapOvr
+        copied_color_map = copy.deepcopy(source_color_map)
+        if destination_color_map is None:
+            destination_slide.element.append(copied_color_map)
+        else:
+            destination_slide.element.replace(destination_color_map, copied_color_map)
 
 
 def _sha256(path: Path) -> str:
@@ -129,8 +179,7 @@ def finalize_reconstructed_page(
     if fixed.get("passed") is not True:
         raise ValueError("V6 fixed-layer validation failed: " + "; ".join(fixed.get("issues", [])))
     page = transition_page(page, "page_complete")
-    state["pages"][page_index] = page
-    save(root, state)
+    update_page(root, page_number, page)
     report = {
         "artifact_version": "final-page-v6",
         "page_number": page_number,

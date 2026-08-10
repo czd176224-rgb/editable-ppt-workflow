@@ -45,12 +45,13 @@ def test_skill_frontmatter_and_ui_metadata_use_folder_name() -> None:
         assert f"${name}" in metadata["default_prompt"]
 
 
-def test_slide_body_generator_cannot_bypass_v4_authority() -> None:
+def test_slide_body_generator_cannot_bypass_v6_authority() -> None:
     skill = (SKILLS / "generate-slide-body-image" / "SKILL.md").read_text(encoding="utf-8")
-    assert "sealed page-generation work item" in skill
-    assert "Do not use this role for standalone or general-purpose image generation" in skill
-    assert "Never draw the fixed page title, actual SVG Logo, footer, footer line, or page number" in skill
-    assert "abs((width / height) / (17 / 8) - 1) <= 0.01" in skill
+    assert "prepared by `run-word-to-ppt-workflow`" in skill
+    assert "Always call `codex_gpt_image.py generate`" in skill
+    assert "Never call `edit`" in skill
+    assert "Do not draw the fixed page title, SVG Logo, footer or page number" in skill
+    assert "1904x896, 17:8" in skill
     assert "Avoid adding logos, watermarks, or extra text unless requested" not in skill
 
 

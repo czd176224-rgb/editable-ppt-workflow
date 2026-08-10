@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a minimal current project and exercise installed editppt record/finalize."""
+"""Exercise the installed V6 workflow boundary and editable-page runtime."""
 
 from __future__ import annotations
 
@@ -8,21 +8,9 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from docx import Document
-
-
-def _run(command: list[str], *, env: dict[str, str]) -> dict:
-    completed = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
-    if completed.returncode:
-        raise RuntimeError(
-            f"portable command failed ({completed.returncode}): {' '.join(command)}\n"
-            + completed.stdout
-            + completed.stderr
-        )
-    return json.loads(completed.stdout)
 
 
 def smoke(editppt: Path, output: Path) -> dict:
@@ -30,11 +18,11 @@ def smoke(editppt: Path, output: Path) -> dict:
         shutil.rmtree(output)
     output.mkdir(parents=True)
     project = output / "project"
-    page_title = "便携安装完整链路"
-    body_text = "正文重建和固定框架均可执行。"
+    page_title = "Portable clean-install workflow"
+    body_text = "The V6 source, style, and editable reconstruction runtimes are available."
     source = output / "source.docx"
     document = Document()
-    document.add_paragraph("第 1 页")
+    document.add_paragraph("\u7b2c 1 \u9875")
     document.add_paragraph(page_title)
     document.add_paragraph(body_text)
     document.save(source)
@@ -47,12 +35,14 @@ def smoke(editppt: Path, output: Path) -> dict:
 
     from confirm_ui.server import _wait, create_app
     from editppt.runtime.fixed_region_runtime import CONTENT_BOX, SLIDE
-    from prepare_run import prepare
-    import workflow_state
+    from workflow_v6_source import initialize_v6_project
+    from workflow_v6_state import load
 
-    prepared = prepare(source, project, logo)
-    if prepared.get("page_count") != 1:
-        raise RuntimeError("portable prepare did not create exactly one V4 page")
+    initialize_v6_project(source, logo, project)
+    state = load(project)
+    if len(state.get("pages", [])) != 1:
+        raise RuntimeError("portable V6 initialization did not create exactly one page")
+
     client = create_app(project).test_client()
     recommendations = client.get("/api/recommendations").get_json()
     selected = recommendations["design_directions"]["selected"]
@@ -73,17 +63,18 @@ def smoke(editppt: Path, output: Path) -> dict:
         },
         "regional_style": {"enabled": False},
         "production_profile": "balanced",
-        "additional_requirements": "保持Word主叙事和逐页证据边界",
+        "additional_requirements": "Preserve the Word narrative and V6 fixed-layer boundary.",
     }
     response = client.post("/api/confirm", json=confirmation)
     if response.status_code != 200 or _wait(project, "final", 5) != 0:
-        raise RuntimeError(f"portable V4 confirmation failed: {response.get_json()}")
+        raise RuntimeError(f"portable V6 confirmation failed: {response.get_json()}")
 
-    workflow_env = dict(os.environ)
-    workflow_python = Path(sys.executable)
-    state = workflow_state.load(project)
-    if state.get("workflow_contract_version") != "word-ppt-workflow-v4" or state.get("style_confirmation", {}).get("status") != "confirmed":
-        raise RuntimeError("portable prepare/confirmation did not reach the current V4 boundary")
+    state = load(project)
+    if (
+        state.get("workflow_contract_version") != "word-ppt-workflow-v6"
+        or state.get("style_confirmation", {}).get("status") != "confirmed"
+    ):
+        raise RuntimeError("portable initialization/confirmation did not reach the V6 boundary")
 
     page_dir = output / "editable-page"
     page_dir.mkdir()
@@ -107,15 +98,14 @@ def smoke(editppt: Path, output: Path) -> dict:
         },
     }
     (page_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-    built = subprocess.run([str(editppt), "page", "build", str(page_dir)], capture_output=True, text=True, env=workflow_env, check=False)
-    if built.returncode:
-        raise RuntimeError(built.stdout + built.stderr)
-    validated = subprocess.run([str(editppt), "page", "validate", str(page_dir)], capture_output=True, text=True, env=workflow_env, check=False)
-    if validated.returncode:
-        raise RuntimeError(validated.stdout + validated.stderr)
+    workflow_env = dict(os.environ)
+    for command in ([str(editppt), "page", "build", str(page_dir)], [str(editppt), "page", "validate", str(page_dir)]):
+        completed = subprocess.run(command, capture_output=True, text=True, env=workflow_env, check=False)
+        if completed.returncode:
+            raise RuntimeError(completed.stdout + completed.stderr)
     if not (page_dir / "page.pptx").is_file() or not (page_dir / "preview.png").is_file():
-        raise RuntimeError("portable V4 object build did not create PPTX and preview")
-    return {"workflow": "word-ppt-workflow-v4", "editppt": "v4-build-validate-ok"}
+        raise RuntimeError("portable V6 object build did not create PPTX and preview")
+    return {"workflow": "word-ppt-workflow-v6", "editppt": "v6-build-validate-ok"}
 
 
 def main() -> int:
@@ -123,8 +113,7 @@ def main() -> int:
     parser.add_argument("--editppt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = smoke(args.editppt.resolve(), args.output.resolve())
-    print(json.dumps(result))
+    print(json.dumps(smoke(args.editppt.resolve(), args.output.resolve())))
     return 0
 
 

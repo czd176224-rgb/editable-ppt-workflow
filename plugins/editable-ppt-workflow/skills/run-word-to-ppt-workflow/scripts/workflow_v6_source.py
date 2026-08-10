@@ -16,6 +16,7 @@ from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_state import create
+from style_recommendations import _recommendations
 
 
 V6_PAGE_MARKER = r"^第\s*(\d+)\s*页(?:\s*PPT)?$"
@@ -221,4 +222,11 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
     )
     create(project, state)
     _write_json(project / "02_v6" / "source_assets.json", assets)
+    _write_json(
+        project / "confirm_ui" / "recommendations.json",
+        _recommendations([
+            {"source_text": _page_text(page), "page_purpose": "", "asset_bindings": []}
+            for page in pages_payload["pages"]
+        ]),
+    )
     return state

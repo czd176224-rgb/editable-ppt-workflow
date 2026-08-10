@@ -62,11 +62,11 @@ def test_scanner_rejects_retired_regional_skill_name(tmp_path: Path):
     assert any("retired regional skill name" in finding for finding in findings)
 
 
-def test_skill_documents_one_command_signed_reconstruction_without_manual_state_bypass():
+def test_skill_documents_v6_generate_only_reconstruction_without_manual_state_bypass():
     skill = (REPO_ROOT / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/SKILL.md").read_text(encoding="utf-8")
-    assert "word_to_editable_ppt.py run" in skill
-    assert "signed visual reconstruction gateway" in skill
-    assert "Never hand-edit receipts or state" in skill
+    assert "word_to_editable_ppt.py v6" in skill
+    assert "Reference presence never selects `edit`" in skill
+    assert "workflow_v6.json" in skill
     assert "editppt run record" not in skill
 
 

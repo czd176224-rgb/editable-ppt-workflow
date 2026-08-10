@@ -2712,19 +2712,20 @@ def test_current_cli_does_not_advertise_the_removed_recovery_runtime() -> None:
     assert "invalid choice" in stale_result.stderr
 
 
-def test_workflow_cli_only_exposes_the_unified_blocking_commands() -> None:
+def test_production_cli_only_exposes_v6_commands() -> None:
     cli = ROOT / "scripts" / "word_to_editable_ppt.py"
 
     help_result = subprocess.run(
-        [sys.executable, str(cli), "workflow", "--help"],
+        [sys.executable, str(cli), "v6", "--help"],
         capture_output=True,
         text=True,
         timeout=30,
     )
 
     assert help_result.returncode == 0
-    assert "record-page-failure" in help_result.stdout
-    assert "release-blocked-page" in help_result.stdout
-    assert "record-technical-failure" not in help_result.stdout
-    assert "release-technical-failure" not in help_result.stdout
-    assert "retry-page" not in help_result.stdout
+    assert "generate-page" in help_result.stdout
+    assert "reconstruction-request" in help_result.stdout
+    assert "finalize-page" in help_result.stdout
+    assert "assemble" in help_result.stdout
+    assert "record-page-failure" not in help_result.stdout
+    assert "v5" not in help_result.stdout

@@ -4,6 +4,8 @@ Public Codex plugin for converting a paginated Word document plus an SVG Logo in
 
 ## V6 production contract
 
+The production contract identifier is `word-ppt-workflow-v6`.
+
 - One Word page becomes one slide.
 - One global visual style is confirmed in the UI.
 - The body is 1904x896 (17:8) inside a fixed 16:9 slide.

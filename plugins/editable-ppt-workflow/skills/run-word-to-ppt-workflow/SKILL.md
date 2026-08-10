@@ -5,7 +5,7 @@ description: Convert one paginated Word document and one SVG Logo into a resumab
 
 # Run Word-to-PPT Workflow V6
 
-This is the only production workflow. Its authoritative state is `workflow_v6.json`. Do not invoke V4/V5 commands or migrate their state. Start a fresh V6 project from the user's Word and SVG Logo.
+This is the only production workflow: `word-ppt-workflow-v6`. Its authoritative state is `workflow_v6.json`. Do not invoke V4/V5 commands or migrate their state. Start a fresh V6 project from the user's Word and SVG Logo.
 
 ## Fixed architecture
 

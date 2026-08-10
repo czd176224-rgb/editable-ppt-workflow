@@ -178,10 +178,11 @@ def test_prepare_cli_creates_a_project_without_legacy_inputs(tmp_path: Path):
     command = [
         sys.executable,
         str(SCRIPTS / "word_to_editable_ppt.py"),
-        "prepare",
+        "v6",
+        "init",
         "--word",
         str(word),
-        "--output",
+        "--project",
         str(project),
         "--logo",
         str(make_logo(tmp_path / "logo.svg")),
@@ -190,8 +191,8 @@ def test_prepare_cli_creates_a_project_without_legacy_inputs(tmp_path: Path):
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout)["page_count"] == 2
-    assert (project / "workflow_run.json").is_file()
+    assert len(json.loads(completed.stdout)["pages"]) == 2
+    assert (project / "workflow_v6.json").is_file()
 
     rejected = subprocess.run(
         [*command, "--style-reference", "unused.png", "--company-logo", "unused.png"],
@@ -206,22 +207,23 @@ def test_prepare_cli_creates_a_project_without_legacy_inputs(tmp_path: Path):
 def test_workflow_cli_waits_for_style_confirmation_and_rejects_legacy_commands(tmp_path: Path):
     """A fresh project must not enter a removed master, sample, or global-QA workflow."""
     project = tmp_path / "project"
-    prepare_run.prepare(make_marked_word(tmp_path / "source.docx"), project, make_logo(tmp_path / "logo.svg"))
-    command = [sys.executable, str(SCRIPTS / "word_to_editable_ppt.py"), "workflow"]
-
-    for workflow_command in ["next", "status", "resume"]:
-        completed = subprocess.run(
-            [*command, workflow_command, "--project", str(project)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        assert json.loads(completed.stdout)["stage"] == "await_style_confirmation"
+    init = [
+        sys.executable, str(SCRIPTS / "word_to_editable_ppt.py"), "v6", "init",
+        "--word", str(make_marked_word(tmp_path / "source.docx")),
+        "--logo", str(make_logo(tmp_path / "logo.svg")),
+        "--project", str(project),
+    ]
+    assert subprocess.run(init, capture_output=True, text=True, check=False).returncode == 0
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS / "word_to_editable_ppt.py"), "v6", "status", "--project", str(project)],
+        capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["next_action"] == "confirm_global_style"
 
     for legacy_command in ["confirm-master", "record-sample", "record-global-qa"]:
         rejected = subprocess.run(
-            [*command, legacy_command, "--project", str(project)],
+            [sys.executable, str(SCRIPTS / "word_to_editable_ppt.py"), legacy_command, "--project", str(project)],
             capture_output=True,
             text=True,
             check=False,

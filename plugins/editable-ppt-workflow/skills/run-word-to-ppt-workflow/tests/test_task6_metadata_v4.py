@@ -8,44 +8,42 @@ REPO = Path(__file__).resolve().parents[5]
 PLUGIN = REPO / "plugins/editable-ppt-workflow"
 
 
-def test_release_metadata_is_consistently_v5_version() -> None:
+def test_release_metadata_is_consistently_v6_version() -> None:
     package = json.loads((REPO / "package-info.json").read_text(encoding="utf-8"))
     manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     marketplace = json.loads((REPO / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
-    assert package["pluginVersion"] == manifest["version"] == "1.2.0"
-    assert package["releaseTag"] == "v1.2.0"
-    assert package["promptContractVersion"] == "page-prompt-v8"
-    assert package["qaPolicyVersion"] == "risk-qa-v5"
+    assert package["pluginVersion"] == manifest["version"] == "2.0.0"
+    assert package["releaseTag"] == "v2.0.0"
+    assert package["workflowContractVersion"] == "word-ppt-workflow-v6"
+    assert package["promptContractVersion"] == "page-prompt-v6-generate-only"
+    assert package["qaPolicyVersion"] == "light-qa-v6"
     assert package["apiKeyRequired"] is False
-    expected_marketplace = (
-        "editable-ppt-public"
-        if package["repositoryVisibility"] == "public"
-        else "editable-ppt-local-preview-v110"
-    )
-    assert package["marketplacePreviewIdentity"] == marketplace["name"] == expected_marketplace
-    assert marketplace["interface"]["displayName"].endswith("1.2.0")
-    assert package["workflowContractVersion"] == "word-ppt-workflow-v5"
+    assert package["marketplacePreviewIdentity"] == marketplace["name"] == "editable-ppt-public"
+    assert marketplace["interface"]["displayName"].endswith("2.0.0")
     assert package["bodyImageAspectPolicy"] == "17:8-relative-error-at-most-0.01"
     assert package["everyPageCallsImage2"] is True
-    assert package["reconstructionPolicy"] == "sealed-composed-body-editppt-single-authority-high-fidelity-object-level-editable"
-    assert package["designAcceptancePolicy"] == (
-        "shared-authentic-slots-then-exact-source-compose-and-semantic-acceptance-with-one-targeted-repair"
-    )
-    assert package["qaPolicy"].startswith("accepted-composed-body-vs-final-body-crop-v7")
+    assert package["initialImageEndpoint"] == "images/generations"
+    assert package["localRepairEndpoint"] == "images/generations"
+    assert package["pageImagePolicy"] == "reference-only-never-edit-input"
+    assert package["qaPolicy"] == "light-page-body-qa-no-post-reconstruction-visual-comparison"
 
 
-def test_active_v5_docs_do_not_advertise_removed_production_semantics() -> None:
+def test_active_v6_docs_do_not_advertise_removed_production_semantics() -> None:
     paths = [
-        REPO / "README.md", PLUGIN / "README.md",
-        PLUGIN / "skills/run-word-to-ppt-workflow/README.md",
+        REPO / "README.md",
+        PLUGIN / "README.md",
         PLUGIN / "skills/run-word-to-ppt-workflow/SKILL.md",
-        PLUGIN / "skills/run-word-to-ppt-workflow/template/README.md",
     ]
-    banned = ("word-ppt-workflow-v3", "image/native/hybrid", "direct/contain", "background-only", "无文字视觉层")
+    banned = (
+        "word-ppt-workflow-v3",
+        "word-ppt-workflow-v5",
+        "reference images cause an Images edit request",
+        "mandatory Office validation",
+    )
     for path in paths:
         text = path.read_text(encoding="utf-8")
-        assert "word-ppt-workflow-v5" in text, path
-        assert "17:8" in text and "1%" in text, path
+        assert "word-ppt-workflow-v6" in text, path
+        assert "17:8" in text, path
         assert all(token not in text for token in banned), path
 
 

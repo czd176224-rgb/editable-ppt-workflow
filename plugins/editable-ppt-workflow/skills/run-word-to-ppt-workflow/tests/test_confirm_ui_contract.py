@@ -154,6 +154,25 @@ def test_media_endpoint_rejects_oversized_tampered_media(tmp_path: Path):
     assert response.status_code == 404
 
 
+def test_media_endpoint_rejects_handle_path_escape_before_reading_payload(tmp_path: Path, monkeypatch):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    Image.new("RGB", (2, 2), "#336699").save(media_dir / "thumbnail.png", format="PNG")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    import workflow_v6_media
+    monkeypatch.setattr(workflow_v6_media, "_final_path_for_handle", lambda _handle: tmp_path / "outside.png")
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    response = client.get(
+        "/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png",
+        headers={"X-Confirm-Nonce": "n" * 32},
+    )
+
+    assert response.status_code == 404
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     project_dir = tmp_path / "project"

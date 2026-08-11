@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
@@ -14,7 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import Final
 from xml.etree import ElementTree
 
-from PIL import Image, ImageChops, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 MAX_ENCODED_BYTES: Final = 25 * 1024 * 1024
@@ -31,7 +33,15 @@ _SAFE_VARIANTS: Final = {
 }
 _REFERENCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
-_UNSAFE_SVG_TAGS = frozenset({"script", "image", "foreignobject", "iframe", "object", "embed", "link"})
+_SAFE_SVG_TAGS = frozenset({
+    "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+    "text", "tspan", "defs", "lineargradient", "radialgradient", "stop", "clippath", "mask",
+    "title", "desc",
+})
+_UNSAFE_SVG_ATTRIBUTES = frozenset({
+    "style", "attributename", "begin", "dur", "end", "repeatcount", "repeatdur", "from", "to",
+    "values", "keytimes", "keysplines", "calcmode", "additive", "accumulate",
+})
 _BROWSER_PATHS = (
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
@@ -78,7 +88,36 @@ def _safe_directory(project: Path, reference_id: str) -> Path:
     return directory
 
 
-def _write_new(path: Path, data: bytes) -> None:
+def _final_path_for_handle(handle: int) -> Path:
+    """Resolve the operating-system final path for an already-open file handle."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        final_name = kernel32.GetFinalPathNameByHandleW
+        final_name.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD)
+        final_name.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = final_name(msvcrt.get_osfhandle(handle), buffer, len(buffer), 0)
+        if not length or length >= len(buffer):
+            raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW failed")
+        value = buffer.value
+        return Path(value[4:] if value.startswith("\\\\?\\") else value)
+    return Path(os.readlink(f"/proc/self/fd/{handle}"))
+
+
+def _verify_handle_within(project: Path, handle: int) -> None:
+    root = Path(project).resolve()
+    final_path = _final_path_for_handle(handle).resolve()
+    try:
+        final_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("media handle escapes the project or is unsafe") from exc
+
+
+def _write_new(project: Path, path: Path, data: bytes) -> None:
     if _is_link_or_reparse(path) or path.exists():
         raise ValueError("reference media output already exists or is unsafe")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -87,10 +126,12 @@ def _write_new(path: Path, data: bytes) -> None:
     descriptor = os.open(path, flags, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as handle:
+            _verify_handle_within(project, handle.fileno())
             handle.write(data)
     except Exception:
         try:
-            path.unlink(missing_ok=True)
+            if _contained(Path(project), path):
+                path.unlink(missing_ok=True)
         finally:
             raise
 
@@ -211,11 +252,13 @@ def _safe_svg_root(data: bytes) -> tuple[ElementTree.Element, int, int]:
         raise ValueError("SVG root is required")
     for element in root.iter():
         tag = element.tag.rsplit("}", 1)[-1].lower()
-        if tag in _UNSAFE_SVG_TAGS or tag == "style":
-            raise ValueError("SVG contains an unsafe or unsupported element")
+        if tag not in _SAFE_SVG_TAGS:
+            raise ValueError("SVG contains an unsafe, dynamic, or unsupported element")
         for attribute, value in element.attrib.items():
             local_name = attribute.rsplit("}", 1)[-1].lower()
             normalized = value.strip().lower()
+            if local_name in _UNSAFE_SVG_ATTRIBUTES:
+                raise ValueError("SVG contains an unsafe or dynamic attribute")
             if local_name in {"href", "src"} and not normalized.startswith("#"):
                 raise ValueError("SVG external resource is not allowed")
             for target in re.findall(r"url\(\s*['\"]?([^'\")\s]+)['\"]?\s*\)", normalized):
@@ -239,43 +282,33 @@ def _safe_svg_raster(data: bytes, destination: Path) -> Image.Image:
     output_width, output_height = max(1, round(width * scale)), max(1, round(height * scale))
     root.set("width", str(output_width))
     root.set("height", str(output_height))
-    html = destination / ".safe-render.html"
-    output = destination / ".safe-render.png"
-    profile = destination / ".safe-render-profile"
-    if profile.exists() or _is_link_or_reparse(profile):
-        raise ValueError("SVG renderer profile output is unsafe")
-    profile.mkdir()
-    markup = (
-        "<!doctype html><meta charset=utf-8><style>html,body{margin:0;padding:0;overflow:hidden;}svg{display:block;}</style>"
-        + ElementTree.tostring(root, encoding="unicode")
-    ).encode("utf-8")
-    _write_new(html, markup)
+    temporary_root = Path(tempfile.mkdtemp(prefix="workflow-v6-svg-"))
     try:
+        html = temporary_root / "input.html"
+        output = temporary_root / "render.png"
+        profile = temporary_root / "profile"
+        profile.mkdir()
+        markup = (
+            "<!doctype html><meta charset=utf-8><style>html,body{margin:0;padding:0;overflow:hidden;}svg{display:block;}</style>"
+            + ElementTree.tostring(root, encoding="unicode")
+        ).encode("utf-8")
+        html.write_bytes(markup)
         completed = subprocess.run(
             [str(_browser_renderer()), "--headless=new", "--disable-gpu", "--disable-extensions", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--hide-scrollbars", "--allow-file-access-from-files", "--run-all-compositor-stages-before-draw", "--force-device-scale-factor=1", f"--user-data-dir={profile}", f"--window-size={output_width},{output_height}", f"--screenshot={output}", html.resolve().as_uri()],
             check=False, capture_output=True, timeout=20,
         )
         if completed.returncode != 0 or not output.is_file() or _is_link_or_reparse(output):
             raise ValueError("SVG could not be safely rasterized")
-        image, _mime_type = _open_raster(_read_file_limited(output))
-        white = Image.new("RGB", image.size, "white")
-        if image.size != (output_width, output_height) or ImageChops.difference(image.convert("RGB"), white).getbbox() is None:
-            raise ValueError("SVG renderer produced an invalid or blank preview")
+        image, _mime_type = _open_raster(_read_file_limited(temporary_root, output))
+        if image.size != (output_width, output_height):
+            raise ValueError("SVG renderer produced invalid dimensions")
         return image
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         if isinstance(exc, ValueError):
             raise
         raise ValueError("SVG could not be safely rasterized") from exc
     finally:
-        for temporary in (html, output):
-            temporary.unlink(missing_ok=True)
-        if profile.exists() and not _is_link_or_reparse(profile):
-            for child in sorted(profile.rglob("*"), reverse=True):
-                if child.is_file():
-                    child.unlink(missing_ok=True)
-                elif child.is_dir() and not _is_link_or_reparse(child):
-                    child.rmdir()
-            profile.rmdir()
+        shutil.rmtree(temporary_root, ignore_errors=True)
 
 
 def normalize_reference(project: Path, source: Path, *, reference_id: str, kind: str) -> NormalizedReference:
@@ -300,19 +333,19 @@ def normalize_reference(project: Path, source: Path, *, reference_id: str, kind:
         image, mime_type = _open_raster(data)
         original_suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/bmp": ".bmp"}[mime_type]
     original = destination / f"original{original_suffix}"
-    _write_new(original, data)
+    _write_new(project, original, data)
     if kind == "photo":
         image = ImageOps.exif_transpose(image)
         model = _resized(_rgb(image), MODEL_MAX_EDGE)
         model_path = destination / "model-input.jpg"
-        _write_new(model_path, _image_bytes(model, image_format="JPEG", quality=90, optimize=True))
+        _write_new(project, model_path, _image_bytes(model, image_format="JPEG", quality=90, optimize=True))
     else:
         model = _resized(image, MODEL_MAX_EDGE)
         model_path = destination / "model-input.png"
-        _write_new(model_path, _image_bytes(model, image_format="PNG", optimize=False, compress_level=9))
+        _write_new(project, model_path, _image_bytes(model, image_format="PNG", optimize=False, compress_level=9))
     thumbnail = _resized(model, THUMBNAIL_MAX_EDGE)
     thumbnail_path = destination / "thumbnail.png"
-    _write_new(thumbnail_path, _image_bytes(thumbnail, image_format="PNG", optimize=False, compress_level=9))
+    _write_new(project, thumbnail_path, _image_bytes(thumbnail, image_format="PNG", optimize=False, compress_level=9))
     return NormalizedReference(
         original_path=_relative(project, original),
         thumbnail_path=_relative(project, thumbnail_path),
@@ -344,11 +377,11 @@ def resolve_project_media(project: Path, relative_path: str, *, variant: str) ->
 
 def validated_media_mime(path: Path) -> str:
     """Return a safe HTTP MIME only after the stored raster decodes cleanly."""
-    _image, mime_type = _open_raster(_read_file_limited(Path(path)))
+    _image, mime_type = _open_raster(_read_file_limited(Path(path).parent, Path(path)))
     return mime_type
 
 
-def _read_file_limited(path: Path) -> bytes:
+def _read_file_limited(project: Path, path: Path) -> bytes:
     flags = os.O_RDONLY
     if hasattr(os, "O_BINARY"):
         flags |= os.O_BINARY
@@ -356,11 +389,11 @@ def _read_file_limited(path: Path) -> bytes:
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags)
     try:
-        expected = path.lstat()
         with os.fdopen(descriptor, "rb") as handle:
             actual = os.fstat(handle.fileno())
-            if not stat.S_ISREG(actual.st_mode) or not os.path.samestat(expected, actual):
-                raise ValueError("media file changed or is unsafe")
+            if not stat.S_ISREG(actual.st_mode):
+                raise ValueError("media file is unsafe")
+            _verify_handle_within(project, handle.fileno())
             data = handle.read(MAX_ENCODED_BYTES + 1)
     except Exception:
         raise
@@ -372,6 +405,6 @@ def _read_file_limited(path: Path) -> bytes:
 def read_validated_project_media(project: Path, relative_path: str, *, variant: str) -> tuple[bytes, str, Path]:
     """Read, validate, and return one immutable-in-memory media response buffer."""
     path = resolve_project_media(project, relative_path, variant=variant)
-    data = _read_file_limited(path)
+    data = _read_file_limited(Path(project), path)
     _image, mime_type = _open_raster(data)
     return data, mime_type, path

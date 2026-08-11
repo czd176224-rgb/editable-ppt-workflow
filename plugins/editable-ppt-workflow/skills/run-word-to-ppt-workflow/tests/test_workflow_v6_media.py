@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import http.server
 import struct
 import sys
+import threading
 import zlib
 from pathlib import Path
 
@@ -120,6 +122,97 @@ def test_svg_external_paint_server_is_rejected_before_rendering(tmp_path: Path):
 
     with pytest.raises(ValueError, match="external"):
         media.normalize_reference(tmp_path / "project", source, reference_id="external-paint", kind="logo")
+
+
+def test_static_svg_allowlist_rejects_dynamic_network_elements_without_probe_requests(tmp_path: Path):
+    media = load_media()
+    requests: list[str] = []
+
+    class Probe(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    probe = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Probe)
+    thread = threading.Thread(target=probe.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source = tmp_path / "dynamic.svg"
+        source.write_text(f'''<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">
+        <filter id="f"><feImage href="http://127.0.0.1:{probe.server_port}/pixel"/></filter>
+        <rect width="20" height="10" filter="url(#f)"/><set attributeName="href" to="http://127.0.0.1:{probe.server_port}/set"/>
+        </svg>''', encoding="utf-8")
+        with pytest.raises(ValueError, match="unsafe|dynamic|external|SVG"):
+            media.normalize_reference(tmp_path / "project", source, reference_id="dynamic", kind="logo")
+    finally:
+        probe.shutdown()
+        thread.join(timeout=2)
+    assert requests == []
+
+
+def test_static_svg_allowlist_rejects_animation_and_inline_css_imports(tmp_path: Path):
+    media = load_media()
+    for reference_id, body in {
+        "set": '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/><set attributeName="fill" to="red"/></svg>',
+        "css": '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><style>@import url(https://example.test/x.css);</style><rect width="2" height="2"/></svg>',
+    }.items():
+        source = tmp_path / f"{reference_id}.svg"
+        source.write_text(body, encoding="utf-8")
+        with pytest.raises(ValueError, match="unsafe|dynamic|external|SVG"):
+            media.normalize_reference(tmp_path / "project", source, reference_id=reference_id, kind="logo")
+
+
+def test_white_logo_is_valid_and_renderer_temp_failure_leaves_a_retryable_project(tmp_path: Path, monkeypatch):
+    media = load_media()
+    source = tmp_path / "white.svg"
+    source.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="5"><path fill="white" d="M0 0h20v5H0z"/></svg>', encoding="utf-8")
+    project = tmp_path / "project"
+    monkeypatch.setattr(media.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("renderer failed")))
+    with pytest.raises(ValueError, match="rasterized"):
+        media.normalize_reference(project, source, reference_id="white", kind="logo")
+    monkeypatch.undo()
+
+    result = media.normalize_reference(project, source, reference_id="white", kind="logo")
+
+    assert (project / result.model_input_path).is_file()
+
+
+def test_browser_never_writes_predictable_project_render_paths(tmp_path: Path):
+    media = load_media()
+    project = tmp_path / "project"
+    destination = project / "02_v6" / "reference_media" / "hardlink"
+    destination.mkdir(parents=True)
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"outside sentinel")
+    predictable = destination / ".safe-render.png"
+    try:
+        import os
+        os.link(outside, predictable)
+    except OSError:
+        pytest.skip("hardlinks are unavailable")
+    source = tmp_path / "logo.svg"
+    source.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="5"><rect width="20" height="5" fill="#224488"/></svg>', encoding="utf-8")
+
+    media.normalize_reference(project, source, reference_id="hardlink", kind="logo")
+
+    assert outside.read_bytes() == b"outside sentinel"
+
+
+def test_handle_final_path_verification_rejects_parent_race_before_payload_write(tmp_path: Path, monkeypatch):
+    media = load_media()
+    project = tmp_path / "project"
+    destination = project / "02_v6" / "reference_media" / "race"
+    destination.mkdir(parents=True)
+    target = destination / "original.png"
+    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: tmp_path / "outside" / "original.png")
+
+    with pytest.raises(ValueError, match="escapes|unsafe"):
+        media._write_new(project, target, b"payload")
+    assert not target.exists()
 
 
 def test_svg_logo_uses_capable_renderer_for_viewbox_paths_transforms_and_gradients(tmp_path: Path):

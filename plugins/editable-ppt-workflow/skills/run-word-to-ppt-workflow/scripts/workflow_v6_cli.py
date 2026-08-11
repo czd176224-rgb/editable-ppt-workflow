@@ -14,7 +14,7 @@ from workflow_v6_reconstruction import (
     build_reconstruction_request,
     finalize_reconstructed_page,
 )
-from workflow_v6_source import initialize_v6_project
+from workflow_v6_source import fail_reference, import_reference, initialize_v6_project
 from workflow_v6_state import load, save
 
 
@@ -72,6 +72,17 @@ def _parser() -> argparse.ArgumentParser:
     finalize.add_argument("--body-pptx", type=Path, required=True)
     assemble = sub.add_parser("assemble", help="mechanically assemble all completed pages")
     assemble.add_argument("--project", type=Path, required=True)
+    import_ref = sub.add_parser("import-reference", help="confirm one local real-image result")
+    import_ref.add_argument("--project", type=Path, required=True)
+    import_ref.add_argument("--page", type=int, required=True)
+    import_ref.add_argument("--request-id", required=True)
+    import_ref.add_argument("--image", type=Path, required=True)
+    import_ref.add_argument("--source-url")
+    fail_ref = sub.add_parser("fail-reference", help="close one unavailable real-image request")
+    fail_ref.add_argument("--project", type=Path, required=True)
+    fail_ref.add_argument("--page", type=int, required=True)
+    fail_ref.add_argument("--request-id", required=True)
+    fail_ref.add_argument("--reason", required=True)
     return parser
 
 
@@ -99,6 +110,16 @@ def main() -> int:
         _emit(finalize_reconstructed_page(args.project, page_number=args.page, reconstructed_body=args.body_pptx))
     elif args.command == "assemble":
         _emit(assemble_v6_deck(args.project))
+    elif args.command == "import-reference":
+        _emit(import_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            image=args.image, source_url=args.source_url,
+        ))
+    elif args.command == "fail-reference":
+        _emit(fail_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            reason=args.reason,
+        ))
     return 0
 
 

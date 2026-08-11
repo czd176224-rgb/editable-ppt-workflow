@@ -18,7 +18,9 @@ if str(SCRIPTS) not in sys.path:
 
 from workflow_v6_materials import (  # noqa: E402
     CommentResolution,
+    chart_to_facts,
     confirmed_revision_digest,
+    extract_attachment_material,
     new_page_materials,
     reference_image_from_source,
     resolve_page_comments,
@@ -462,3 +464,101 @@ def test_reference_image_preserves_distinct_source_and_model_integrity():
         "thumbnail_sha256": None,
     }
     assert reference["thumbnail_path"] is None
+
+
+def test_attachment_extraction_persists_only_comment_selected_rows_and_fields(tmp_path: Path):
+    """Persisting the full attachment would leak material the page did not request."""
+    attachment = tmp_path / "long-report.csv"
+    attachment.write_text(
+        "Department,Revenue,Margin,Private notes\n"
+        "North,10,2,not requested\n"
+        "East,20,4,not requested\n"
+        "South,30,6,not requested\n"
+        "West,40,8,not requested\n",
+        encoding="utf-8",
+    )
+    requirement = {
+        "attachment_id": "long-report",
+        "selector": "selected_rows",
+        "rows": [2, 4],
+        "fields": ["Revenue", "Margin"],
+    }
+
+    extracted = extract_attachment_material(attachment=attachment, requirement=requirement)
+
+    assert extracted["status"] == "available"
+    assert extracted["content"] == [
+        {"Revenue": "20", "Margin": "4"},
+        {"Revenue": "40", "Margin": "8"},
+    ]
+    assert "Private notes" not in json.dumps(extracted)
+    assert extracted["receipt"] == extract_attachment_material(
+        attachment=attachment, requirement=requirement,
+    )["receipt"]
+
+
+def test_unavailable_attachment_is_a_non_blocking_editable_degradation(tmp_path: Path):
+    """A missing attachment must not prevent preparation of the rest of its page."""
+    extracted = extract_attachment_material(
+        attachment=tmp_path / "missing.csv",
+        requirement={"attachment_id": "missing", "selector": "selected_rows", "rows": [], "fields": []},
+    )
+
+    assert extracted == {
+        "attachment_id": "missing",
+        "status": "unavailable",
+        "degradation": "Attachment unavailable; keep the page editable without its requested evidence.",
+    }
+
+
+def test_chart_facts_keep_exact_values_and_never_create_reference_image_inputs():
+    """Treating a chart as an image would let the renderer replace its factual evidence."""
+    facts = chart_to_facts({
+        "title": "Revenue trend",
+        "unit": "USD millions",
+        "series": [{
+            "name": "Revenue",
+            "values": [120, 150],
+            "times": ["2024", "2025"],
+            "trend": "up",
+            "relationship": "2025 exceeds 2024 by 30",
+        }],
+        "image_path": "01_source_assets/chart.png",
+    })
+
+    assert facts == {
+        "title": "Revenue trend",
+        "unit": "USD millions",
+        "series": [{
+            "name": "Revenue",
+            "values": [120, 150],
+            "times": ["2024", "2025"],
+            "trend": "up",
+            "relationship": "2025 exceeds 2024 by 30",
+        }],
+    }
+    assert "image_path" not in facts
+
+
+def test_chart_facts_preserve_singular_time_value_and_series_labels():
+    """Renaming or dropping chart labels would alter an exact source-backed claim."""
+    facts = chart_to_facts({
+        "title": "Quarterly bookings",
+        "series": [{
+            "series": "Enterprise",
+            "unit": "USD m",
+            "value": 17,
+            "time": "Q2 2025",
+            "trend": "up",
+            "relationship": "Enterprise leads SMB by 3",
+        }],
+    })
+
+    assert facts["series"] == [{
+        "series": "Enterprise",
+        "unit": "USD m",
+        "value": 17,
+        "time": "Q2 2025",
+        "trend": "up",
+        "relationship": "Enterprise leads SMB by 3",
+    }]

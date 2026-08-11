@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import csv
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -18,6 +20,7 @@ from natural_comment_resolver import resolve_comment_deterministically
 
 
 PAGE_MATERIALS_VERSION = "page-materials-v6"
+_ATTACHMENT_EXTRACTION_CACHE: dict[str, dict[str, Any]] = {}
 _SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 _REFERENCE_IMAGE_SCHEMA = json.loads(
     (_SCHEMAS / "reference_image_v6.schema.json").read_text(encoding="utf-8")
@@ -445,6 +448,90 @@ def new_page_materials(
         "degradations": [],
         "reference_images": [],
     }
+
+
+def extract_attachment_material(
+    *, attachment: Path, requirement: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Extract only the rows and fields a pre-UI attachment request selected."""
+    attachment_id = requirement.get("attachment_id")
+    if not isinstance(attachment_id, str) or not attachment_id:
+        raise ValueError("attachment requirement requires attachment_id")
+    path = Path(attachment)
+    if not path.is_file():
+        return {
+            "attachment_id": attachment_id,
+            "status": "unavailable",
+            "degradation": "Attachment unavailable; keep the page editable without its requested evidence.",
+        }
+    rows = requirement.get("rows", [])
+    fields = requirement.get("fields", [])
+    if not isinstance(rows, list) or any(type(row) is not int or row < 1 for row in rows):
+        raise ValueError("attachment rows must be positive integers")
+    if not isinstance(fields, list) or any(not isinstance(field, str) or not field for field in fields):
+        raise ValueError("attachment fields must be non-empty strings")
+    source_bytes = path.read_bytes()
+    receipt = canonical_sha256({
+        "attachment_id": attachment_id,
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "selector": requirement.get("selector", "selected_rows"),
+        "rows": rows,
+        "fields": fields,
+    })
+    cached = _ATTACHMENT_EXTRACTION_CACHE.get(receipt)
+    if cached is not None:
+        return copy.deepcopy(cached)
+    if path.suffix.lower() == ".csv":
+        records = list(csv.DictReader(source_bytes.decode("utf-8-sig").splitlines()))
+        chosen = [records[index - 1] for index in rows if index <= len(records)] if rows else []
+        content = [
+            {field: record[field] for field in fields if field in record}
+            for record in chosen
+        ]
+    elif path.suffix.lower() == ".json":
+        value = json.loads(source_bytes.decode("utf-8"))
+        records = value if isinstance(value, list) else []
+        chosen = [records[index - 1] for index in rows if index <= len(records)] if rows else []
+        content = [
+            {field: record[field] for field in fields if isinstance(record, Mapping) and field in record}
+            for record in chosen
+        ]
+    else:
+        lines = source_bytes.decode("utf-8", errors="replace").splitlines()
+        content = [lines[index - 1] for index in rows if index <= len(lines)] if rows else []
+    result = {
+        "attachment_id": attachment_id,
+        "status": "available",
+        "selector": requirement.get("selector", "selected_rows"),
+        "content": content,
+        "receipt": receipt,
+    }
+    _ATTACHMENT_EXTRACTION_CACHE[receipt] = copy.deepcopy(result)
+    return result
+
+
+def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep a chart's literal facts as text, never as a reference-image input."""
+    title = chart.get("title")
+    if not isinstance(title, str) or not title:
+        raise ValueError("chart title is required")
+    series = chart.get("series")
+    if not isinstance(series, list) or any(not isinstance(item, Mapping) for item in series):
+        raise ValueError("chart series must be objects")
+    factual_series: list[dict[str, Any]] = []
+    for item in series:
+        entry: dict[str, Any] = {}
+        for key in (
+            "series", "name", "unit", "value", "values", "time", "times",
+            "trend", "relationship",
+        ):
+            if key in item:
+                entry[key] = copy.deepcopy(item[key])
+        factual_series.append(entry)
+    result: dict[str, Any] = {"title": title, "series": factual_series}
+    if "unit" in chart:
+        result["unit"] = copy.deepcopy(chart["unit"])
+    return result
 
 
 def validate_page_materials(value: Mapping[str, Any], *, confirmed: bool) -> None:

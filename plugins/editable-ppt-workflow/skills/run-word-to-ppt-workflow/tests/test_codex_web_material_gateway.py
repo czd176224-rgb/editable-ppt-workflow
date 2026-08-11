@@ -2490,3 +2490,39 @@ def test_atomic_publish_rejects_reserved_temp_replacement_without_truncating_it(
     time.sleep(0.4)
     assert not target.exists()
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_v6_reference_gateway_emits_one_bounded_orchestrator_item_without_downloading(tmp_path: Path, monkeypatch):
+    """Autonomous downloading would make a V6 source URL a second Python web client."""
+    receipt_path = tmp_path / "02_v6/reference_materials/page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({
+        "artifact_version": "reference-materials-v6",
+        "page_number": 1,
+        "references": [],
+        "search_requests": [],
+        "reference_acquisitions": [{
+            "request_id": "request-1",
+            "page_number": 1,
+            "purpose": "verified storefront image",
+            "identity_evidence_need": "show the named storefront",
+            "status": "pending",
+            "history": ["pending"],
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setattr(codex_web_material_gateway, "download_visual_material", lambda *_a, **_k: pytest.fail("downloaded"))
+
+    items = codex_web_material_gateway.emit_reference_work_items(tmp_path)
+
+    assert items == [{
+        "page_number": 1,
+        "request_id": "request-1",
+        "purpose": "verified storefront image",
+        "identity_evidence_need": "show the named storefront",
+        "status": "pending",
+        "max_results": 1,
+        "commands": {
+            "import_reference": "workflow_v6_cli.py import-reference --project <project> --page 1 --request-id request-1 --image <local-file> [--source-url <metadata-url>]",
+            "fail_reference": "workflow_v6_cli.py fail-reference --project <project> --page 1 --request-id request-1 --reason <reason>",
+        },
+    }]

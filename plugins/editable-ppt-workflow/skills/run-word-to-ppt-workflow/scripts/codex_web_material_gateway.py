@@ -3157,3 +3157,50 @@ def search_visual_materials(
     finally:
         for cache_path, token in reversed(leases):
             _release_search_lease(cache_path, token)
+
+
+def emit_reference_work_items(project: Path) -> list[dict[str, Any]]:
+    """Write bounded V6 work for the outer orchestrator, without fetching result URLs."""
+    project = Path(project).resolve()
+    items: list[dict[str, Any]] = []
+    material_dir = project / "02_v6" / "reference_materials"
+    for receipt_path in sorted(material_dir.glob("page_*.json")):
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(receipt, Mapping) or not isinstance(receipt.get("page_number"), int):
+            continue
+        for request in receipt.get("reference_acquisitions", []):
+            if not isinstance(request, Mapping) or request.get("status") != "pending":
+                continue
+            request_id = request.get("request_id")
+            purpose = request.get("purpose")
+            need = request.get("identity_evidence_need")
+            if not all(isinstance(value, str) and value for value in (request_id, purpose, need)):
+                continue
+            page_number = receipt["page_number"]
+            items.append({
+                "page_number": page_number,
+                "request_id": request_id,
+                "purpose": purpose,
+                "identity_evidence_need": need,
+                "status": "pending",
+                "max_results": 1,
+                "commands": {
+                    "import_reference": (
+                        "workflow_v6_cli.py import-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --image <local-file> "
+                        "[--source-url <metadata-url>]"
+                    ),
+                    "fail_reference": (
+                        "workflow_v6_cli.py fail-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --reason <reason>"
+                    ),
+                },
+            })
+    items = sorted(items, key=lambda item: (item["page_number"], item["request_id"]))
+    output = project / "02_v6" / "orchestrator" / "reference_work_items.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"artifact_version": "reference-work-items-v6", "items": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return items

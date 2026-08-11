@@ -1,53 +1,150 @@
-"""Shared V6 final-prompt framing used by confirmation and Image2 compilation."""
+"""Compile the sealed V6 UI result into the only Image2 prompt authority."""
 
 from __future__ import annotations
 
+import copy
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
-FIXED_SYSTEM_INSTRUCTIONS = (
-    "Generate only the 17:8 body image. Do not render the fixed page title, "
-    "SVG logo, footer, page number, or outside whitespace. Preserve approved facts."
+SYSTEM_GENERATION_CONSTRAINTS = (
+    "Generate only the slide body from the confirmed material below. Do not reinterpret "
+    "comments, recover omitted source material, add facts, classifications, conclusions, "
+    "labels, brands, identities, events, products, or evidence.",
+    "For edit requests, input images are independent reference materials, not a base "
+    "canvas. Compose a new unified 17:8 body image from the confirmed materials.",
+    "Preserve confirmed Logo and screenshot text, identity, aspect ratio, and visual content "
+    "as a high-fidelity best effort, not pixel-perfect reproduction.",
+    "Never fabricate an unreferenced real identity, brand, event, product, or evidence.",
 )
-FIXED_GEOMETRY = {
+
+GEOMETRY_AND_FIXED_LAYER_EXCLUSIONS = {
     "canvas_pixels": "1904x896",
-    "aspect": "17:8",
-    "excluded_fixed_layers": ["page title", "fixed logo", "footer", "page number"],
+    "aspect_ratio": "17:8",
+    "body_only": True,
+    "prohibited_output": [
+        "main title",
+        "fixed SVG logo",
+        "footer",
+        "page number",
+    ],
+    "main_title_rule": (
+        "The fixed page main title is identification-only and must not be rendered, repeated, "
+        "paraphrased, or replaced anywhere inside the 17:8 body."
+    ),
 }
 
+_PAGE_MATERIAL_FIELDS = (
+    "effective_body",
+    "attachment_extracts",
+    "chart_facts",
+    "image_requirements",
+    "degradations",
+)
 
-def _reference_prompt_record(reference: Mapping[str, Any]) -> dict[str, Any]:
-    """Keep only reviewer-approved reference semantics, never paths or hashes."""
-    return {
-        key: reference[key] for key in (
-            "reference_id", "source", "purpose", "preservation", "allow_crop", "allow_restyle", "status",
-        ) if key in reference
+
+def _is_local_metadata_key(key: str) -> bool:
+    normalized = key.casefold()
+    return (
+        normalized in {
+            "path", "integrity", "metadata", "revision", "fixed_page_title",
+            "word_original", "raw_word_original", "comments", "raw_comments",
+            "comment_directives", "search_tasks", "search_records", "search_results",
+            "acquisition_receipt", "acquisition_records", "acquisition_state",
+            "backend_conclusion", "backend_conclusions",
+        }
+        or normalized.endswith("_path")
+        or normalized.endswith("_sha256")
+        or normalized.endswith("_hash")
+        or normalized.endswith("_digest")
+        or normalized.endswith("_revision")
+        or "receipt" in normalized
+        or "candidate" in normalized
+    )
+
+
+def _stable_material_copy(value: Any) -> Any:
+    """Deep-copy user material deterministically while dropping local-only metadata."""
+    if isinstance(value, Mapping):
+        return {
+            str(key): _stable_material_copy(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if not _is_local_metadata_key(str(key))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_material_copy(item) for item in value]
+    return copy.deepcopy(value)
+
+
+def _usable_reference_record(reference: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return prompt semantics only; paths, URLs, hashes, and lifecycle state stay local."""
+    if reference.get("status") != "available":
+        return None
+    reference_id = reference.get("reference_id")
+    role = reference.get("purpose", reference.get("role"))
+    if not isinstance(reference_id, str) or not reference_id.strip():
+        return None
+    if not isinstance(role, str) or not role.strip():
+        return None
+    result: dict[str, Any] = {
+        "reference_id": reference_id,
+        "role": role,
     }
+    for key in ("preservation", "allow_crop", "allow_restyle"):
+        if key in reference:
+            result[key] = copy.deepcopy(reference[key])
+    return result
+
+
+def filter_confirmed_page_for_prompt(confirmed_page: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one frozen page to the exact material shared by Image2 and lightweight QA."""
+    filtered = {
+        field: _stable_material_copy(confirmed_page.get(field, "" if field == "effective_body" else []))
+        for field in _PAGE_MATERIAL_FIELDS
+    }
+    filtered["reference_images"] = [
+        record
+        for item in confirmed_page.get("reference_images", [])
+        if isinstance(item, Mapping)
+        for record in [_usable_reference_record(item)]
+        if record is not None
+    ]
+    return filtered
+
+
+def filter_global_visual_contract(global_visual_contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the complete sealed visual contract while removing local integrity metadata."""
+    if not isinstance(global_visual_contract, Mapping) or not global_visual_contract:
+        raise ValueError("V6 global visual contract must be nonempty")
+    filtered = _stable_material_copy(global_visual_contract)
+    if not filtered:
+        raise ValueError("V6 global visual contract must contain visual instructions")
+    return filtered
 
 
 def compile_confirmed_page_prompt(
-    global_visual_contract: Mapping[str, Any], confirmed_page: Mapping[str, Any],
-    qa_feedback: tuple[str, ...] | list[str] = (),
+    global_visual_contract: Mapping[str, Any],
+    confirmed_page: Mapping[str, Any],
+    qa_feedback: Sequence[str] = (),
 ) -> str:
-    """Compile the authoritative ordered Image2 prompt from frozen UI material."""
-    page = dict(confirmed_page)
-    payload = {
-        "system_constraints": FIXED_SYSTEM_INSTRUCTIONS,
-        "complete_global_style": dict(global_visual_contract),
-        "canvas": {"pixels": "1904x896", "aspect": "17:8"},
-        "fixed_layer_exclusions": ["fixed page title", "SVG Logo", "footer", "page number"],
-        "confirmed_effective_body": page.get("effective_body", ""),
-        "attachment_extracts": page.get("attachment_extracts", []),
-        "chart_facts": page.get("chart_facts", []),
-        "image_requirements": page.get("image_requirements", []),
-        "confirmed_references": [
-            _reference_prompt_record(item) for item in page.get("reference_images", [])
-            if isinstance(item, Mapping)
-        ],
-        "degradations": page.get("degradations", []),
-        "qa_feedback": list(qa_feedback),
+    """Serialize the ordered, sealed UI authority without truncation or reinterpretation."""
+    visual_contract = filter_global_visual_contract(global_visual_contract)
+    page = filter_confirmed_page_for_prompt(confirmed_page)
+    payload: dict[str, Any] = {
+        "system_generation_constraints": list(SYSTEM_GENERATION_CONSTRAINTS),
+        "frozen_global_visual_contract": visual_contract,
+        "geometry_and_fixed_layer_exclusions": copy.deepcopy(
+            GEOMETRY_AND_FIXED_LAYER_EXCLUSIONS
+        ),
+        "confirmed_effective_body": page["effective_body"],
+        "confirmed_attachment_extracts": page["attachment_extracts"],
+        "confirmed_chart_facts": page["chart_facts"],
+        "confirmed_image_requirements": page["image_requirements"],
+        "confirmed_usable_references": page["reference_images"],
+        "confirmed_degradation_expressions": page["degradations"],
     }
+    if qa_feedback:
+        payload["actionable_qa_feedback"] = [str(item) for item in qa_feedback]
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 

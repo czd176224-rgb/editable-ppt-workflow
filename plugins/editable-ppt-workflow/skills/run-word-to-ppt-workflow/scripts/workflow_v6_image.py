@@ -18,7 +18,11 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from workflow_v6_contract import canonical_sha256, request_identity, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
-from workflow_v6_prompt_contract import compile_confirmed_page_prompt
+from workflow_v6_prompt_contract import (
+    compile_confirmed_page_prompt,
+    filter_confirmed_page_for_prompt,
+    filter_global_visual_contract,
+)
 from adaptive_scheduler import (
     AdaptiveScheduler,
     PageOwnershipLease,
@@ -166,9 +170,6 @@ def _actionable_qa_feedback(qa: Mapping[str, Any]) -> list[str]:
     return unique
 
 
-_MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
-
-
 def _read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -176,188 +177,15 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _reference_prompt_items(references: Mapping[str, Any]) -> list[dict[str, Any]]:
-    values = []
-    for item in references.get("references", []):
-        if not isinstance(item, Mapping) or item.get("status") != "available":
-            continue
-        values.append({
-            key: item[key]
-            for key in ("kind", "purpose", "description", "text")
-            if isinstance(item.get(key), str) and item.get(key)
-        })
-    return values
-
-
-_STYLE_FIELDS = (
-    "visual_style",
-    "color",
-    "icons",
-    "typography",
-    "image_rendering",
-    "style_axes",
-    "layout_preferences",
-    "information_density",
-    "regional_style",
-    "background_system",
-    "composition_tendency",
-    "brand_device",
-)
-
-
-def _visual_style_only(style_contract: Mapping[str, Any]) -> dict[str, Any]:
-    """Exclude legacy fields that can be misread as per-page content or image quotas."""
-    return {
-        key: copy.deepcopy(style_contract[key])
-        for key in _STYLE_FIELDS
-        if key in style_contract
-    }
-
-
-def _media_policy(
-    style_contract: Mapping[str, Any],
-    references: Mapping[str, Any],
-    effective_page: Mapping[str, Any],
-) -> dict[str, Any]:
-    policy = str(style_contract.get("image_usage_policy", "content-driven"))
-    if policy not in {"content-driven", "visual-preference", "source-only"}:
-        policy = "content-driven"
-    available = _reference_prompt_items(references)
-    requested = bool(effective_page.get("search_requests"))
-    return {
-        "policy": policy,
-        "available_reference_count": len(available),
-        "documentary_visuals_allowed": bool(available),
-        "unfulfilled_reference_request": requested and not available,
-        "no_per_page_image_quota": True,
-        "rules": [
-            "Use ordinary conceptual diagrams or illustrations only when the page content justifies them.",
-            "Use documentary news, meeting, person, company, product, or logo imagery only when an available reference description supports that exact visual role.",
-            "A page comment may request finding a visual reference, but the comment text itself is not visual evidence and never authorizes an invented lookalike.",
-            "When documentary_visuals_allowed is false, ignore photo, person, meeting, company, product, and logo requests in comments and use no documentary lookalikes.",
-            "When no page material justifies an image, prefer typography, tables, diagrams, restrained geometry, and whitespace.",
-            "Never fabricate documentary news, meeting, person, company, product, or logo imagery merely to fill space.",
-        ],
-    }
-
-
-def _prompt_comment_directives(
-    effective_page: Mapping[str, Any], *, documentary_visuals_allowed: bool
-) -> tuple[list[dict[str, Any]], list[str]]:
-    active: list[dict[str, Any]] = []
-    invalidated: list[str] = []
-    for value in effective_page.get("comment_directives", []):
-        if not isinstance(value, Mapping):
-            continue
-        directive = copy.deepcopy(dict(value))
-        text = str(directive.get("text", "")).strip()
-        if not text:
-            continue
-        if not documentary_visuals_allowed:
-            clauses = [item.strip() for item in re.split(r"[。；;\n]+", text) if item.strip()]
-            retained = [item for item in clauses if not _MEDIA_DIRECTIVE_TERMS.search(item)]
-            if len(retained) != len(clauses):
-                invalidated.append(str(directive.get("comment_id", "unknown")))
-            text = "；".join(retained)
-            if not text:
-                continue
-            directive["text"] = text
-        active.append(directive)
-    return active, invalidated
-
-
-def _legacy_build_prompt(
-    *,
-    effective_page: Mapping[str, Any],
-    style_contract: Mapping[str, Any],
-    references: Mapping[str, Any],
-    qa_feedback: list[str] | None = None,
-) -> str:
-    body_content = str(effective_page.get("body_render_content", effective_page.get("word_original", "")))
-    body_paragraphs = [item.strip() for item in body_content.split("\n\n") if item.strip()]
-    media_policy = _media_policy(style_contract, references, effective_page)
-    prompt_directives, invalidated_media_comments = _prompt_comment_directives(
-        effective_page,
-        documentary_visuals_allowed=bool(media_policy["documentary_visuals_allowed"]),
-    )
-    payload = {
-        "content_authority": {
-            "complete_word_original_for_context": effective_page.get("word_original", ""),
-            "fixed_page_title": {
-                "text": effective_page.get("fixed_page_title", ""),
-                "render_in_body": False,
-                "role": "context only; a native PPT fixed layer adds it later",
-            },
-            "renderable_body_content": body_content,
-            "comment_directives": prompt_directives,
-            "invalidated_media_comment_ids": invalidated_media_comments,
-            "invalidated_requirements": copy.deepcopy(effective_page.get("invalidated_requirements", [])),
-        },
-        "style_visual_constraints": _visual_style_only(style_contract),
-        "page_media_policy": media_policy,
-        "reference_descriptions": _reference_prompt_items(references),
-        "geometry": {
-            "canvas_pixels": "1904x896",
-            "aspect": "17:8",
-            "excluded_fixed_layers": ["page title", "fixed logo", "footer", "page number"],
-        },
-    }
-    if qa_feedback:
-        payload["qa_feedback"] = list(qa_feedback)
-    if len(body_paragraphs) == 1:
-        payload["single_paragraph_guard"] = (
-            "Render only the exact paragraph text. It may wrap across lines, but add no heading, caption, "
-            "category label, summary label, explanatory label, or supporting text."
-        )
-    single_paragraph_instruction = (
-        " This page has one renderable paragraph: render only that exact paragraph as a text block, with no "
-        "heading, caption, category label, summary label, explanatory label, or supporting text."
-        if len(body_paragraphs) == 1 else ""
-    )
-    no_reference_instruction = (
-        " No documentary visual reference is available: do not generate any news, meeting, person, company, "
-        "product, or logo imagery, even if an invalidated comment originally requested it."
-        if not media_policy["documentary_visuals_allowed"] else ""
-    )
-    return (
-        "Generate a complete 1904x896, 17:8 PowerPoint body image. This is a fresh generation, never an edit. "
-        "The renderable body content and active page comments are the only textual and factual authority. "
-        "Comments may modify or replace Word facts. You may organize, group, shorten, and visualize that authority, "
-        "but you must not invent any fact, category, capability, organization, person, number, conclusion, or summary. "
-        "Every visible word, phrase, sentence, number, and label must be copied verbatim from renderable_body_content "
-        "or an active comment directive. Do not paraphrase, interpret, add explanatory subcopy, or invent generic labels. "
-        "Empty space must remain whitespace or restrained non-semantic decoration; never fill it with invented content. "
-        "The fixed_page_title is context only: do not render it, repeat it, paraphrase it as a page heading, or place a "
-        "replacement page heading anywhere in the body. Do not draw the fixed logo, footer, or page number. Section "
-        "headings explicitly present in renderable_body_content remain allowed. Reference descriptions affect visual "
-        "understanding only and do not authorize new body facts. The global contract controls visual treatment only and "
-        "does not require any image on any page. Follow page_media_policy exactly."
-        + single_paragraph_instruction
-        + no_reference_instruction
-        + "\n"
-        + json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    )
-
-
 def build_prompt(
     *,
-    global_visual_contract: Mapping[str, Any] | None = None,
-    confirmed_page: Mapping[str, Any] | None = None,
+    global_visual_contract: Mapping[str, Any],
+    confirmed_page: Mapping[str, Any],
     qa_feedback: list[str] | None = None,
-    effective_page: Mapping[str, Any] | None = None,
-    style_contract: Mapping[str, Any] | None = None,
-    references: Mapping[str, Any] | None = None,
 ) -> str:
-    """Compile frozen V6 material; legacy arguments remain test-only compatibility."""
-    if global_visual_contract is not None and confirmed_page is not None:
-        return compile_confirmed_page_prompt(
-            global_visual_contract, confirmed_page, qa_feedback or (),
-        )
-    if effective_page is None or style_contract is None or references is None:
-        raise ValueError("build_prompt requires a frozen V6 result page")
-    return _legacy_build_prompt(
-        effective_page=effective_page, style_contract=style_contract,
-        references=references, qa_feedback=qa_feedback,
+    """Compile only a frozen V6 result page; there is no raw-material fallback."""
+    return compile_confirmed_page_prompt(
+        global_visual_contract, confirmed_page, qa_feedback or (),
     )
 
 
@@ -432,6 +260,8 @@ def build_image_request(
         confirmed_page=resolved_page,
         qa_feedback=list(qa_feedback),
     )
+    if len(prompt) > _PROMPT_LIMIT:
+        raise ValueError("V6 fully compiled prompt exceeds the 32,000-character prompt limit")
     return ImageRequest(
         operation="edit" if images else "generate",
         quality=initial_quality(resolved_page),
@@ -1063,6 +893,7 @@ def _generate_page_body_owned(
         or not isinstance(frozen_page, Mapping)
     ):
         raise ValueError("V6 generation requires the authoritative frozen UI result page")
+    global_contract = filter_global_visual_contract(global_contract)
     request_page = _with_project_reference_paths(
         root,
         frozen_page,
@@ -1232,7 +1063,7 @@ def _generate_page_body_owned(
             qa = reviewer(
                 root,
                 image=output,
-                effective_page=copy.deepcopy(resolved_request_page),
+                effective_page=filter_confirmed_page_for_prompt(resolved_request_page),
                 style_contract=dict(global_contract),
                 fixed_logo_name=logo_name,
                 timeout=min(timeout, QA_TIMEOUT_SECONDS),

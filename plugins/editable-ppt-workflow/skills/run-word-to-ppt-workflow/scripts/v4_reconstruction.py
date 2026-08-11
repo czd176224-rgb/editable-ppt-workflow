@@ -1109,7 +1109,7 @@ def verify_signed_reconstruction(project: Path, work_item: Path, bundle: Path) -
     _, style = _read(project, work["style_execution"]["path"])
     fixed = inspect_fixed_frame(final_path, expected_title=work["page_title"], expected_page_number=work["page_number"], style_execution=style, logo_svg=_project_file(project, work["logo_svg"]["path"]))
     if not fixed["passed"]:
-        raise ValueError("fixed layers changed after reconstruction")
+        raise ValueError("fixed logo or other fixed layers changed after reconstruction")
     _validate_fixed_logo_bytes(final_path, work["logo_svg"]["sha256"])
     body_path = _project_file(project, payload["body_pptx"]["path"])
     body_drawingml = _canonical_drawingml_body(body_path, exclude_fixed=False)

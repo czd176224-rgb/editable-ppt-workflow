@@ -147,7 +147,7 @@ def build_prompt(
             "invalidated_media_comment_ids": invalidated_media_comments,
             "invalidated_requirements": copy.deepcopy(effective_page.get("invalidated_requirements", [])),
         },
-        "global_visual_style_only": _visual_style_only(style_contract),
+        "style_visual_constraints": _visual_style_only(style_contract),
         "page_media_policy": media_policy,
         "reference_descriptions": _reference_prompt_items(references),
         "geometry": {

@@ -476,7 +476,7 @@ def write_generation_trace(
             {
                 "path": str(path.resolve()),
                 "sha256": file_sha256(path),
-                "mime_type": "image/png",
+                "mime_type": decoded_output_mime(path),
             }
             for path in outputs
         ],
@@ -486,6 +486,21 @@ def write_generation_trace(
     destination = Path(args.trace_out)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def decoded_output_mime(path: Path) -> str:
+    try:
+        with Image.open(path) as image:
+            image_format = image.format
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise CliError(f"Generated output is not a valid supported image: {path}") from exc
+    mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}.get(
+        str(image_format).upper(),
+    )
+    if mime is None:
+        raise CliError(f"Generated output must be PNG, JPEG, or WebP: {path}")
+    return mime
 
 
 def read_prompt(prompt: str | None, prompt_file: str | None) -> str:

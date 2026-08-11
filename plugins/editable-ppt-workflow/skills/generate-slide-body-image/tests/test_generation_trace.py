@@ -213,9 +213,15 @@ def test_authenticated_trace_preserves_codex_oauth_proof(tmp_path: Path) -> None
     assert payload["auth"] == "codex_oauth"
 
 
-def test_production_trace_declares_png_output_mime(tmp_path: Path) -> None:
-    output = tmp_path / "output.png"
-    Image.new("RGB", (1904, 896), "white").save(output)
+@pytest.mark.parametrize(
+    ("image_format", "expected_mime"),
+    [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")],
+)
+def test_production_trace_declares_decoded_output_mime(
+    tmp_path: Path, image_format: str, expected_mime: str,
+) -> None:
+    output = tmp_path / f"misleading-{image_format.casefold()}.bin"
+    Image.new("RGB", (1904, 896), "white").save(output, format=image_format)
     trace = tmp_path / "trace.json"
     write_generation_trace(
         argparse.Namespace(
@@ -233,5 +239,5 @@ def test_production_trace_declares_png_output_mime(tmp_path: Path) -> None:
     assert payload["outputs"] == [{
         "path": str(output.resolve()),
         "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-        "mime_type": "image/png",
+        "mime_type": expected_mime,
     }]

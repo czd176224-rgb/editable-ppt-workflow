@@ -601,7 +601,11 @@ def _verified_existing_receipt(
         or receipt.get("state") not in {"accepted", "accepted_fallback_first"}
         or not isinstance(receipt.get("degraded_reasons"), list)
         or not _receipt_candidates_are_valid(
-            root, receipt.get("candidates"), selected=selected, request=request,
+            root,
+            receipt.get("candidates"),
+            page_number=page_number,
+            selected=selected,
+            request=request,
         )
     ):
         return None
@@ -647,6 +651,7 @@ def _committed_receipt_matches(
     return _receipt_candidates_are_valid(
         root,
         committed.get("candidates"),
+        page_number=committed.get("page_number"),
         selected=committed.get("selected"),
         request=request,
     )
@@ -656,43 +661,43 @@ def _receipt_candidates_are_valid(
     root: Path,
     candidates: Any,
     *,
+    page_number: Any,
     selected: Any,
     request: ImageRequest,
 ) -> bool:
-    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 2:
+    if (
+        type(page_number) is not int
+        or page_number < 1
+        or not isinstance(candidates, list)
+        or not 1 <= len(candidates) <= 2
+    ):
         return False
     attempts = [
         candidate.get("attempt")
         for candidate in candidates
         if isinstance(candidate, Mapping)
     ]
-    selected_identity = (
-        tuple(selected.get(field) for field in ("attempt", "path", "operation"))
-        if isinstance(selected, Mapping)
-        else None
-    )
-    selected_matches = sum(
-        tuple(candidate.get(field) for field in ("attempt", "path", "operation"))
-        == selected_identity
-        for candidate in candidates
-        if isinstance(candidate, Mapping)
-    )
     if (
         len(attempts) != len(candidates)
         or len(set(attempts)) != len(attempts)
-        or set(attempts) != set(range(1, len(candidates) + 1))
-        or selected_identity is None
-        or selected_matches != 1
+        or not set(attempts).issubset({1, 2})
+        or sum(candidate == selected for candidate in candidates) != 1
     ):
         return False
     return all(
-        _candidate_artifact_is_valid(root, candidate, request=request)
+        _candidate_artifact_is_valid(
+            root, candidate, page_number=page_number, request=request,
+        )
         for candidate in candidates
     )
 
 
 def _candidate_artifact_is_valid(
-    root: Path, candidate: Any, *, request: ImageRequest,
+    root: Path,
+    candidate: Any,
+    *,
+    page_number: int,
+    request: ImageRequest,
 ) -> bool:
     if (
         not isinstance(candidate, Mapping)
@@ -724,7 +729,11 @@ def _candidate_artifact_is_valid(
     if (
         mime_type != "image/png"
         or canonical_relative != candidate["path"]
-        or not canonical_relative.endswith(f".candidate_{candidate['attempt']}.png")
+        or re.fullmatch(
+            rf"04_v6/images/page_{page_number:03d}"
+            rf"(?:\.generation_[1-9][0-9]*)?\.candidate_{candidate['attempt']}\.png",
+            canonical_relative,
+        ) is None
         or dimensions != (1904, 896)
         or trace_value.get("operation") != request.operation
         or trace_value.get("model") != "gpt-image-2"
@@ -760,14 +769,18 @@ def _receipt_from_accepted_page(
     }:
         return None
     selected = page.get("selected_candidate")
-    if not _candidate_artifact_is_valid(root, selected, request=request):
+    if not _candidate_artifact_is_valid(
+        root, selected, page_number=page_number, request=request,
+    ):
         return None
     candidates: list[dict[str, Any]] = []
     first = page.get("first_candidate")
     same_artifact = isinstance(first, Mapping) and all(
         first.get(field) == selected.get(field) for field in ("attempt", "path", "operation")
     )
-    if not same_artifact and _candidate_artifact_is_valid(root, first, request=request):
+    if not same_artifact and _candidate_artifact_is_valid(
+        root, first, page_number=page_number, request=request,
+    ):
         candidates.append(copy.deepcopy(dict(first)))
     selected_copy = copy.deepcopy(dict(selected))
     if selected_copy not in candidates:
@@ -1088,7 +1101,7 @@ def _generate_page_body_owned(
             page = transition_page(page, "generating")
 
     if selected is None:
-        selected = copy.deepcopy(page["first_candidate"])
+        selected = copy.deepcopy(candidates[0])
         degraded_reason = degraded_reason or "qa_candidate_limit_reached"
         if page["state"] == "generating":
             page = transition_page(page, "qa_review")
@@ -1101,7 +1114,10 @@ def _generate_page_body_owned(
         page["selected_candidate"] = copy.deepcopy(selected)
         page = transition_page(page, "accepted")
     if not _candidate_artifact_is_valid(
-        root, page["selected_candidate"], request=initial_request,
+        root,
+        page["selected_candidate"],
+        page_number=page_number,
+        request=initial_request,
     ):
         page["technical_failure"] = {
             "stage": "candidate_artifact_validation",

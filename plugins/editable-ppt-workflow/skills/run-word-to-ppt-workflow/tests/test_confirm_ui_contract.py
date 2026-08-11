@@ -506,6 +506,42 @@ def test_v6_final_write_fault_leaves_every_source_artifact_unchanged(tmp_path: P
     assert not (project / "confirm_ui" / "result.json").exists()
 
 
+def test_v6_route_persists_result_once_inside_the_confirmation_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A route-level second write could overwrite a newer revision after the lock is released."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server(); client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Single write",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+    real_write = server._write_json; writes = []
+    def tracked(path, value):
+        if Path(path).name == "result.json": writes.append(value)
+        return real_write(path, value)
+    monkeypatch.setattr(server, "_write_json", tracked)
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    assert len(writes) == 1
+
+
+def test_v6_ui_prompt_estimate_uses_the_shared_final_prompt_contract():
+    """A divergent UI estimate could accept material the final prompt compiler must reject."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_prompt_contract import estimate_frozen_page_chars
+    server = load_server()
+    contract = {"style": "balanced"}; page = {"effective_body": "x" * 17, "reference_images": []}
+
+    assert server._estimate_v6_final_prompt_chars(contract, page) == estimate_frozen_page_chars(contract, page)
+
+
 def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_receipt(tmp_path: Path):
     """A reviewer decision belongs to the frozen revision, not the acquisition lifecycle receipt."""
     project = _v6_project_for_final_confirmation(tmp_path)
@@ -519,9 +555,12 @@ def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_re
     image = tmp_path / "candidate.png"; Image.new("RGB", (4, 2), "#336699").save(image, format="PNG")
     import_reference(project, page_number=1, request_id="found-1", image=image, source_url="https://example.test/image.png")
     receipt_before = receipt_path.read_bytes()
-    server = load_server(); client = server.create_app(project).test_client()
+    server = load_server(); owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}; client = server.create_app(project, lock_owner=owner).test_client()
     page = client.get("/api/pages").get_json()["pages"][0]
     assert page["found_reference_candidates"][0]["request_id"] == "found-1"
+    candidate_url = page["found_reference_candidates"][0]["thumbnail_url"]
+    assert "nonce=" + owner["nonce"] in candidate_url
+    assert client.get(candidate_url).status_code == 200
     payload = valid_one_screen_submission()
     payload.update({"revision": 0, "confirmed_pages": [{
         "page_number": 1, "effective_body": page["effective_body"],
@@ -537,6 +576,17 @@ def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_re
     assert frozen["reference_decisions"] == [{"request_id": "found-1", "decision": "accept"}]
     assert frozen["reference_images"][0]["source_url"] == "https://example.test/image.png"
     assert receipt_path.read_bytes() == receipt_before
+    reopened = client.get("/api/pages").get_json()["pages"][0]
+    second_payload = valid_one_screen_submission()
+    second_payload.update({"revision": 1, "confirmed_pages": [{
+        "page_number": 1, "effective_body": reopened["effective_body"],
+        "attachment_extracts": reopened["attachment_extracts"], "chart_facts": reopened["chart_facts"],
+        "image_requirements": reopened["image_requirements"], "degradations": reopened["degradations"],
+        "reference_images": [{"reference_id": item["reference_id"], "purpose": item["purpose"], "allow_crop": item["allow_crop"], "allow_restyle": item["allow_restyle"], "status": item["status"]} for item in reopened["reference_images"]],
+        "reference_decisions": reopened["reference_decisions"],
+    }]})
+    assert client.post("/api/confirm", json=second_payload).status_code == 200
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 2
 
 
 def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: Path):
@@ -764,6 +814,7 @@ def test_static_ui_keeps_one_final_submission_for_global_style_and_page_material
     assert "pageRequirementSummary" in app_js
     assert "renderEditablePageMaterials" in app_js
     assert "confirmed_pages" in app_js
+    assert 'document.querySelector(".invalid-json")' in app_js
     assert "precedenceNotice" in app_js
     assert "detected-page-requirements" in app_js
     assert "只读" in app_js

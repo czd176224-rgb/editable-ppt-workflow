@@ -22,7 +22,7 @@ from workflow_v6_source import (
     initialize_v6_project,
     reject_reference,
 )
-from workflow_v6_state import load, save
+from workflow_v6_state import load, mutation_lock, save
 
 
 def _emit(value: Any) -> None:
@@ -110,34 +110,30 @@ def main() -> int:
     elif args.command == "status":
         _emit(_status(args.project))
     elif args.command == "confirm-style":
-        raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
-        live_path = args.project / "confirm_ui" / "result.json"
-        if not live_path.is_file():
-            raise ValueError("confirm-style requires the authoritative confirm_ui/result.json")
-        live = json.loads(live_path.read_text(encoding="utf-8"))
-        canonical = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        if canonical(raw) != canonical(live):
-            raise ValueError("confirm-style input does not match the authoritative UI result")
-        state = load(args.project)
-        if not isinstance(live, dict) or live.get("status") != "confirmed":
-            raise ValueError("confirm-style requires one confirmed UI revision")
-        if isinstance(live.get("global_visual_contract"), dict):
-            revision = live.get("revision")
-            pages = live.get("confirmed_pages")
-            if type(revision) is not int or revision < 1 or not isinstance(pages, list):
-                raise ValueError("confirmed UI revision is incomplete")
-            if [item.get("page_number") for item in pages if isinstance(item, dict)] != list(range(1, len(state["pages"]) + 1)):
-                raise ValueError("confirmed UI pages are incomplete")
-            state["confirmed_ui_revision"] = revision
-            state["confirmed_ui_digest"] = hashlib.sha256(
-                canonical(live).encode("utf-8")
-            ).hexdigest()
-            state["page_materials_status"] = "confirmed"
-        state["style_confirmation"] = {
-            "status": "confirmed",
-            "contract": compile_style_execution(live),
-        }
-        save(args.project, state)
+        with mutation_lock(args.project):
+            raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
+            live_path = args.project / "confirm_ui" / "result.json"
+            if not live_path.is_file():
+                raise ValueError("confirm-style requires the authoritative confirm_ui/result.json")
+            live = json.loads(live_path.read_text(encoding="utf-8"))
+            canonical = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if canonical(raw) != canonical(live):
+                raise ValueError("confirm-style input does not match the authoritative UI result")
+            state = load(args.project)
+            if not isinstance(live, dict) or live.get("status") != "confirmed":
+                raise ValueError("confirm-style requires one confirmed UI revision")
+            if isinstance(live.get("global_visual_contract"), dict):
+                revision = live.get("revision")
+                pages = live.get("confirmed_pages")
+                if type(revision) is not int or revision < 1 or not isinstance(pages, list):
+                    raise ValueError("confirmed UI revision is incomplete")
+                if [item.get("page_number") for item in pages if isinstance(item, dict)] != list(range(1, len(state["pages"]) + 1)):
+                    raise ValueError("confirmed UI pages are incomplete")
+                state["confirmed_ui_revision"] = revision
+                state["confirmed_ui_digest"] = hashlib.sha256(canonical(live).encode("utf-8")).hexdigest()
+                state["page_materials_status"] = "confirmed"
+            state["style_confirmation"] = {"status": "confirmed", "contract": compile_style_execution(live)}
+            save(args.project, state)
         _emit(_status(args.project))
     elif args.command == "generate-page":
         _emit(generate_page_body(args.project, page_number=args.page, max_candidates=args.max_candidates))

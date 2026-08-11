@@ -664,6 +664,9 @@
     dialog.addEventListener("cancel", function (event) { event.preventDefault(); applyDialogColor(window.ColorTools.cancelDraft(colorSession.draft)); dialog.close("cancel"); renderStep(true); });
   }
   function submitConfirmation(button, status) {
+    if (document.querySelector(".invalid-json")) {
+      status.classList.add("error"); status.textContent = "请先修正所有 JSON 材料字段。"; return;
+    }
     button.disabled = true; status.classList.remove("error"); status.textContent = "正在锁定视觉合同…";
     state.template_selection.override_fields = Array.from(customFields).sort();
     var payload = {

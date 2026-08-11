@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 import webbrowser
@@ -52,7 +53,8 @@ from workflow_v5_dag import DagStore  # noqa: E402
 from workflow_v6_media import read_validated_project_media  # noqa: E402
 from workflow_v6_materials import confirmed_revision_digest, validate_page_materials  # noqa: E402
 from workflow_v6_source import _found_candidate_reference  # noqa: E402
-from workflow_v6_state import load as load_v6_state  # noqa: E402
+from workflow_v6_state import load as load_v6_state, mutation_lock  # noqa: E402
+from workflow_v6_prompt_contract import estimate_frozen_page_chars  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -226,12 +228,18 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     with temporary.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+    if os.name != "nt":
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _clean(value: Any) -> Any:
@@ -390,28 +398,13 @@ _V6_PROMPT_LIMIT = 32000
 @contextmanager
 def _v6_confirmation_lock(project: Path, timeout: float = 15.0):
     """Serialize the one authoritative UI commit without touching V6 source state."""
-    lock = project / CONFIRM_DIR / ".final-confirmation.lock"
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("timed out waiting for final confirmation lock")
-            time.sleep(0.02)
-    try:
+    with mutation_lock(project, timeout=timeout):
         yield
-    finally:
-        lock.rmdir()
 
 
 def _estimate_v6_final_prompt_chars(global_contract: dict[str, Any], page: dict[str, Any]) -> int:
-    """Conservative shared prompt-size budget; Task 9 imports this exact helper."""
-    # Fixed system, geometry, reference, and compiler framing reserve.  The
-    # JSON part intentionally uses the complete frozen material, never a
-    # truncated presentation projection.
-    return 4096 + len(json.dumps({"global_visual_contract": global_contract, "page": page}, ensure_ascii=False))
+    """Compatibility boundary for the shared final prompt compiler estimate."""
+    return estimate_frozen_page_chars(global_contract, page)
 
 
 def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -425,6 +418,10 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
         supplied_revision = payload.get("revision")
         if type(supplied_revision) is not int or supplied_revision != current_revision:
             raise ValueError("stale confirmation revision; reload the final page before submitting")
+        prior_frozen_pages = {
+            item.get("page_number"): item for item in current.get("confirmed_pages", [])
+            if isinstance(item, dict) and type(item.get("page_number")) is int
+        }
         state = load_v6_state(project)
         pages = payload.get("confirmed_pages")
         if not isinstance(pages, list) or len(pages) != len(state["pages"]):
@@ -445,8 +442,9 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
             for field in _V6_PAGE_EDITABLE_FIELDS:
                 if field not in {"page_number", "reference_decisions"}:
                     updated[field] = _clean(submitted[field])
+            prior_references = prior_frozen_pages.get(page_number, {}).get("reference_images", [])
             base_references = {
-            item.get("reference_id"): dict(item) for item in material.get("reference_images", [])
+            item.get("reference_id"): dict(item) for item in list(material.get("reference_images", [])) + list(prior_references)
             if isinstance(item, dict) and isinstance(item.get("reference_id"), str)
             }
             controlled_references = []
@@ -473,18 +471,27 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
             decisions = submitted["reference_decisions"]
             receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
             acquisitions = _read_json(receipt_path).get("reference_acquisitions", []) if receipt_path.is_file() else []
-            found = {item.get("request_id"): item for item in acquisitions if isinstance(item, dict) and item.get("status") == "found"}
+            prior_decisions = prior_frozen_pages.get(page_number, {}).get("reference_decisions", [])
+            prior_decision_map = {
+                item.get("request_id"): item.get("decision") for item in prior_decisions
+                if isinstance(item, dict) and item.get("decision") in {"accept", "reject"}
+            }
+            found = {item.get("request_id"): item for item in acquisitions if isinstance(item, dict) and item.get("status") == "found" and item.get("request_id") not in prior_decision_map}
             decision_map = {}
             for decision in decisions:
                 if not isinstance(decision, dict) or set(decision) != {"request_id", "decision"} or decision.get("decision") not in {"accept", "reject"}:
                     raise ValueError("found reference decisions must be explicit accept or reject values")
                 request_id = decision.get("request_id")
+                if request_id in prior_decision_map:
+                    if decision.get("decision") != prior_decision_map[request_id]:
+                        raise ValueError("previously frozen reference decisions cannot be changed")
+                    continue
                 if request_id not in found or request_id in decision_map:
                     raise ValueError("found reference decision is unknown or duplicated")
                 decision_map[request_id] = decision["decision"]
             if set(decision_map) != set(found):
                 raise ValueError("every found reference candidate requires an explicit decision")
-            frozen_decisions = []
+            frozen_decisions = [dict(item) for item in prior_decisions if isinstance(item, dict)]
             for request_id, acquisition in found.items():
                 decision = decision_map[request_id]
                 if decision == "accept":
@@ -1085,6 +1092,10 @@ def create_app(
                         for field in ("thumbnail_url", "original_url", "model_input_url"):
                             if isinstance(reference.get(field), str):
                                 reference[field] += "&nonce=" + owner["nonce"]
+                    for candidate in page.get("found_reference_candidates", []):
+                        for field in ("thumbnail_url", "original_url", "model_input_url"):
+                            if isinstance(candidate.get(field), str):
+                                candidate[field] += "&nonce=" + owner["nonce"]
             response = jsonify(
                 {
                     "pages": page_records,
@@ -1183,7 +1194,8 @@ def create_app(
                 ConfirmationLifecycle(project).confirm(contract_id)
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 409
-        _write_json(project / CONFIRM_DIR / RESULT, result)
+        if not ((project / "workflow_v6.json").is_file() and type(result.get("revision")) is int):
+            _write_json(project / CONFIRM_DIR / RESULT, result)
         _write_session(project, f"{result_stage}-submitted")
         if (
             result_stage == "final"

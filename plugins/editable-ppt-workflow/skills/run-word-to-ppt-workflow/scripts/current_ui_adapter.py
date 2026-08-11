@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any, Mapping
+
+from jsonschema import Draft202012Validator
 
 
 CURRENT_UI_PAYLOAD_VERSION = "confirm-ui-result-v1"
@@ -73,6 +77,10 @@ def adapt_current_ui_payload(
     # a style input; page materials stay separate and are never reinterpreted
     # by the style compiler.
     if payload.get("status") == "confirmed" and isinstance(payload.get("global_visual_contract"), Mapping):
+        schema = json.loads((Path(__file__).resolve().parents[1] / "schemas" / "style_confirmation.schema.json").read_text(encoding="utf-8"))
+        errors = sorted(Draft202012Validator(schema).iter_errors(dict(payload)), key=lambda error: list(error.path))
+        if errors:
+            raise ValueError(f"V6 confirmed UI result validation failed: {errors[0].message}")
         return _current_result_v1(payload["global_visual_contract"])
     embedded = payload.get("ui_payload_version")
     effective_version = embedded if embedded is not None else payload_version

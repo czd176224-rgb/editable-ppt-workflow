@@ -17,7 +17,9 @@ from workflow_v6_state import create, load, update_page
 import workflow_v6_state
 from adaptive_scheduler import (
     AdaptiveScheduler,
+    PAGE_OWNERSHIP_STATE_FILE,
     ProjectGenerationGate,
+    ProjectPageOwnership,
     RoundOutcome,
     SCHEDULER_STATE_FILE,
     jittered_retry_delay,
@@ -179,3 +181,50 @@ def test_project_gate_recovers_stale_crashed_lease_under_project_lock(tmp_path: 
         assert next(iter(active.values()))["page_number"] == 2
 
     assert json.loads(path.read_text(encoding="utf-8"))["leases"] == {}
+
+
+def test_page_ownership_recovers_stale_owner_with_new_fencing_generation(tmp_path: Path):
+    path = tmp_path / PAGE_OWNERSHIP_STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "artifact_version": "v6-page-ownership-v1",
+        "next_generation": {"1": 1},
+        "owners": {
+            "1": {
+                "owner": "crashed-owner",
+                "generation": 1,
+                "acquired_at": time.time() - 60,
+            },
+        },
+    }), encoding="utf-8")
+    ownership = ProjectPageOwnership(
+        tmp_path, stale_after=1.0, poll_interval=0.001,
+    )
+
+    with ownership.own(page_number=1, wait_timeout=0.2) as lease:
+        assert lease.generation == 2
+        ownership.assert_current(lease)
+        state = json.loads(path.read_text(encoding="utf-8"))
+        assert state["owners"]["1"]["owner"] == lease.owner
+
+    assert json.loads(path.read_text(encoding="utf-8"))["owners"] == {}
+
+
+def test_stale_page_owner_is_fenced_and_cannot_release_newer_owner(tmp_path: Path):
+    ownership = ProjectPageOwnership(
+        tmp_path, stale_after=1.0, poll_interval=0.001,
+    )
+    path = tmp_path / PAGE_OWNERSHIP_STATE_FILE
+
+    with ownership.own(page_number=1, wait_timeout=0.2) as stale_lease:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["owners"]["1"]["acquired_at"] = time.time() - 60
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+        with ownership.own(page_number=1, wait_timeout=0.2) as current_lease:
+            assert current_lease.generation == stale_lease.generation + 1
+            with pytest.raises(RuntimeError, match="superseded"):
+                ownership.assert_current(stale_lease)
+            ownership.assert_current(current_lease)
+
+        assert json.loads(path.read_text(encoding="utf-8"))["owners"] == {}

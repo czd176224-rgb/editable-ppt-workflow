@@ -16,7 +16,12 @@ from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
-from adaptive_scheduler import AdaptiveScheduler, ProjectGenerationGate
+from adaptive_scheduler import (
+    AdaptiveScheduler,
+    PageOwnershipLease,
+    ProjectGenerationGate,
+    ProjectPageOwnership,
+)
 import workflow_v6_media as v6_media
 
 
@@ -614,6 +619,40 @@ def generate_page_body(
     retry_sleep: Callable[[float], None] | None = None,
     retry_jitter: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
+    root = Path(project).resolve()
+    ownership_ttl = min(
+        max(float(timeout) * 6.0 + float(QA_TIMEOUT_SECONDS) * 2.0 + 300.0, 900.0),
+        86_400.0,
+    )
+    ownership = ProjectPageOwnership(root, stale_after=ownership_ttl)
+    with ownership.own(page_number=page_number, wait_timeout=ownership_ttl) as lease:
+        return _generate_page_body_owned(
+            root,
+            page_number=page_number,
+            timeout=timeout,
+            max_candidates=max_candidates,
+            runner=runner,
+            reviewer=reviewer,
+            retry_sleep=retry_sleep,
+            retry_jitter=retry_jitter,
+            page_ownership=ownership,
+            ownership_lease=lease,
+        )
+
+
+def _generate_page_body_owned(
+    project: Path,
+    *,
+    page_number: int,
+    timeout: int,
+    max_candidates: int,
+    runner: Callable[[list[str], int], None],
+    reviewer: Callable[..., dict[str, Any]],
+    retry_sleep: Callable[[float], None] | None,
+    retry_jitter: Callable[[], float] | None,
+    page_ownership: ProjectPageOwnership,
+    ownership_lease: PageOwnershipLease,
+) -> dict[str, Any]:
     if max_candidates < 1:
         raise ValueError("max_candidates must be positive")
     max_candidates = min(max_candidates, _MAX_CANDIDATES)
@@ -659,6 +698,10 @@ def generate_page_body(
     project_gate = ProjectGenerationGate(
         root, profile=profile, stale_after=lease_ttl,
     )
+
+    def require_current_owner() -> None:
+        page_ownership.assert_current(ownership_lease)
+
     existing = _verified_existing_receipt(
         root,
         page_number,
@@ -681,6 +724,7 @@ def generate_page_body(
             *page["degraded_reasons"], "resumed_verified_generate_receipt",
         ]))
         page = transition_page(page, "accepted_fallback_first")
+        require_current_owner()
         update_page(root, page_number, page)
         return existing
     logo_name = Path(state["logo_source"]["path"]).stem
@@ -689,6 +733,7 @@ def generate_page_body(
 
     if page["state"] in {"prepared", "technical_failed"}:
         page = transition_page(page, "generating")
+    require_current_owner()
     update_page(root, page_number, page)
 
     candidates = []
@@ -697,9 +742,13 @@ def generate_page_body(
     degraded_reason = None
     feedback: list[str] | None = None
     for attempt in range(1, max_candidates + 1):
-        output = directory / f"page_{page_number:03d}.candidate_{attempt}.png"
-        prompt_file = directory / f"page_{page_number:03d}.candidate_{attempt}.prompt.txt"
-        trace = directory / f"page_{page_number:03d}.candidate_{attempt}.trace.json"
+        generation_marker = (
+            "" if ownership_lease.generation == 1
+            else f".generation_{ownership_lease.generation}"
+        )
+        output = directory / f"page_{page_number:03d}{generation_marker}.candidate_{attempt}.png"
+        prompt_file = directory / f"page_{page_number:03d}{generation_marker}.candidate_{attempt}.prompt.txt"
+        trace = directory / f"page_{page_number:03d}{generation_marker}.candidate_{attempt}.trace.json"
         request = ImageRequest(
             operation=initial_request.operation,
             quality=(
@@ -739,10 +788,12 @@ def generate_page_body(
                     sleep=retry_sleep,
                     jitter=retry_jitter,
                 )
+            require_current_owner()
         except Exception:
             if attempt == 1:
                 page["technical_failure"] = {"stage": "image2_generate", "attempt": attempt}
                 page = transition_page(page, "technical_failed")
+                require_current_owner()
                 update_page(root, page_number, page)
                 raise
             degraded_reason = "later_generation_failed"
@@ -754,6 +805,7 @@ def generate_page_body(
                     "reason": "missing_output",
                 }
                 page = transition_page(page, "technical_failed")
+                require_current_owner()
                 update_page(root, page_number, page)
                 raise RuntimeError("Image2 generate command produced no output")
             degraded_reason = "later_generation_missing_output"
@@ -780,6 +832,7 @@ def generate_page_body(
         except Exception:
             degraded_reason = "qa_unavailable"
             break
+        require_current_owner()
         candidate["qa"] = qa
         page["qa_attempts"] = attempt
         if attempt == 1:
@@ -817,6 +870,7 @@ def generate_page_body(
     else:
         page["selected_candidate"] = copy.deepcopy(selected)
         page = transition_page(page, "accepted")
+    require_current_owner()
     update_page(root, page_number, page)
     receipt = {
         "artifact_version": "image2-generate-v6",
@@ -831,5 +885,6 @@ def generate_page_body(
         "degraded_reasons": page["degraded_reasons"],
     }
     receipt_path = directory / f"page_{page_number:03d}.json"
+    require_current_owner()
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return receipt

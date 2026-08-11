@@ -32,7 +32,7 @@ from workflow_v6_image import (  # noqa: E402
 )
 from workflow_v6_state import create, load, save  # noqa: E402
 from workflow_v6_cli import _parser  # noqa: E402
-from adaptive_scheduler import SCHEDULER_STATE_FILE  # noqa: E402
+from adaptive_scheduler import PAGE_OWNERSHIP_STATE_FILE, SCHEDULER_STATE_FILE  # noqa: E402
 
 
 def _project(tmp_path: Path) -> Path:
@@ -1011,3 +1011,50 @@ def test_project_429_throttle_limits_subsequent_page_launches_and_preserves_comp
     assert page3_entered.is_set()
     assert load(project)["pages"][0] == page1_state_before
     assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before
+
+
+def test_same_page_waiter_resumes_owner_result_without_duplicate_candidate_or_receipt_write(
+    tmp_path: Path,
+):
+    project = _project(tmp_path)
+    owner_entered = threading.Event()
+    owner_release = threading.Event()
+    runner_calls = 0
+
+    def owner_runner(command, timeout):
+        nonlocal runner_calls
+        runner_calls += 1
+        owner_entered.set()
+        assert owner_release.wait(5)
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    reviewer = lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(
+            generate_page_body, project, page_number=1,
+            runner=owner_runner, reviewer=reviewer,
+        )
+        assert owner_entered.wait(5)
+        waiter = pool.submit(
+            generate_page_body, project, page_number=1,
+            runner=lambda *_args, **_kwargs: pytest.fail("same-page waiter must not run provider"),
+            reviewer=lambda *_args, **_kwargs: pytest.fail("same-page waiter must not run QA"),
+        )
+        assert not waiter.done()
+        owner_release.set()
+        owner_result = owner.result(timeout=10)
+        receipt_before_waiter_return = (project / "04_v6/images/page_001.json").read_bytes()
+        waiter_result = waiter.result(timeout=10)
+
+    assert runner_calls == 1
+    assert len(owner_result["candidates"]) == 1
+    assert waiter_result == owner_result
+    assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before_waiter_return
+    ownership_state = json.loads((project / PAGE_OWNERSHIP_STATE_FILE).read_text(encoding="utf-8"))
+    assert ownership_state["owners"] == {}

@@ -17,6 +17,8 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 PROFILE_CONCURRENCY = {"balanced": 2, "quality": 2, "speed": 3}
 SCHEDULER_STATE_FILE = "04_v6/generation_scheduler.json"
 SCHEDULER_ARTIFACT_VERSION = "v6-generation-scheduler-v1"
+PAGE_OWNERSHIP_STATE_FILE = "04_v6/generation_page_owners.json"
+PAGE_OWNERSHIP_ARTIFACT_VERSION = "v6-page-ownership-v1"
 
 
 def _status_code(error: BaseException) -> int | None:
@@ -182,6 +184,171 @@ class ProjectGenerationGate:
                 lease = state["leases"].get(lease_id)
                 if isinstance(lease, dict) and lease.get("owner") == lease_id:
                     del state["leases"][lease_id]
+                    changed = True
+                if changed:
+                    self._write(state)
+
+
+@dataclass(frozen=True)
+class PageOwnershipLease:
+    page_number: int
+    owner: str
+    generation: int
+
+
+class ProjectPageOwnership:
+    """Exclusive, fenced ownership of one complete page-generation transaction."""
+
+    def __init__(
+        self,
+        project: Path,
+        *,
+        stale_after: float = 7_200.0,
+        poll_interval: float = 0.05,
+    ) -> None:
+        if not isinstance(stale_after, (int, float)) or not 0 < float(stale_after) <= 86_400:
+            raise ValueError("stale_after must be between 0 and 86400 seconds")
+        if not isinstance(poll_interval, (int, float)) or not 0 < float(poll_interval) <= 1:
+            raise ValueError("poll_interval must be between 0 and 1 second")
+        self.project = Path(project).resolve()
+        self.path = self.project / PAGE_OWNERSHIP_STATE_FILE
+        self.stale_after = float(stale_after)
+        self.poll_interval = float(poll_interval)
+
+    @staticmethod
+    def _default_state() -> dict[str, Any]:
+        return {
+            "artifact_version": PAGE_OWNERSHIP_ARTIFACT_VERSION,
+            "next_generation": {},
+            "owners": {},
+        }
+
+    def _load(self) -> dict[str, Any]:
+        if not self.path.is_file():
+            return self._default_state()
+        value = json.loads(self.path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(value, dict)
+            or value.get("artifact_version") != PAGE_OWNERSHIP_ARTIFACT_VERSION
+            or not isinstance(value.get("next_generation"), dict)
+            or not isinstance(value.get("owners"), dict)
+        ):
+            raise ValueError("V6 page ownership state is invalid")
+        for page_key, generation in value["next_generation"].items():
+            if not str(page_key).isdigit() or int(page_key) < 1 or type(generation) is not int or generation < 0:
+                raise ValueError("V6 page ownership generation is invalid")
+        for page_key, owner in value["owners"].items():
+            if (
+                not str(page_key).isdigit()
+                or int(page_key) < 1
+                or not isinstance(owner, dict)
+                or not isinstance(owner.get("owner"), str)
+                or not 1 <= len(owner["owner"]) <= 96
+                or type(owner.get("generation")) is not int
+                or owner["generation"] < 1
+                or value["next_generation"].get(str(page_key), 0) < owner["generation"]
+                or not isinstance(owner.get("acquired_at"), (int, float))
+                or not math.isfinite(float(owner["acquired_at"]))
+            ):
+                raise ValueError("V6 page ownership owner is invalid")
+        return value
+
+    def _purge_stale(self, state: dict[str, Any], now: float) -> bool:
+        before = len(state["owners"])
+        state["owners"] = {
+            page_key: owner
+            for page_key, owner in state["owners"].items()
+            if -300.0 <= now - float(owner["acquired_at"]) <= self.stale_after
+        }
+        return len(state["owners"]) != before
+
+    def _write(self, state: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        try:
+            for attempt in range(10):
+                try:
+                    os.replace(temporary, self.path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def assert_current(self, lease: PageOwnershipLease, *, refresh: bool = True) -> None:
+        """Fence stale owners and optionally renew the current transaction heartbeat."""
+        from workflow_v6_state import mutation_lock
+
+        with mutation_lock(self.project):
+            state = self._load()
+            changed = self._purge_stale(state, time.time())
+            current = state["owners"].get(str(lease.page_number))
+            if not isinstance(current, dict) or (
+                current.get("owner") != lease.owner
+                or current.get("generation") != lease.generation
+            ):
+                if changed:
+                    self._write(state)
+                raise RuntimeError("V6 page ownership was superseded")
+            if refresh:
+                current["acquired_at"] = time.time()
+                changed = True
+            if changed:
+                self._write(state)
+
+    @contextmanager
+    def own(self, *, page_number: int, wait_timeout: float = 7_200.0):
+        from workflow_v6_state import mutation_lock
+
+        if type(page_number) is not int or page_number < 1:
+            raise ValueError("page_number must be positive")
+        if not isinstance(wait_timeout, (int, float)) or float(wait_timeout) <= 0:
+            raise ValueError("wait_timeout must be positive")
+        owner_id = f"{os.getpid()}-{uuid.uuid4().hex}"
+        page_key = str(page_number)
+        deadline = time.monotonic() + float(wait_timeout)
+        lease: PageOwnershipLease | None = None
+        while lease is None:
+            with mutation_lock(self.project):
+                now = time.time()
+                state = self._load()
+                changed = self._purge_stale(state, now)
+                if page_key not in state["owners"]:
+                    generation = int(state["next_generation"].get(page_key, 0)) + 1
+                    state["next_generation"][page_key] = generation
+                    state["owners"][page_key] = {
+                        "owner": owner_id,
+                        "generation": generation,
+                        "acquired_at": now,
+                    }
+                    lease = PageOwnershipLease(page_number, owner_id, generation)
+                    changed = True
+                if changed:
+                    self._write(state)
+            if lease is not None:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out waiting for V6 page ownership")
+            time.sleep(self.poll_interval)
+        try:
+            yield lease
+        finally:
+            with mutation_lock(self.project):
+                state = self._load()
+                changed = self._purge_stale(state, time.time())
+                current = state["owners"].get(page_key)
+                if isinstance(current, dict) and (
+                    current.get("owner") == lease.owner
+                    and current.get("generation") == lease.generation
+                ):
+                    del state["owners"][page_key]
                     changed = True
                 if changed:
                     self._write(state)

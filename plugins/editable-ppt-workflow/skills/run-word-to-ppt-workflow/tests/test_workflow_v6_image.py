@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -14,7 +15,13 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
-from workflow_v6_image import build_generate_command, build_prompt, generate_page_body  # noqa: E402
+from workflow_v6_image import (  # noqa: E402
+    ImageRequest,
+    build_image_command,
+    build_image_request,
+    build_prompt,
+    generate_page_body,
+)
 from workflow_v6_state import create, load, save  # noqa: E402
 
 
@@ -61,8 +68,73 @@ def _project(tmp_path: Path) -> Path:
     return project
 
 
-def test_generate_command_never_uses_edit_or_image_inputs(tmp_path: Path):
-    command = build_generate_command(
+def _confirmed_reference(path: Path, *, status: str = "available", digest: str | None = None, purpose: str = "evidence") -> dict:
+    return {
+        "reference_id": path.stem,
+        "status": status,
+        "model_input_path": str(path),
+        "purpose": purpose,
+        "integrity": {
+            "model_input_sha256": digest if digest is not None else hashlib.sha256(path.read_bytes()).hexdigest(),
+        },
+    }
+
+
+@pytest.mark.parametrize("count", [0, 1, 16])
+def test_image_request_selects_operation_from_readable_confirmed_images(tmp_path: Path, count: int):
+    references = []
+    for index in range(count):
+        path = tmp_path / f"reference-{index:02d}.png"
+        Image.new("RGB", (8, 4), (index, 20, 40)).save(path)
+        references.append(_confirmed_reference(path, purpose=f"role-{index:02d}"))
+
+    request = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": references},
+        visual_contract={"visual_style": "minimal"},
+    )
+
+    assert request.operation == ("generate" if count == 0 else "edit")
+    assert request.input_images == tuple(Path(item["model_input_path"]).resolve() for item in references)
+    assert request.image_roles == tuple(item["purpose"] for item in references)
+
+
+def test_invalid_confirmed_images_are_excluded_and_all_invalid_falls_back_to_generate(tmp_path: Path):
+    valid = tmp_path / "valid.png"
+    mismatch = tmp_path / "mismatch.png"
+    stale = tmp_path / "stale.png"
+    Image.new("RGB", (8, 4), "green").save(valid)
+    Image.new("RGB", (8, 4), "red").save(mismatch)
+    Image.new("RGB", (8, 4), "blue").save(stale)
+    missing = tmp_path / "missing.png"
+    unreadable = tmp_path / "directory-not-file"
+    unreadable.mkdir()
+    invalid = [
+        _confirmed_reference(mismatch, digest="0" * 64),
+        _confirmed_reference(stale, status="unavailable"),
+        {"reference_id": "missing", "status": "available", "model_input_path": str(missing), "purpose": "missing", "integrity": {"model_input_sha256": "1" * 64}},
+        {"reference_id": "unreadable", "status": "available", "model_input_path": str(unreadable), "purpose": "unreadable", "integrity": {"model_input_sha256": "2" * 64}},
+    ]
+
+    mixed = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": [_confirmed_reference(valid), *invalid]},
+        visual_contract={"visual_style": "minimal"},
+    )
+    fallback = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": invalid},
+        visual_contract={"visual_style": "minimal"},
+    )
+
+    assert mixed.operation == "edit"
+    assert mixed.input_images == (valid.resolve(),)
+    assert fallback.operation == "generate"
+    assert fallback.input_images == ()
+    assert fallback.image_roles == ()
+
+
+def test_image_command_uses_generate_without_image_inputs(tmp_path: Path):
+    request = ImageRequest("generate", "medium", "approved prompt", (), ())
+    command = build_image_command(
+        request,
         prompt_file=tmp_path / "prompt.txt",
         output=tmp_path / "out.png",
         trace=tmp_path / "trace.json",
@@ -71,6 +143,31 @@ def test_generate_command_never_uses_edit_or_image_inputs(tmp_path: Path):
     assert "edit" not in command
     assert "--image" not in command
     assert command[command.index("--size") + 1] == "1904x896"
+    assert command[command.index("--quality") + 1] == "medium"
+
+
+def test_image_command_uses_aligned_edit_inputs_and_roles(tmp_path: Path):
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    request = ImageRequest("edit", "high", "approved prompt", (first, second), ("logo", "screenshot"))
+
+    command = build_image_command(request, prompt_file=tmp_path / "prompt.txt", output=tmp_path / "out.png", trace=tmp_path / "trace.json")
+
+    assert command[2] == "edit"
+    assert [command[index + 1] for index, value in enumerate(command) if value == "--image"] == [str(first), str(second)]
+    assert [command[index + 1] for index, value in enumerate(command) if value == "--image-role"] == ["logo", "screenshot"]
+    assert command[command.index("--quality") + 1] == "high"
+
+
+@pytest.mark.parametrize("image_request", [
+    ImageRequest("edit", "medium", "prompt", (), ()),
+    ImageRequest("generate", "medium", "prompt", (Path("reference.png"),), ("evidence",)),
+    ImageRequest("edit", "medium", "prompt", (Path("reference.png"),), ()),
+    ImageRequest("unsupported", "medium", "prompt", (), ()),  # type: ignore[arg-type]
+    ImageRequest("generate", "unsupported", "prompt", (), ()),  # type: ignore[arg-type]
+])
+def test_image_command_rejects_operation_input_invariants(tmp_path: Path, image_request: ImageRequest):
+    with pytest.raises(ValueError, match="image|role|edit|generate|quality|operation"):
+        build_image_command(image_request, prompt_file=tmp_path / "prompt.txt", output=tmp_path / "out.png", trace=tmp_path / "trace.json")
 
 
 def test_prompt_separates_fixed_title_facts_and_visual_only_style():
@@ -154,6 +251,60 @@ def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path
     assert receipt["state"] == "accepted_fallback_first"
     assert "qa_no_effective_improvement" in receipt["degraded_reasons"]
     assert load(project)["pages"][0]["state"] == "accepted_fallback_first"
+
+
+def test_edit_retry_reuses_only_original_confirmed_inputs_never_candidate_one(tmp_path: Path):
+    project = _project(tmp_path)
+    model_input = project / "02_v6" / "reference_media" / "approved" / "model-input.png"
+    model_input.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 18), "navy").save(model_input)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"][0]["reference_images"] = [{
+        "reference_id": "approved",
+        "source": "attachment",
+        "purpose": "approved screenshot",
+        "preservation": "preserve",
+        "allow_crop": False,
+        "allow_restyle": False,
+        "status": "available",
+        "original_path": "02_v6/reference_media/approved/original.png",
+        "model_input_path": model_input.relative_to(project).as_posix(),
+        "thumbnail_path": "02_v6/reference_media/approved/thumbnail.png",
+        "source_url": None,
+        "integrity": {
+            "original_sha256": "0" * 64,
+            "model_input_sha256": hashlib.sha256(model_input.read_bytes()).hexdigest(),
+            "thumbnail_sha256": "1" * 64,
+        },
+    }]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    state = load(project)
+    state["confirmed_ui_digest"] = canonical_sha256(result)
+    save(project, state)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    reviews = iter([
+        {"accepted": False, "score": 3, "issues": ["improve composition"]},
+        {"accepted": True, "score": 6, "issues": []},
+    ])
+    generate_page_body(
+        project, page_number=1, max_candidates=2, runner=runner,
+        reviewer=lambda *_args, **_kwargs: next(reviews),
+    )
+
+    assert len(calls) == 2
+    for command in calls:
+        assert command[2] == "edit"
+        inputs = [Path(command[index + 1]) for index, value in enumerate(command) if value == "--image"]
+        assert inputs == [model_input.resolve()]
+        assert all("candidate_" not in str(path) for path in inputs)
 
 
 def test_generation_rejects_an_altered_live_confirmation_before_runner_or_qa(tmp_path: Path):

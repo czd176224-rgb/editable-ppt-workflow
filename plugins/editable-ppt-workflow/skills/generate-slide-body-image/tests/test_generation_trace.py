@@ -28,6 +28,7 @@ def test_explicit_edit_subcommand_writes_edit_trace_with_named_reference_images(
             sys.executable, str(SCRIPT), "edit", "--prompt", "test", "--dry-run",
             "--image", str(master), "--image-role", "approved_content_master",
             "--image", str(logo), "--image-role", "company_logo",
+            "--model", "gpt-image-2", "--size", "1904x896", "--quality", "high",
             "--out", str(output), "--trace-out", str(trace),
         ],
         capture_output=True,
@@ -39,6 +40,10 @@ def test_explicit_edit_subcommand_writes_edit_trace_with_named_reference_images(
     assert payload["operation"] == "edit"
     assert payload["endpoint"] == "images/edits"
     assert payload["auth"] == "not_authenticated_dry_run"
+    assert payload["model"] == "gpt-image-2"
+    assert payload["size"] == "1904x896"
+    assert payload["quality"] == "high"
+    assert "prompt" not in payload
     assert payload["input_images"] == [
         {"role": "approved_content_master", "path": str(master.resolve()), "sha256": hashlib.sha256(master.read_bytes()).hexdigest()},
         {"role": "company_logo", "path": str(logo.resolve()), "sha256": hashlib.sha256(logo.read_bytes()).hexdigest()},
@@ -82,7 +87,36 @@ def test_dry_run_writes_generation_trace_without_input_images(tmp_path: Path) ->
     assert payload["operation"] == "generate"
     assert payload["endpoint"] == "images/generations"
     assert payload["auth"] == "not_authenticated_dry_run"
+    assert payload["model"] == "gpt-image-2"
+    assert payload["size"] == "auto"
+    assert payload["quality"] == "auto"
+    assert "prompt" not in payload
     assert payload["input_images"] == []
+
+
+def test_edit_subcommand_requires_an_input_image(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "edit", "--prompt", "test", "--dry-run", "--out", str(tmp_path / "output.png")],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "requires at least one --image" in completed.stderr
+
+
+def test_edit_subcommand_rejects_more_than_sixteen_images(tmp_path: Path) -> None:
+    images = []
+    for index in range(17):
+        path = tmp_path / f"reference-{index:02d}.png"
+        Image.new("RGB", (2, 2), "white").save(path)
+        images.extend(["--image", str(path)])
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "edit", "--prompt", "test", "--dry-run", *images, "--out", str(tmp_path / "output.png")],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "At most 16" in completed.stderr
 
 
 def test_authenticated_trace_preserves_codex_oauth_proof(tmp_path: Path) -> None:
@@ -99,4 +133,3 @@ def test_authenticated_trace_preserves_codex_oauth_proof(tmp_path: Path) -> None
 
     payload = json.loads(trace.read_text(encoding="utf-8"))
     assert payload["auth"] == "codex_oauth"
-

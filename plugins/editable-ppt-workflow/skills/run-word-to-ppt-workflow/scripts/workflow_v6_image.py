@@ -1,14 +1,16 @@
-"""Generate and select V6 page bodies using gpt-image-2 generate only."""
+"""Generate and select V6 page bodies using authoritative gpt-image-2 requests."""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
@@ -22,6 +24,17 @@ IMAGE_CLI = (
 )
 QA_TIMEOUT_SECONDS = 180
 _PROMPT_LIMIT = 32_000
+
+
+@dataclass(frozen=True)
+class ImageRequest:
+    operation: Literal["generate", "edit"]
+    quality: Literal["medium", "high"]
+    prompt: str
+    input_images: tuple[Path, ...]
+    image_roles: tuple[str, ...]
+
+
 _MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
 
 
@@ -217,11 +230,77 @@ def build_prompt(
     )
 
 
-def build_generate_command(*, prompt_file: Path, output: Path, trace: Path) -> list[str]:
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def build_image_request(
+    *,
+    confirmed_page: Mapping[str, Any],
+    visual_contract: Mapping[str, Any],
+    qa_feedback: Sequence[str] = (),
+) -> ImageRequest:
+    """Resolve usable frozen references, then select the only valid operation."""
+    images: list[Path] = []
+    roles: list[str] = []
+    for reference in confirmed_page.get("reference_images", []):
+        if not isinstance(reference, Mapping) or reference.get("status") != "available":
+            continue
+        raw_path = reference.get("model_input_path")
+        integrity = reference.get("integrity")
+        expected = integrity.get("model_input_sha256") if isinstance(integrity, Mapping) else None
+        if not isinstance(raw_path, str) or not isinstance(expected, str):
+            continue
+        path = Path(raw_path).resolve()
+        try:
+            if not path.is_file() or _sha256(path) != expected:
+                continue
+        except OSError:
+            continue
+        role = reference.get("purpose")
+        if not isinstance(role, str) or not role.strip():
+            continue
+        images.append(path)
+        roles.append(role.strip())
+    if len(images) > 16:
+        raise ValueError("Image2 accepts at most 16 confirmed reference images")
+    prompt = build_prompt(
+        global_visual_contract=visual_contract,
+        confirmed_page=confirmed_page,
+        qa_feedback=list(qa_feedback),
+    )
+    return ImageRequest(
+        operation="edit" if images else "generate",
+        quality="medium",
+        prompt=prompt,
+        input_images=tuple(images),
+        image_roles=tuple(roles),
+    )
+
+
+def build_image_command(
+    request: ImageRequest, *, prompt_file: Path, output: Path, trace: Path,
+) -> list[str]:
+    if request.operation not in {"generate", "edit"}:
+        raise ValueError("Image2 operation must be generate or edit")
+    if request.quality not in {"medium", "high"}:
+        raise ValueError("Image2 quality must be medium or high")
+    if len(request.input_images) != len(request.image_roles):
+        raise ValueError("Image2 image roles must align with image inputs")
+    if len(request.input_images) > 16:
+        raise ValueError("Image2 accepts at most 16 image inputs")
+    if request.operation == "edit" and not request.input_images:
+        raise ValueError("Image2 edit requires at least one image input")
+    if request.operation == "generate" and request.input_images:
+        raise ValueError("Image2 generate cannot carry image inputs")
     command = [
         sys.executable,
         str(IMAGE_CLI),
-        "generate",
+        request.operation,
         "--prompt-file",
         str(prompt_file),
         "--out",
@@ -232,9 +311,11 @@ def build_generate_command(*, prompt_file: Path, output: Path, trace: Path) -> l
         "gpt-image-2",
         "--size",
         "1904x896",
+        "--quality",
+        request.quality,
     ]
-    if "edit" in command or "--image" in command:
-        raise AssertionError("V6 Image2 requests must be generate-only without image inputs")
+    for path, role in zip(request.input_images, request.image_roles):
+        command.extend(["--image", str(path), "--image-role", role])
     return command
 
 
@@ -244,6 +325,25 @@ def _run(command: list[str], timeout: int) -> None:
     )
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr or completed.stdout or "Image2 generation failed")
+
+
+def _with_project_reference_paths(root: Path, page: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve frozen project-relative model inputs without changing prompt semantics."""
+    resolved_page = copy.deepcopy(dict(page))
+    for reference in resolved_page.get("reference_images", []):
+        if not isinstance(reference, dict):
+            continue
+        raw = reference.get("model_input_path")
+        if not isinstance(raw, str):
+            continue
+        candidate = (root / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            reference["status"] = "unavailable"
+            continue
+        reference["model_input_path"] = str(candidate)
+    return resolved_page
 
 
 def _verified_existing_receipt(root: Path, page_number: int) -> dict[str, Any] | None:
@@ -324,6 +424,11 @@ def generate_page_body(
     logo_name = Path(state["logo_source"]["path"]).stem
     directory = root / "04_v6" / "images"
     directory.mkdir(parents=True, exist_ok=True)
+    request_page = _with_project_reference_paths(root, frozen_page)
+    initial_request = build_image_request(
+        confirmed_page=request_page,
+        visual_contract=global_contract,
+    )
 
     if page["state"] in {"prepared", "technical_failed"}:
         page = transition_page(page, "generating")
@@ -338,13 +443,20 @@ def generate_page_body(
         output = directory / f"page_{page_number:03d}.candidate_{attempt}.png"
         prompt_file = directory / f"page_{page_number:03d}.candidate_{attempt}.prompt.txt"
         trace = directory / f"page_{page_number:03d}.candidate_{attempt}.trace.json"
-        prompt_file.write_text(build_prompt(
-            global_visual_contract=global_contract,
-            confirmed_page=frozen_page,
-            qa_feedback=feedback,
-        ), encoding="utf-8")
+        request = ImageRequest(
+            operation=initial_request.operation,
+            quality=initial_request.quality,
+            prompt=build_prompt(
+                global_visual_contract=global_contract,
+                confirmed_page=frozen_page,
+                qa_feedback=feedback,
+            ),
+            input_images=initial_request.input_images,
+            image_roles=initial_request.image_roles,
+        )
+        prompt_file.write_text(request.prompt, encoding="utf-8")
         try:
-            runner(build_generate_command(prompt_file=prompt_file, output=output, trace=trace), timeout)
+            runner(build_image_command(request, prompt_file=prompt_file, output=output, trace=trace), timeout)
         except Exception:
             if attempt == 1:
                 page["technical_failure"] = {"stage": "image2_generate", "attempt": attempt}
@@ -358,7 +470,7 @@ def generate_page_body(
         candidate = {
             "attempt": attempt,
             "path": output.relative_to(root).as_posix(),
-            "operation": "generate",
+            "operation": request.operation,
         }
         candidates.append(candidate)
         if attempt == 1:

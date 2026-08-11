@@ -449,6 +449,8 @@ def write_generation_trace(
         "operation": operation,
         "endpoint": image_endpoint(operation),
         "model": model,
+        "size": str(getattr(args, "size", "auto")),
+        "quality": str(getattr(args, "quality", "auto")),
         "auth": "codex_oauth" if authenticated else "not_authenticated_dry_run",
         "input_images": [
             {"role": role, "path": str(Path(raw).resolve()), "sha256": file_sha256(Path(raw))}

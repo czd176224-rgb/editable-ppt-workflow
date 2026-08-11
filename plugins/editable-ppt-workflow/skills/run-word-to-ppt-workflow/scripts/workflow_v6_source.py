@@ -16,6 +16,7 @@ from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
 from build_page_contracts import split_page_title_body
 from workflow_v6_contract import new_page, new_project
+from workflow_v6_materials import new_page_materials, reference_image_from_source, validate_page_materials
 from workflow_v6_state import create
 from style_recommendations import _recommendations
 
@@ -214,8 +215,33 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             fixed_page_title=title,
             body_render_content=body_render_content,
         )
+        materials = new_page_materials(
+            page_number=page_number,
+            fixed_page_title=title,
+            word_original=text,
+            effective_body=body_render_content,
+        )
+        image_sources = [
+            reference for reference in references
+            if reference.get("kind") == "word_image"
+        ]
+        materials["reference_images"] = [
+            reference_image_from_source(reference, page_number=page_number, position=index)
+            for index, reference in enumerate(image_sources[:16], start=1)
+        ]
+        materials["attachment_extracts"] = [
+            dict(reference) for reference in references
+            if reference.get("kind") != "word_image"
+        ]
+        if len(image_sources) > 16:
+            materials["degradations"].append({
+                "code": "reference_image_limit_exceeded",
+                "detail": "Only the first 16 source images are available to Image2.",
+            })
+        validate_page_materials(materials, confirmed=False)
         _write_json(project / "02_v6" / "page_sources" / f"page_{page_number:03d}.json", page_source)
         _write_json(project / "02_v6" / "effective_pages" / f"page_{page_number:03d}.json", effective)
+        _write_json(project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json", materials)
         _write_json(project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json", {
             "artifact_version": "reference-materials-v6",
             "page_number": page_number,

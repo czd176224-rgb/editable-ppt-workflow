@@ -98,6 +98,9 @@ def new_project(
         "word_source": copy.deepcopy(dict(word_source)),
         "logo_source": copy.deepcopy(dict(logo_source)),
         "style_confirmation": {"status": "pending", "contract": None},
+        "confirmed_ui_revision": None,
+        "confirmed_ui_digest": None,
+        "page_materials_status": "pre_confirmation",
         "pages": [copy.deepcopy(dict(page)) for page in pages],
     }
     project["source_identity"] = canonical_sha256({
@@ -158,6 +161,9 @@ def validate_project(project: Mapping[str, Any]) -> None:
         "logo_source",
         "source_identity",
         "style_confirmation",
+        "confirmed_ui_revision",
+        "confirmed_ui_digest",
+        "page_materials_status",
         "pages",
     }
     if set(project) != required:
@@ -187,6 +193,18 @@ def validate_project(project: Mapping[str, Any]) -> None:
         raise ValueError("V6 style status is invalid")
     if style["status"] == "confirmed" and not isinstance(style["contract"], Mapping):
         raise ValueError("confirmed V6 style requires a contract")
+    revision = project["confirmed_ui_revision"]
+    digest = project["confirmed_ui_digest"]
+    materials_status = project["page_materials_status"]
+    if materials_status not in {"pre_confirmation", "confirmed"}:
+        raise ValueError("V6 page materials status is invalid")
+    if materials_status == "pre_confirmation" and (revision is not None or digest is not None):
+        raise ValueError("unconfirmed V6 materials cannot carry a confirmed UI revision")
+    if materials_status == "confirmed":
+        if type(revision) is not int or revision < 1:
+            raise ValueError("confirmed V6 materials require a positive UI revision")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError("confirmed V6 materials require a UI digest")
     pages = project["pages"]
     if not isinstance(pages, list) or not pages:
         raise ValueError("V6 project requires at least one page")

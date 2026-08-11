@@ -72,6 +72,15 @@ def test_initialize_v6_project_uses_explicit_word_pages_without_legacy_state(tmp
     assert "第一页正文" in page["word_original"]
     assert page["fixed_page_title"] == "第一页标题"
     assert page["body_render_content"] == "第一页正文"
+    materials = json.loads(
+        (project / "02_v6" / "page_materials" / "page_001.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert materials["fixed_page_title"] == "第一页标题"
+    assert materials["effective_body"] == "第一页正文"
+    assert materials["reference_images"] == []
+    assert state["page_materials_status"] == "pre_confirmation"
 
 
 def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):

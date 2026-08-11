@@ -6,6 +6,7 @@
   var dialog = document.getElementById("color-dialog");
   var catalogs = {};
   var recommendation = null;
+  var pageMaterials = [];
   var state = {};
   var step = 1;
   var customFields = new Set();
@@ -556,6 +557,30 @@
     board.appendChild(node("p", "requirement-boundary", "此处仅用于核对系统已理解的分页要求，不会产生分页审批，也不能修改Word事实、标题、Logo、页脚或页码。"));
     return board;
   }
+  function renderEditablePageMaterials() {
+    if (!pageMaterials.length) return null;
+    var board = node("section", "editable-page-materials");
+    board.append(node("p", "eyebrow", "IMAGE2 PAGE MATERIALS"), node("h3", "", "逐页编辑后一次性冻结"), node("p", "", "Word 原文和固定标题仅供核对；Image2 只接收下方的有效正文与已确认素材。"));
+    pageMaterials.forEach(function (page) {
+      var card = node("article", "editable-page-card");
+      card.append(node("h4", "", "第 " + page.page_number + " 页 · " + page.fixed_page_title));
+      var context = node("details", "page-context"); context.append(node("summary", "", "查看 Word 原文（仅上下文）"), node("pre", "", page.word_original)); card.appendChild(context);
+      var body = node("textarea", "text-input"); body.value = page.effective_body; body.addEventListener("input", function () { page.effective_body = body.value; }); card.appendChild(body);
+      card.append(requirementList("附件摘录", page.attachment_extracts.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("图表事实", page.chart_facts.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("图像要求", page.image_requirements.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("降级说明", page.degradations.map(function (x) { return JSON.stringify(x); }), "无"));
+      var refs = node("div", "reference-controls"); refs.appendChild(node("strong", "", "参考图像（" + page.reference_count + "）"));
+      if (page.reference_warning) refs.appendChild(node("p", "reference-warning " + page.reference_warning, page.reference_warning === "reject" ? "超过 16 张，不能提交" : (page.reference_warning === "strong" ? "11 张以上：强提示，请精简" : "7 张以上：请核对是否都必要")));
+      page.reference_images.forEach(function (ref) {
+        var item = node("div", "reference-control");
+        item.append(node("span", "", ref.purpose || ref.reference_id));
+        [["thumbnail_url", "缩略图"], ["original_url", "原始图"], ["model_input_url", "模型输入"]].forEach(function (entry) { var link = node("a", "", entry[1]); link.href = ref[entry[0]]; link.target = "_blank"; link.rel = "noreferrer"; item.appendChild(link); });
+        var purpose = node("input", "text-input"); purpose.value = ref.purpose || ""; purpose.addEventListener("input", function () { ref.purpose = purpose.value; }); item.appendChild(purpose);
+        ["allow_crop", "allow_restyle"].forEach(function (field) { var label = node("label", "toggle-row"); var check = node("input"); check.type = "checkbox"; check.checked = !!ref[field]; check.addEventListener("change", function () { ref[field] = check.checked; }); label.append(check, document.createTextNode(field === "allow_crop" ? "允许裁切" : "允许重风格")); item.appendChild(label); });
+        refs.appendChild(item);
+      });
+      card.appendChild(refs); board.appendChild(card);
+    });
+    return board;
+  }
   function renderContractStep(panel) {
     var intro = node("header", "page-intro");
     intro.append(node("p", "eyebrow", "STEP 03 · CONTRACT REVIEW"), node("h2", "", "确认视觉、生产与交付合同"), node("p", "", "这是唯一一次人工确认。确认后每页独立生成，但共同使用这份视觉合同和生产机制。"));
@@ -567,7 +592,9 @@
       specificationGroup("设计偏好", "Image2遵循这些方向，但仍可根据每页原文决定具体构图。", [["页面组织", layoutNames], ["构图倾向", optionName("composition_tendency", state.composition_tendency)], ["信息密度", optionName("information_density", state.information_density)], ["图片策略", optionName("image_usage_policy", state.image_usage_policy)]], "preference"),
       specificationGroup("您修改的内容", customFields.size ? "以下项目覆盖了模板默认值。" : "当前完整使用模板默认值。", customFields.size ? Array.from(customFields).map(function (field) { return [fieldLabel(field), "已自定义"]; }) : [["自定义项目", "无"]], "changed")
     );
-    panel.append(specification, renderPageRequirementSummary(), renderProductionProfiles());
+    panel.append(specification);
+    var materials = renderEditablePageMaterials(); if (materials) panel.appendChild(materials); else panel.appendChild(renderPageRequirementSummary());
+    panel.appendChild(renderProductionProfiles());
     var audit = node("details", "contract-sheet contract-audit"); audit.appendChild(node("summary", "", "展开完整合同字段"));
     var list = node("dl", "contract-list");
     list.append(summaryRow("背景体系", optionName("background_system", state.background_system), customFields.has("background_system")), summaryRow("构图倾向", optionName("composition_tendency", state.composition_tendency), customFields.has("composition_tendency")), summaryRow("图片策略", optionName("image_usage_policy", state.image_usage_policy), customFields.has("image_usage_policy")), summaryRow("品牌装置", optionName("brand_device", state.brand_device), customFields.has("brand_device")), summaryRow("页面组织", layoutNames, customFields.has("layout_preferences")), summaryRow("信息密度", optionName("information_density", state.information_density), customFields.has("information_density")), summaryRow("补充要求", state.additional_requirements.trim() || "无", customFields.has("additional_requirements")));
@@ -642,6 +669,15 @@
       production_profile: state.production_profile,
       additional_requirements: state.additional_requirements
     };
+    if (pageMaterials.length) {
+      payload.revision = state.confirmed_revision || 0;
+      payload.confirmed_pages = pageMaterials.map(function (page) { return {
+        page_number: page.page_number, effective_body: page.effective_body,
+        attachment_extracts: page.attachment_extracts, chart_facts: page.chart_facts,
+        image_requirements: page.image_requirements, degradations: page.degradations,
+        reference_images: page.reference_images.map(function (ref) { return { reference_id: ref.reference_id, purpose: ref.purpose, allow_crop: !!ref.allow_crop, allow_restyle: !!ref.allow_restyle, status: ref.status }; })
+      }; });
+    }
     requestJson("/api/confirm", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)}).then(function () {
       return requestJson("/api/v5/lifecycle").catch(function () { return {enabled: false}; });
     }).then(function (lifecycle) {
@@ -716,8 +752,9 @@
       renderProgress("视觉合同已经锁定，本次打开不会再次要求确认。");
       return null;
     }
-    return Promise.all([requestJson("/api/catalogs"), requestJson("/api/recommendations"), requestJson("/api/pages")]).then(function (values) {
+    return Promise.all([requestJson("/api/catalogs"), requestJson("/api/recommendations"), requestJson("/api/pages"), requestJson("/api/session")]).then(function (values) {
       catalogs = values[0]; recommendation = values[1];
+      pageMaterials = values[2].pages || []; state.confirmed_revision = values[3].revision || 0;
       if (String(recommendation.stage).toLowerCase() !== "final") throw new Error("项目尚未进入视觉合同确认阶段");
       initializeState(); renderFacts(); renderStep();
     });

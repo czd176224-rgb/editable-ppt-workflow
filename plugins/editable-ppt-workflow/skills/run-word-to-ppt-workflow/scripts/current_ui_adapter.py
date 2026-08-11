@@ -69,6 +69,11 @@ def adapt_current_ui_payload(
     """Map a known UI payload version to the existing style-confirmation projection."""
     if not isinstance(payload, Mapping):
         raise ValueError("Confirm UI payload must be an object")
+    # V6 freezes a complete UI revision.  Only its global visual contract is
+    # a style input; page materials stay separate and are never reinterpreted
+    # by the style compiler.
+    if payload.get("status") == "confirmed" and isinstance(payload.get("global_visual_contract"), Mapping):
+        return _current_result_v1(payload["global_visual_contract"])
     embedded = payload.get("ui_payload_version")
     effective_version = embedded if embedded is not None else payload_version
     if embedded is not None and embedded != payload_version:

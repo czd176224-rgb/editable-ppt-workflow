@@ -21,7 +21,7 @@ from workflow_v6_materials import (
     validate_page_materials,
 )
 from workflow_v6_media import normalize_reference
-from workflow_v6_state import create, mutation_lock
+from workflow_v6_state import create, load, mutation_lock
 from style_recommendations import _recommendations
 
 
@@ -32,6 +32,13 @@ _ATTACHMENT_TERMS = re.compile(r"(?:附件|附带文件|链接材料|链接附�
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _require_materials_mutable(project: Path) -> None:
+    """Reference selection is allowed only before the one final UI freeze."""
+    state = load(project)
+    if state.get("page_materials_status") == "confirmed":
+        raise ValueError("confirmed V6 page materials are frozen and cannot be changed downstream")
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -231,6 +238,7 @@ def import_reference(
 ) -> dict[str, Any]:
     """Confirm one locally supplied real-image result without dereferencing its URL."""
     project = Path(project).resolve()
+    _require_materials_mutable(project)
     if type(page_number) is not int or page_number < 1:
         raise ValueError("page_number must be a positive integer")
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", request_id):
@@ -284,6 +292,7 @@ def reject_reference(
 ) -> dict[str, Any]:
     """Reject the one locally persisted found candidate without searching again."""
     project = Path(project).resolve()
+    _require_materials_mutable(project)
     if type(page_number) is not int or page_number < 1:
         raise ValueError("page_number must be a positive integer")
     if not isinstance(request_id, str) or not request_id:
@@ -359,6 +368,7 @@ def confirm_reference(
 ) -> dict[str, Any]:
     """Confirm one intact found candidate into the V6 page material authority."""
     project = Path(project).resolve()
+    _require_materials_mutable(project)
     if type(page_number) is not int or page_number < 1:
         raise ValueError("page_number must be a positive integer")
     if not isinstance(request_id, str) or not request_id:
@@ -405,6 +415,7 @@ def fail_reference(
 ) -> dict[str, Any]:
     """Close an unavailable or rejected one-shot request without blocking the page."""
     project = Path(project).resolve()
+    _require_materials_mutable(project)
     if type(page_number) is not int or page_number < 1:
         raise ValueError("page_number must be a positive integer")
     if not isinstance(request_id, str) or not request_id:

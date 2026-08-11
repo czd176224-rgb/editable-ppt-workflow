@@ -344,6 +344,85 @@ def valid_one_screen_submission(direction: int = 0) -> dict:
     }
 
 
+def _v6_project_for_final_confirmation(tmp_path: Path) -> Path:
+    """Create the smallest real V6 project whose page materials are editable."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_contract import new_page, new_project
+    from workflow_v6_materials import new_page_materials
+    from workflow_v6_state import create
+
+    project = tmp_path / "v6-project"
+    create(project, new_project(
+        word_source={"path": "00_source/source.docx", "sha256": "a" * 64},
+        logo_source={"path": "00_source/logo.svg", "sha256": "b" * 64},
+        pages=[new_page(1, title="Fixed title")],
+    ))
+    materials = new_page_materials(
+        page_number=1,
+        fixed_page_title="Fixed title",
+        word_original="Fixed title\nOriginal context only",
+        effective_body="Editable material body",
+    )
+    materials.update({
+        "attachment_extracts": [{"attachment_id": "budget", "status": "available", "content": [{"amount": 42}]}],
+        "chart_facts": [{"title": "Growth", "series": [{"name": "2026", "value": 42}]}],
+        "image_requirements": [{"kind": "text_only", "concept": "timeline"}],
+        "degradations": [{"code": "attachment_unavailable", "detail": "Use a text summary."}],
+    })
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    material_path.parent.mkdir(parents=True)
+    material_path.write_text(json.dumps(materials, ensure_ascii=False), encoding="utf-8")
+    source_path = project / "02_v6" / "page_sources" / "page_001.json"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps({"word_original": materials["word_original"], "references": []}), encoding="utf-8")
+    (project / "confirm_ui").mkdir()
+    write_recommendations(project, one_screen_recommendations())
+    return project
+
+
+def test_v6_final_submission_freezes_one_complete_revision_and_rejects_stale_payloads(tmp_path: Path):
+    """Dropping any editable material or accepting a stale revision corrupts Image2 authority."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    client = server.create_app(project).test_client()
+
+    view = client.get("/api/pages").get_json()["pages"][0]
+    assert view["word_original"] == "Fixed title\nOriginal context only"
+    assert view["fixed_page_title"] == "Fixed title"
+    assert view["effective_body"] == "Editable material body"
+    payload = valid_one_screen_submission()
+    payload.update({
+        "revision": 0,
+        "confirmed_pages": [{
+            "page_number": 1,
+            "effective_body": "Reviewer-approved body",
+            "attachment_extracts": view["attachment_extracts"],
+            "chart_facts": view["chart_facts"],
+            "image_requirements": view["image_requirements"],
+            "degradations": view["degradations"],
+            "reference_images": [],
+        }],
+    })
+    first = client.post("/api/confirm", json=payload)
+    assert first.status_code == 200, first.get_json()
+    result = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert result["revision"] == 1
+    assert result["global_visual_contract"]["visual_style"] == "editorial"
+    assert result["confirmed_pages"][0]["effective_body"] == "Reviewer-approved body"
+    assert "word_original" not in result["confirmed_pages"][0]
+    assert "fixed_page_title" not in result["confirmed_pages"][0]
+
+    stale = client.post("/api/confirm", json=payload)
+    assert stale.status_code == 409
+    payload["revision"] = 1
+    payload["confirmed_pages"][0]["effective_body"] = "Reconfirmed body"
+    second = client.post("/api/confirm", json=payload)
+    assert second.status_code == 200, second.get_json()
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 2
+
+
 def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: Path):
     write_recommendations(project, one_screen_recommendations())
     server = load_server()
@@ -562,18 +641,20 @@ def test_tampered_page_requirement_summary_blocks_ui(project: Path):
     assert "seal" in response.get_json()["error"]
 
 
-def test_static_ui_renders_read_only_requirements_without_page_approval_controls(project: Path):
+def test_static_ui_keeps_one_final_submission_for_global_style_and_page_materials(project: Path):
     app_js = (ROOT / "scripts" / "confirm_ui" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "scripts" / "confirm_ui" / "static" / "index.html").read_text(encoding="utf-8")
 
     assert "pageRequirementSummary" in app_js
+    assert "renderEditablePageMaterials" in app_js
+    assert "confirmed_pages" in app_js
     assert "precedenceNotice" in app_js
     assert "detected-page-requirements" in app_js
     assert "只读" in app_js
     assert app_js.count('requestJson("/api/confirm"') == 1
     assert "page-approve" not in app_js
     assert "逐页确认" not in app_js
-    assert 'data-confirmation-scope="global-style-only"' in index_html
+    assert 'data-confirmation-scope="global-style-and-page-materials"' in index_html
 
 
 def test_one_screen_rejects_removed_4_by_3_canvas(project: Path):

@@ -287,6 +287,18 @@ textarea.text-input { min-height: 88px; margin-top: .8rem; resize: vertical; lin
 .requirement-list { margin: 5px 0 0; padding-left: 20px; }
 .requirement-empty { display: block; margin-top: 5px; color: #94a3b8; }
 .requirement-boundary, .requirement-empty-state { margin: 16px 0 0; color: #64748b; font-size: 13px; }
+.editable-page-materials { margin: 24px 0; padding: 22px; border: 1px solid #bfd0df; background: #f8fbfe; }
+.editable-page-materials h3 { margin: 4px 0 8px; }
+.editable-page-card { margin-top: 16px; padding: 16px; border: 1px solid #d6e0e8; background: #fff; }
+.editable-page-card h4 { margin: 0 0 10px; }
+.page-context { margin: 8px 0; color: #516174; font-size: 12px; }
+.page-context pre { max-height: 120px; overflow: auto; padding: 10px; white-space: pre-wrap; background: #f1f5f9; }
+.reference-controls { display: grid; gap: 8px; margin-top: 14px; }
+.reference-control { display: grid; grid-template-columns: minmax(120px, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid #d6e0e8; }
+.reference-control .text-input { grid-column: 1 / -1; }
+.reference-warning { margin: 0; padding: 8px; font-size: 12px; font-weight: 700; }
+.reference-warning.warning { color: #7c5a13; background: #fff8e7; }
+.reference-warning.strong, .reference-warning.reject { color: #8a2020; background: #fff0f0; }
 .progress-console {
   width: min(1040px, calc(100vw - 48px));
   margin: 38px auto 72px;

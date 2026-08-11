@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from workflow_v6_source import (
     reject_reference,
 )
 from workflow_v6_state import load, save
+from workflow_v6_materials import validate_page_materials
 
 
 def _emit(value: Any) -> None:
@@ -111,6 +113,25 @@ def main() -> int:
     elif args.command == "confirm-style":
         raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
         state = load(args.project)
+        if not isinstance(raw, dict) or raw.get("status") != "confirmed":
+            raise ValueError("confirm-style requires one confirmed UI revision")
+        if isinstance(raw.get("global_visual_contract"), dict):
+            revision = raw.get("revision")
+            pages = raw.get("confirmed_pages")
+            if type(revision) is not int or revision < 1 or not isinstance(pages, list):
+                raise ValueError("confirmed UI revision is incomplete")
+            if [item.get("page_number") for item in pages if isinstance(item, dict)] != list(range(1, len(state["pages"]) + 1)):
+                raise ValueError("confirmed UI pages are incomplete")
+            for page_number in range(1, len(state["pages"]) + 1):
+                material = json.loads((args.project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json").read_text(encoding="utf-8"))
+                validate_page_materials(material, confirmed=True)
+                if material.get("confirmed_revision") != revision:
+                    raise ValueError("page materials do not match the confirmed UI revision")
+            state["confirmed_ui_revision"] = revision
+            state["confirmed_ui_digest"] = hashlib.sha256(
+                json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            state["page_materials_status"] = "confirmed"
         state["style_confirmation"] = {
             "status": "confirmed",
             "contract": compile_style_execution(raw),

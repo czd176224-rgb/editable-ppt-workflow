@@ -49,7 +49,7 @@ from fixed_region_contract import (  # noqa: E402
 from style_contract import compile_style_execution, revise_style_contract  # noqa: E402
 from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: E402
 from workflow_v5_dag import DagStore  # noqa: E402
-from workflow_v6_media import resolve_project_media, validated_media_mime  # noqa: E402
+from workflow_v6_media import read_validated_project_media  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -890,14 +890,14 @@ def create_app(
             return jsonify({"error": "confirmation UI media ownership mismatch"}), 403
         path_value = relative_path or request.args.get("path")
         try:
-            path = resolve_project_media(project, path_value, variant=variant)
-            mime_type = validated_media_mime(path)
+            data, mime_type, path = read_validated_project_media(project, path_value, variant=variant)
         except (OSError, ValueError):
             return jsonify({"error": "media was not found"}), 404
-        response = Response(path.read_bytes(), mimetype=mime_type)
+        response = Response(data, mimetype=mime_type)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Disposition"] = f'attachment; filename="{path.name}"'
+        disposition = "attachment" if variant == "original" else "inline"
+        response.headers["Content-Disposition"] = f'{disposition}; filename="{path.name}"'
         return response
 
     @app.get("/api/recommendations")

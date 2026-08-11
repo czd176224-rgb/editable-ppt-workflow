@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
-import shutil
+import stat
+import subprocess
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
@@ -12,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Final
 from xml.etree import ElementTree
 
-from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageOps, UnidentifiedImageError
 
 
 MAX_ENCODED_BYTES: Final = 25 * 1024 * 1024
@@ -29,6 +31,11 @@ _SAFE_VARIANTS: Final = {
 }
 _REFERENCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
+_UNSAFE_SVG_TAGS = frozenset({"script", "image", "foreignobject", "iframe", "object", "embed", "link"})
+_BROWSER_PATHS = (
+    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+)
 
 # Enforce the V6 boundary consistently for every Pillow decode in this process.
 Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
@@ -48,6 +55,50 @@ class NormalizedReference:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return path.is_symlink() or bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
+
+
+def _safe_directory(project: Path, reference_id: str) -> Path:
+    root = Path(project).resolve()
+    for directory in (root, root / "02_v6", root / "02_v6" / "reference_media", root / "02_v6" / "reference_media" / reference_id):
+        if directory.exists():
+            if not directory.is_dir() or _is_link_or_reparse(directory):
+                raise ValueError("reference media output parent is a link, reparse point, or non-directory")
+            continue
+        directory.mkdir()
+        if _is_link_or_reparse(directory):
+            raise ValueError("reference media output parent is a link or reparse point")
+    return directory
+
+
+def _write_new(path: Path, data: bytes) -> None:
+    if _is_link_or_reparse(path) or path.exists():
+        raise ValueError("reference media output already exists or is unsafe")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+        finally:
+            raise
+
+
+def _image_bytes(image: Image.Image, *, image_format: str, **options: object) -> bytes:
+    output = BytesIO()
+    image.save(output, format=image_format, **options)
+    return output.getvalue()
 
 
 def _checked_size(width: int, height: int) -> None:
@@ -129,14 +180,28 @@ def _svg_color(value: str | None) -> str | None:
     return None
 
 
-def _safe_svg_raster(data: bytes) -> Image.Image:
+def _svg_canvas_size(root: ElementTree.Element) -> tuple[int, int]:
+    view_box = root.get("viewBox", "").replace(",", " ").split()
+    view_width = _svg_dimension(view_box[2]) if len(view_box) == 4 else None
+    view_height = _svg_dimension(view_box[3]) if len(view_box) == 4 else None
+    width = _svg_dimension(root.get("width")) if not str(root.get("width", "")).endswith("%") else None
+    height = _svg_dimension(root.get("height")) if not str(root.get("height", "")).endswith("%") else None
+    width = width or view_width
+    height = height or view_height
+    if width is None or height is None or width <= 0 or height <= 0:
+        raise ValueError("SVG requires numeric dimensions or a valid viewBox")
+    _checked_size(round(width), round(height))
+    return max(1, round(width)), max(1, round(height))
+
+
+def _safe_svg_root(data: bytes) -> tuple[ElementTree.Element, int, int]:
     if len(data) > MAX_ENCODED_BYTES:
         raise ValueError("image encoded size exceeds the limit")
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("SVG must be UTF-8") from exc
-    if re.search(r"<!DOCTYPE|<!ENTITY|<\s*script\b|\bon[a-z]+\s*=|\b(?:href|src)\s*=\s*['\"](?:https?:|//|file:|data:)", text, re.IGNORECASE):
+    if re.search(r"<!DOCTYPE|<!ENTITY|<\s*script\b|\bon[a-z]+\s*=", text, re.IGNORECASE):
         raise ValueError("SVG script or external resource is not allowed")
     try:
         root = ElementTree.fromstring(text)
@@ -144,40 +209,73 @@ def _safe_svg_raster(data: bytes) -> Image.Image:
         raise ValueError("SVG is malformed") from exc
     if root.tag.rsplit("}", 1)[-1].lower() != "svg":
         raise ValueError("SVG root is required")
-    width = _svg_dimension(root.get("width"))
-    height = _svg_dimension(root.get("height"))
-    view_box = root.get("viewBox", "").replace(",", " ").split()
-    if (width is None or height is None) and len(view_box) == 4:
-        width = width or _svg_dimension(view_box[2])
-        height = height or _svg_dimension(view_box[3])
-    if width is None or height is None or width <= 0 or height <= 0:
-        raise ValueError("SVG dimensions are required")
-    _checked_size(int(width), int(height))
-    scale = min(1.0, MODEL_MAX_EDGE / max(width, height))
-    canvas = Image.new("RGBA", (max(1, round(width * scale)), max(1, round(height * scale))), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(canvas)
     for element in root.iter():
         tag = element.tag.rsplit("}", 1)[-1].lower()
-        if tag in {"svg", "g", "defs", "title", "desc"}:
-            continue
-        if tag in {"script", "image", "use", "foreignobject", "iframe", "object", "embed", "link", "style"}:
+        if tag in _UNSAFE_SVG_TAGS or tag == "style":
             raise ValueError("SVG contains an unsafe or unsupported element")
-        fill = _svg_color(element.get("fill"))
-        if tag == "rect" and fill:
-            x, y = _svg_dimension(element.get("x")) or 0, _svg_dimension(element.get("y")) or 0
-            w, h = _svg_dimension(element.get("width")), _svg_dimension(element.get("height"))
-            if w is not None and h is not None and w >= 0 and h >= 0:
-                draw.rectangle((x * scale, y * scale, (x + w) * scale, (y + h) * scale), fill=fill)
-        elif tag == "circle" and fill:
-            cx, cy, radius = _svg_dimension(element.get("cx")) or 0, _svg_dimension(element.get("cy")) or 0, _svg_dimension(element.get("r"))
-            if radius is not None and radius >= 0:
-                draw.ellipse(((cx - radius) * scale, (cy - radius) * scale, (cx + radius) * scale, (cy + radius) * scale), fill=fill)
-        elif tag == "ellipse" and fill:
-            cx, cy = _svg_dimension(element.get("cx")) or 0, _svg_dimension(element.get("cy")) or 0
-            rx, ry = _svg_dimension(element.get("rx")), _svg_dimension(element.get("ry"))
-            if rx is not None and ry is not None and rx >= 0 and ry >= 0:
-                draw.ellipse(((cx - rx) * scale, (cy - ry) * scale, (cx + rx) * scale, (cy + ry) * scale), fill=fill)
-    return canvas
+        for attribute, value in element.attrib.items():
+            local_name = attribute.rsplit("}", 1)[-1].lower()
+            normalized = value.strip().lower()
+            if local_name in {"href", "src"} and not normalized.startswith("#"):
+                raise ValueError("SVG external resource is not allowed")
+            for target in re.findall(r"url\(\s*['\"]?([^'\")\s]+)['\"]?\s*\)", normalized):
+                if not target.startswith("#"):
+                    raise ValueError("SVG external resource is not allowed")
+    width, height = _svg_canvas_size(root)
+    return root, width, height
+
+
+def _browser_renderer() -> Path:
+    executable = next((path for path in _BROWSER_PATHS if path.is_file()), None)
+    if executable is None:
+        raise ValueError("a safe SVG renderer is unavailable")
+    return executable
+
+
+def _safe_svg_raster(data: bytes, destination: Path) -> Image.Image:
+    root, width, height = _safe_svg_root(data)
+    ElementTree.register_namespace("", "http://www.w3.org/2000/svg")
+    scale = min(1.0, MODEL_MAX_EDGE / max(width, height))
+    output_width, output_height = max(1, round(width * scale)), max(1, round(height * scale))
+    root.set("width", str(output_width))
+    root.set("height", str(output_height))
+    html = destination / ".safe-render.html"
+    output = destination / ".safe-render.png"
+    profile = destination / ".safe-render-profile"
+    if profile.exists() or _is_link_or_reparse(profile):
+        raise ValueError("SVG renderer profile output is unsafe")
+    profile.mkdir()
+    markup = (
+        "<!doctype html><meta charset=utf-8><style>html,body{margin:0;padding:0;overflow:hidden;}svg{display:block;}</style>"
+        + ElementTree.tostring(root, encoding="unicode")
+    ).encode("utf-8")
+    _write_new(html, markup)
+    try:
+        completed = subprocess.run(
+            [str(_browser_renderer()), "--headless=new", "--disable-gpu", "--disable-extensions", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--hide-scrollbars", "--allow-file-access-from-files", "--run-all-compositor-stages-before-draw", "--force-device-scale-factor=1", f"--user-data-dir={profile}", f"--window-size={output_width},{output_height}", f"--screenshot={output}", html.resolve().as_uri()],
+            check=False, capture_output=True, timeout=20,
+        )
+        if completed.returncode != 0 or not output.is_file() or _is_link_or_reparse(output):
+            raise ValueError("SVG could not be safely rasterized")
+        image, _mime_type = _open_raster(_read_file_limited(output))
+        white = Image.new("RGB", image.size, "white")
+        if image.size != (output_width, output_height) or ImageChops.difference(image.convert("RGB"), white).getbbox() is None:
+            raise ValueError("SVG renderer produced an invalid or blank preview")
+        return image
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("SVG could not be safely rasterized") from exc
+    finally:
+        for temporary in (html, output):
+            temporary.unlink(missing_ok=True)
+        if profile.exists() and not _is_link_or_reparse(profile):
+            for child in sorted(profile.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink(missing_ok=True)
+                elif child.is_dir() and not _is_link_or_reparse(child):
+                    child.rmdir()
+            profile.rmdir()
 
 
 def normalize_reference(project: Path, source: Path, *, reference_id: str, kind: str) -> NormalizedReference:
@@ -192,30 +290,29 @@ def normalize_reference(project: Path, source: Path, *, reference_id: str, kind:
         raise ValueError("reference image is unavailable or exceeds the encoded limit")
     data = source.read_bytes()
     is_svg = data.lstrip().startswith(b"<svg") or data.lstrip().startswith(b"<?xml") and b"<svg" in data[:1024]
+    destination = _safe_directory(project, reference_id)
     if is_svg:
         if kind != "logo":
             raise ValueError("SVG is only accepted for a logo reference")
-        image, mime_type = _safe_svg_raster(data), "image/svg+xml"
+        image, mime_type = _safe_svg_raster(data, destination), "image/svg+xml"
         original_suffix = ".svg"
     else:
         image, mime_type = _open_raster(data)
         original_suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/bmp": ".bmp"}[mime_type]
-    destination = project / Path(MEDIA_ROOT) / reference_id
-    destination.mkdir(parents=True, exist_ok=True)
     original = destination / f"original{original_suffix}"
-    shutil.copyfile(source, original)
+    _write_new(original, data)
     if kind == "photo":
         image = ImageOps.exif_transpose(image)
         model = _resized(_rgb(image), MODEL_MAX_EDGE)
         model_path = destination / "model-input.jpg"
-        model.save(model_path, format="JPEG", quality=90, optimize=True)
+        _write_new(model_path, _image_bytes(model, image_format="JPEG", quality=90, optimize=True))
     else:
         model = _resized(image, MODEL_MAX_EDGE)
         model_path = destination / "model-input.png"
-        model.save(model_path, format="PNG", optimize=False, compress_level=9)
+        _write_new(model_path, _image_bytes(model, image_format="PNG", optimize=False, compress_level=9))
     thumbnail = _resized(model, THUMBNAIL_MAX_EDGE)
     thumbnail_path = destination / "thumbnail.png"
-    thumbnail.save(thumbnail_path, format="PNG", optimize=False, compress_level=9)
+    _write_new(thumbnail_path, _image_bytes(thumbnail, image_format="PNG", optimize=False, compress_level=9))
     return NormalizedReference(
         original_path=_relative(project, original),
         thumbnail_path=_relative(project, thumbnail_path),
@@ -247,5 +344,34 @@ def resolve_project_media(project: Path, relative_path: str, *, variant: str) ->
 
 def validated_media_mime(path: Path) -> str:
     """Return a safe HTTP MIME only after the stored raster decodes cleanly."""
-    _image, mime_type = _open_raster(Path(path).read_bytes())
+    _image, mime_type = _open_raster(_read_file_limited(Path(path)))
     return mime_type
+
+
+def _read_file_limited(path: Path) -> bytes:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        expected = path.lstat()
+        with os.fdopen(descriptor, "rb") as handle:
+            actual = os.fstat(handle.fileno())
+            if not stat.S_ISREG(actual.st_mode) or not os.path.samestat(expected, actual):
+                raise ValueError("media file changed or is unsafe")
+            data = handle.read(MAX_ENCODED_BYTES + 1)
+    except Exception:
+        raise
+    if len(data) > MAX_ENCODED_BYTES:
+        raise ValueError("image encoded size exceeds the limit")
+    return data
+
+
+def read_validated_project_media(project: Path, relative_path: str, *, variant: str) -> tuple[bytes, str, Path]:
+    """Read, validate, and return one immutable-in-memory media response buffer."""
+    path = resolve_project_media(project, relative_path, variant=variant)
+    data = _read_file_limited(path)
+    _image, mime_type = _open_raster(data)
+    return data, mime_type, path

@@ -113,6 +113,48 @@ def test_svg_with_script_or_external_reference_is_rejected(tmp_path: Path):
             media.normalize_reference(tmp_path / "project", source, reference_id=name, kind="logo")
 
 
+def test_svg_external_paint_server_is_rejected_before_rendering(tmp_path: Path):
+    media = load_media()
+    source = tmp_path / "external-paint.svg"
+    source.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="url(#local) url(https://example.test/a.svg)"/></svg>', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="external"):
+        media.normalize_reference(tmp_path / "project", source, reference_id="external-paint", kind="logo")
+
+
+def test_svg_logo_uses_capable_renderer_for_viewbox_paths_transforms_and_gradients(tmp_path: Path):
+    media = load_media()
+    logo = tmp_path / "mark.svg"
+    logo.write_text(
+        '''<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="25%" viewBox="0 0 400 100">
+        <defs><linearGradient id="g"><stop offset="0" stop-color="#0055aa"/><stop offset="1" stop-color="#33cc88"/></linearGradient></defs>
+        <g transform="translate(10 10) scale(.8)"><path d="M0 0 L470 0 L430 100 L0 100 Z" fill="url(#g)" stroke="#112233" stroke-width="4"/></g>
+        <text x="40" y="70" fill="white" font-size="36">V6</text></svg>''',
+        encoding="utf-8",
+    )
+
+    result = media.normalize_reference(tmp_path / "project", logo, reference_id="wide-logo", kind="logo")
+
+    with Image.open(tmp_path / "project" / result.model_input_path) as actual:
+        assert actual.size[0] == actual.size[1] * 4
+        assert actual.convert("RGBA").getchannel("A").getbbox() is not None
+
+
+def test_normalize_rejects_a_linked_output_directory_before_copying_source(tmp_path: Path, monkeypatch):
+    media = load_media()
+    project = tmp_path / "project"
+    source = tmp_path / "source.png"
+    Image.new("RGB", (8, 4), "#336699").save(source, format="PNG")
+    destination = project / "02_v6" / "reference_media" / "link-test"
+    destination.mkdir(parents=True)
+    monkeypatch.setattr(media, "_is_link_or_reparse", lambda path: Path(path) == destination)
+
+    with pytest.raises(ValueError, match="link|reparse|safe"):
+        media.normalize_reference(project, source, reference_id="link-test", kind="screenshot")
+
+    assert list(destination.iterdir()) == []
+
+
 def test_project_media_resolution_rejects_traversal_and_symlink_escape(tmp_path: Path):
     media = load_media()
     project = tmp_path / "project"
@@ -176,3 +218,37 @@ def test_reference_import_keeps_acquisition_lifecycle_and_records_normalized_loc
     assert reference["thumbnail_path"].endswith("thumbnail.png")
     assert Path(reference["model_input_path"]).stem == "model-input"
     assert (project / reference["original_path"]).read_bytes() == image.read_bytes()
+
+
+def test_reference_import_namespaces_identical_request_ids_by_page(tmp_path: Path):
+    from workflow_v6_contract import new_page, new_project
+    from workflow_v6_materials import new_page_materials
+    from workflow_v6_source import import_reference
+    from workflow_v6_state import create
+    import json
+
+    project = tmp_path / "project"
+    create(project, new_project(
+        word_source={"path": "00_source/source.docx", "sha256": "a" * 64},
+        logo_source={"path": "00_source/logo.svg", "sha256": "b" * 64},
+        pages=[new_page(1, title="One"), new_page(2, title="Two")],
+    ))
+    for page in (1, 2):
+        materials = new_page_materials(page_number=page, fixed_page_title=str(page), word_original=str(page), effective_body="")
+        material_path = project / "02_v6/page_materials" / f"page_{page:03d}.json"
+        material_path.parent.mkdir(parents=True, exist_ok=True)
+        material_path.write_text(json.dumps(materials), encoding="utf-8")
+        receipt = {"artifact_version": "reference-materials-v6", "page_number": page, "references": [], "search_requests": [], "reference_acquisitions": [{"request_id": "same-request", "page_number": page, "purpose": "photo", "identity_evidence_need": "evidence", "status": "pending", "history": ["pending"]}]}
+        receipt_path = project / "02_v6/reference_materials" / f"page_{page:03d}.json"
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    Image.new("RGB", (12, 6), "#113355").save(first, format="PNG")
+    Image.new("RGB", (12, 6), "#aa6633").save(second, format="PNG")
+
+    one = import_reference(project, page_number=1, request_id="same-request", image=first, source_url=None)["candidate"]
+    two = import_reference(project, page_number=2, request_id="same-request", image=second, source_url=None)["candidate"]
+
+    assert one["local_path"] != two["local_path"]
+    assert one["sha256"] != two["sha256"]
+    assert "page-001" in one["local_path"] and "page-002" in two["local_path"]

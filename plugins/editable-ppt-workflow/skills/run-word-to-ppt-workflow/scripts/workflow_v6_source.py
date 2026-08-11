@@ -256,12 +256,12 @@ def import_reference(
         purpose = str(acquisition.get("purpose") or "found reference")
         kind = "logo" if image.suffix.lower() == ".svg" or "logo" in purpose.lower() else "screenshot" if "screenshot" in purpose.lower() else "photo"
         normalized = normalize_reference(
-            project, image, reference_id=f"acquisition-{request_id}", kind=kind,
+            project, image, reference_id=f"page-{page_number:03d}-acquisition-{request_id}", kind=kind,
         )
         thumbnail = project / normalized.thumbnail_path
         reference = reference_image_from_normalized(
             normalized,
-            reference_id=f"acquisition-{request_id}",
+            reference_id=f"page-{page_number:03d}-acquisition-{request_id}",
             source="external_url" if source_url else "attachment",
             purpose=purpose,
             source_url=source_url,

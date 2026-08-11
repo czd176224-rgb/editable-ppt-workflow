@@ -99,6 +99,61 @@ def test_media_endpoint_rejects_svg_html_and_project_path_escape(tmp_path: Path)
     assert client.get("/api/media/thumbnail/../workflow_run.json", headers=headers).status_code == 404
 
 
+def test_media_endpoint_returns_the_one_validated_buffer_and_uses_variant_dispositions(tmp_path: Path, monkeypatch):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    original = media_dir / "original.png"
+    thumbnail = media_dir / "thumbnail.png"
+    initial = Image.new("RGB", (3, 2), "#123456")
+    initial.save(original, format="PNG")
+    initial.save(thumbnail, format="PNG")
+    original_bytes = original.read_bytes()
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    import workflow_v6_media
+    real_decode = workflow_v6_media._open_raster
+    replaced = False
+
+    def replace_after_decode(data: bytes):
+        nonlocal replaced
+        decoded = real_decode(data)
+        if not replaced:
+            replaced = True
+            original.write_bytes(b"not the validated image")
+        return decoded
+
+    monkeypatch.setattr(workflow_v6_media, "_open_raster", replace_after_decode)
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+    headers = {"X-Confirm-Nonce": "n" * 32}
+
+    original_response = client.get("/api/media/original/02_v6/reference_media/ref/original.png", headers=headers)
+    thumbnail_response = client.get("/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png", headers=headers)
+
+    assert original_response.status_code == 200
+    assert original_response.data == original_bytes
+    assert original_response.headers["Content-Disposition"].startswith("attachment")
+    assert thumbnail_response.status_code == 200
+    assert thumbnail_response.headers["Content-Disposition"].startswith("inline")
+
+
+def test_media_endpoint_rejects_oversized_tampered_media(tmp_path: Path):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    (media_dir / "thumbnail.png").write_bytes(b"x" * (25 * 1024 * 1024 + 1))
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    response = client.get(
+        "/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png",
+        headers={"X-Confirm-Nonce": "n" * 32},
+    )
+
+    assert response.status_code == 404
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     project_dir = tmp_path / "project"

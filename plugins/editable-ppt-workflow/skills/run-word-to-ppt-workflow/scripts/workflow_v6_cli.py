@@ -14,7 +14,7 @@ from workflow_v6_reconstruction import (
     build_reconstruction_request,
     finalize_reconstructed_page,
 )
-from workflow_v6_source import fail_reference, import_reference, initialize_v6_project
+from workflow_v6_source import fail_reference, import_reference, initialize_v6_project, reject_reference
 from workflow_v6_state import load, save
 
 
@@ -83,6 +83,11 @@ def _parser() -> argparse.ArgumentParser:
     fail_ref.add_argument("--page", type=int, required=True)
     fail_ref.add_argument("--request-id", required=True)
     fail_ref.add_argument("--reason", required=True)
+    reject_ref = sub.add_parser("reject-reference", help="reject one found local real-image candidate")
+    reject_ref.add_argument("--project", type=Path, required=True)
+    reject_ref.add_argument("--page", type=int, required=True)
+    reject_ref.add_argument("--request-id", required=True)
+    reject_ref.add_argument("--reason", required=True)
     return parser
 
 
@@ -117,6 +122,11 @@ def main() -> int:
         ))
     elif args.command == "fail-reference":
         _emit(fail_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            reason=args.reason,
+        ))
+    elif args.command == "reject-reference":
+        _emit(reject_reference(
             args.project, page_number=args.page, request_id=args.request_id,
             reason=args.reason,
         ))

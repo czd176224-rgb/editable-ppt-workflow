@@ -18,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_source import compile_effective_page, initialize_v6_project  # noqa: E402
+import workflow_v6_source  # noqa: E402
 
 
 def _add_hyperlink(paragraph, url: str, text: str) -> None:
@@ -205,3 +206,100 @@ def test_initialize_v6_project_preserves_embedded_image_integrity_and_paths(tmp_
     assert reference["integrity"]["model_input_sha256"] == generation_input["sha256"]
     assert reference["thumbnail_path"] is None
     assert reference["integrity"]["thumbnail_sha256"] is None
+
+
+def test_initialize_v6_project_wires_source_chart_records_as_text_facts_only(tmp_path: Path, monkeypatch):
+    """Leaving extracted charts outside page materials would make chart_to_facts dead code."""
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("Page 1")
+    document.add_paragraph("Chart page")
+    document.add_paragraph("Narrative")
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    def extract_with_chart(_word, _pages, _output):
+        return {"assets": [], "chart_records": [{
+            "page_numbers": [1], "title": "Revenue trend", "unit": "USD m",
+            "series": [{"series": "Revenue", "time": "2025", "value": 20, "trend": "up"}],
+            "image_path": "must-not-persist.png",
+        }]}
+
+    monkeypatch.setattr(workflow_v6_source, "extract_source_assets", extract_with_chart)
+    monkeypatch.setattr(workflow_v6_source, "extract_auto", lambda *_args, **_kwargs: {
+        "pagination_mode": "marker", "pages": [{
+            "page_number": 1,
+            "blocks": [
+                {"type": "paragraph", "text": "Chart page", "source_block_index": 0},
+                {"type": "paragraph", "text": "Narrative", "source_block_index": 1},
+            ],
+            "page_comments": [],
+        }],
+    })
+    initialize_v6_project(word, logo, project)
+
+    materials = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))
+    assert materials["chart_facts"] == [{
+        "title": "Revenue trend", "unit": "USD m",
+        "series": [{"series": "Revenue", "time": "2025", "value": 20, "trend": "up"}],
+    }]
+    assert materials["reference_images"] == []
+
+
+def test_initialize_v6_project_uses_text_derivative_for_binary_attachment(tmp_path: Path, monkeypatch):
+    """Decoding an XLSX original as text would discard available extracted evidence."""
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("Page 1")
+    paragraph = document.add_paragraph("Attachment evidence")
+    document.add_comment(
+        [paragraph.runs[0]], "Use attachment workbook rows 2 fields Revenue.",
+        author="Reviewer", initials="RV",
+    )
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    def extract_with_workbook(_word, _pages, output):
+        original = output / "00_source/word_assets/original/workbook.xlsx"
+        derivative = output / "00_source/word_assets/derived/workbook.txt"
+        original.parent.mkdir(parents=True, exist_ok=True)
+        derivative.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(b"PK binary workbook")
+        derivative.write_text("header\nRevenue=20\n", encoding="utf-8")
+        return {"assets": [{
+            "asset_id": "workbook", "page_numbers": [1],
+            "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "relative_path": "00_source/word_assets/original/workbook.xlsx", "sha256": "a" * 64,
+            "generation_input": {
+                "relative_path": "00_source/word_assets/derived/workbook.txt", "sha256": "b" * 64,
+                "media_type": "text/plain", "derivation": "text_extraction",
+            },
+        }]}
+
+    monkeypatch.setattr(workflow_v6_source, "extract_source_assets", extract_with_workbook)
+    monkeypatch.setattr(workflow_v6_source, "extract_auto", lambda *_args, **_kwargs: {
+        "pagination_mode": "marker", "pages": [{
+            "page_number": 1,
+            "blocks": [
+                {"type": "paragraph", "text": "Attachment evidence", "source_block_index": 0},
+            ],
+            "page_comments": [{
+                "comment_id": "rows", "text": "Use attachment workbook rows 2 fields Revenue.",
+            }],
+        }],
+    })
+    initialize_v6_project(word, logo, project)
+
+    materials = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))
+    extracted = materials["attachment_extracts"][0]
+    assert extracted["status"] == "available"
+    assert extracted["content"] == ["Revenue=20"]
+    assert extracted["source_identity"] == {
+        "original_path": "01_source_assets/00_source/word_assets/original/workbook.xlsx",
+        "original_sha256": "a" * 64,
+    }
+    assert not any(item["code"] == "attachment_unavailable" for item in materials["degradations"])

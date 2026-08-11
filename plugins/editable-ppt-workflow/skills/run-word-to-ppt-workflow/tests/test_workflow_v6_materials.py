@@ -26,6 +26,7 @@ from workflow_v6_materials import (  # noqa: E402
     resolve_page_comments,
     validate_page_materials,
 )
+import workflow_v6_materials  # noqa: E402
 
 
 def _sha256(value: str) -> str:
@@ -495,6 +496,33 @@ def test_attachment_extraction_persists_only_comment_selected_rows_and_fields(tm
     assert extracted["receipt"] == extract_attachment_material(
         attachment=attachment, requirement=requirement,
     )["receipt"]
+
+
+def test_attachment_extraction_reuses_project_receipt_after_process_local_cache_is_cleared(
+    tmp_path: Path, monkeypatch,
+):
+    """A restart must reuse selected evidence without reparsing the unchanged attachment."""
+    attachment = tmp_path / "report.csv"
+    attachment.write_text("Revenue,Margin\n20,4\n", encoding="utf-8")
+    requirement = {
+        "attachment_id": "report", "selector": "selected_rows", "rows": [1],
+        "fields": ["Revenue"],
+    }
+    first = extract_attachment_material(
+        attachment=attachment, requirement=requirement, project=tmp_path,
+    )
+    workflow_v6_materials._ATTACHMENT_EXTRACTION_CACHE.clear()
+    monkeypatch.setattr(
+        workflow_v6_materials.csv, "DictReader",
+        lambda *_args, **_kwargs: pytest.fail("stable attachment was reparsed"),
+    )
+
+    second = extract_attachment_material(
+        attachment=attachment, requirement=requirement, project=tmp_path,
+    )
+
+    assert second == first
+    assert (tmp_path / "02_v6/attachment_extracts" / f"{first['receipt']}.json").is_file()
 
 
 def test_unavailable_attachment_is_a_non_blocking_editable_degradation(tmp_path: Path):

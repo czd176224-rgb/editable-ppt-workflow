@@ -17,7 +17,7 @@ from source_assets import extract_source_assets
 from build_page_contracts import split_page_title_body
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_materials import (
-    extract_attachment_material, new_page_materials, reference_image_from_source, resolve_page_comments,
+    chart_to_facts, extract_attachment_material, new_page_materials, reference_image_from_source, resolve_page_comments,
     validate_page_materials,
 )
 from workflow_v6_state import create, mutation_lock
@@ -92,7 +92,11 @@ def _asset_references(
         generation_input = asset.get("generation_input")
         status = "available" if isinstance(generation_input, Mapping) else "unavailable"
         reference = {
-            "kind": "word_image" if str(asset.get("media_type", "")).startswith("image/") else "attachment",
+            "kind": (
+                "word_image" if str(asset.get("media_type", "")).startswith("image/")
+                else "chart" if str(asset.get("media_type", "")).endswith("drawingml.chart+xml")
+                else "attachment"
+            ),
             "status": status,
             "purpose": "本页 Word 自带材料",
             "asset_id": asset.get("asset_id"),
@@ -180,6 +184,16 @@ def _reference_material_path(project: Path, page_number: int) -> Path:
     return Path(project).resolve() / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
 
 
+def _chart_records(manifest: Mapping[str, Any], page_number: int) -> list[dict[str, Any]]:
+    records = manifest.get("chart_records", manifest.get("charts", []))
+    if not isinstance(records, list):
+        return []
+    return [
+        dict(record) for record in records
+        if isinstance(record, Mapping) and page_number in record.get("page_numbers", [])
+    ]
+
+
 def _load_reference_materials(project: Path, page_number: int) -> tuple[dict[str, Any], dict[str, Any]]:
     material_path = _material_path(project, page_number)
     receipt_path = _reference_material_path(project, page_number)
@@ -247,7 +261,7 @@ def import_reference(
         reference = {
             "reference_id": f"acquisition-{request_id}",
             "source": "external_url" if source_url else "attachment",
-            "purpose": str(acquisition.get("purpose") or "confirmed reference"),
+            "purpose": str(acquisition.get("purpose") or "found reference"),
             "preservation": "reference_only",
             "allow_crop": True,
             "allow_restyle": False,
@@ -262,13 +276,44 @@ def import_reference(
                 "thumbnail_sha256": None,
             },
         }
-        materials["reference_images"].append(reference)
-        validate_page_materials(materials, confirmed=False)
-        acquisition["status"] = "confirmed"
-        history.append("confirmed")
+        acquisition["candidate"] = {
+            "local_path": relative,
+            "source_url": source_url,
+            "sha256": digest,
+            "reference": reference,
+        }
         _write_json(_material_path(project, page_number), materials)
         _write_json(_reference_material_path(project, page_number), receipt)
-    return {"page_number": page_number, "request_id": request_id, "status": "confirmed", "reference": reference}
+    return {"page_number": page_number, "request_id": request_id, "status": "found", "candidate": acquisition["candidate"]}
+
+
+def reject_reference(
+    project: Path, *, page_number: int, request_id: str, reason: str,
+) -> dict[str, Any]:
+    """Reject the one locally persisted found candidate without searching again."""
+    project = Path(project).resolve()
+    if type(page_number) is not int or page_number < 1:
+        raise ValueError("page_number must be a positive integer")
+    if not isinstance(request_id, str) or not request_id:
+        raise ValueError("request_id is required")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("rejection reason is required")
+    with mutation_lock(project):
+        materials, receipt = _load_reference_materials(project, page_number)
+        acquisition = _acquisition(receipt, request_id)
+        if acquisition.get("status") != "found":
+            raise ValueError("V6 reference request has no found candidate to reject")
+        acquisition["status"] = "user_rejected"
+        acquisition.setdefault("history", ["pending", "found"]).append("user_rejected")
+        acquisition["reason"] = reason.strip()
+        _append_degradation(
+            materials, code="reference_rejected",
+            detail=f"Reference request {request_id}: {reason.strip()}",
+        )
+        validate_page_materials(materials, confirmed=False)
+        _write_json(_material_path(project, page_number), materials)
+        _write_json(_reference_material_path(project, page_number), receipt)
+    return {"page_number": page_number, "request_id": request_id, "status": "user_rejected"}
 
 
 def fail_reference(
@@ -286,11 +331,9 @@ def fail_reference(
         materials, receipt = _load_reference_materials(project, page_number)
         acquisition = _acquisition(receipt, request_id)
         current_status = acquisition.get("status")
-        if current_status not in {"pending", "found"}:
+        if current_status != "pending":
             raise ValueError("V6 reference request is terminal and cannot be retried")
-        if current_status == "found" and reason.strip() != "user_rejected":
-            raise ValueError("a found V6 reference can only be user_rejected")
-        status = "user_rejected" if reason.strip() == "user_rejected" else "failed_no_retry"
+        status = "failed_no_retry"
         acquisition["status"] = status
         acquisition.setdefault("history", ["pending"]).append(status)
         acquisition["reason"] = reason.strip()
@@ -368,9 +411,12 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
                 "attachment_id": str(reference.get("asset_id") or f"attachment-{index:02d}"),
                 "source_kind": reference.get("kind"),
                 "original_path": reference.get("original_path"),
+                "original_sha256": reference.get("original_sha256"),
+                "model_input_path": reference.get("model_input_path"),
+                "model_input_sha256": reference.get("model_input_sha256"),
             }
             for index, reference in enumerate(references, start=1)
-            if reference.get("kind") != "word_image" and reference.get("status") == "available"
+            if reference.get("kind") in {"attachment", "attachment_link"} and reference.get("status") == "available"
         ]
         comment_resolution = resolve_page_comments(
             word_original=text,
@@ -397,11 +443,11 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
         }
         for requirement in comment_resolution.attachment_requirements:
             attachment = attachments_by_id.get(str(requirement["attachment_id"]))
-            path = attachment.get("original_path") if attachment else None
+            path = attachment.get("model_input_path") if attachment else None
             try:
                 extracted = extract_attachment_material(
                     attachment=project / path if isinstance(path, str) else project / "__unavailable_attachment__",
-                    requirement=requirement,
+                    requirement=requirement, project=project,
                 )
             except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
                 extracted = {
@@ -410,6 +456,11 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
                     "degradation": "Attachment unavailable; keep the page editable without its requested evidence.",
                 }
             extracted = {**dict(requirement), **extracted}
+            if attachment:
+                extracted["source_identity"] = {
+                    "original_path": attachment.get("original_path"),
+                    "original_sha256": attachment.get("original_sha256"),
+                }
             materials["attachment_extracts"].append(extracted)
             if extracted["status"] == "unavailable":
                 _append_degradation(
@@ -418,6 +469,9 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
                 )
         materials["image_requirements"] = [
             dict(requirement) for requirement in comment_resolution.image_requirements
+        ]
+        materials["chart_facts"] = [
+            chart_to_facts(chart) for chart in _chart_records(assets, page_number)
         ]
         materials["degradations"].extend(
             dict(degradation) for degradation in comment_resolution.degradations

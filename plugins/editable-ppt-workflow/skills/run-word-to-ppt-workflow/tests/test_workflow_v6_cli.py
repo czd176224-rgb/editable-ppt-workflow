@@ -12,7 +12,7 @@ if str(SCRIPTS) not in sys.path:
 import workflow_v6_cli  # noqa: E402
 from workflow_v6_contract import new_page, new_project  # noqa: E402
 from workflow_v6_materials import new_page_materials  # noqa: E402
-from workflow_v6_source import fail_reference, import_reference  # noqa: E402
+from workflow_v6_source import fail_reference, import_reference, reject_reference  # noqa: E402
 from workflow_v6_state import create  # noqa: E402
 
 
@@ -66,7 +66,7 @@ def test_v6_cli_does_not_import_legacy_workflows():
     assert "workflow_v5" not in source
 
 
-def test_cli_exposes_local_import_and_failure_commands_without_a_url_fetch():
+def test_cli_exposes_local_import_failure_and_found_rejection_commands_without_a_url_fetch():
     parser = workflow_v6_cli._parser()
 
     imported = parser.parse_args([
@@ -77,13 +77,18 @@ def test_cli_exposes_local_import_and_failure_commands_without_a_url_fetch():
         "fail-reference", "--project", "project", "--page", "1", "--request-id", "request-1",
         "--reason", "not found",
     ])
+    rejected = parser.parse_args([
+        "reject-reference", "--project", "project", "--page", "1", "--request-id", "request-1",
+        "--reason", "not suitable",
+    ])
 
     assert imported.command == "import-reference"
     assert imported.source_url == "http://127.0.0.1/private.png"
     assert failed.command == "fail-reference"
+    assert rejected.command == "reject-reference"
 
 
-def test_import_reference_records_pending_found_confirmed_and_treats_source_url_as_metadata(
+def test_import_reference_records_found_candidate_and_reject_api_closes_it_without_url_fetch(
     tmp_path: Path, monkeypatch,
 ):
     """Dereferencing a selected source URL here would reopen the Python SSRF surface."""
@@ -97,13 +102,17 @@ def test_import_reference_records_pending_found_confirmed_and_treats_source_url_
         source_url="http://127.0.0.1/private.png",
     )
 
-    assert result["status"] == "confirmed"
+    assert result["status"] == "found"
     receipt = json.loads((project / "02_v6/reference_materials/page_001.json").read_text(encoding="utf-8"))
     acquisition = receipt["reference_acquisitions"][0]
-    assert acquisition["history"] == ["pending", "found", "confirmed"]
+    assert acquisition["history"] == ["pending", "found"]
     material = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))
-    assert material["reference_images"][0]["source_url"] == "http://127.0.0.1/private.png"
-    assert material["reference_images"][0]["model_input_path"].startswith("02_v6/reference_images/")
+    assert material["reference_images"] == []
+    assert acquisition["candidate"]["source_url"] == "http://127.0.0.1/private.png"
+    assert acquisition["candidate"]["local_path"].startswith("02_v6/reference_images/")
+
+    rejected = reject_reference(project, page_number=1, request_id="request-1", reason="not suitable")
+    assert rejected["status"] == "user_rejected"
 
 
 def test_failed_no_retry_reference_refuses_a_second_result(tmp_path: Path):
@@ -122,12 +131,12 @@ def test_failed_no_retry_reference_refuses_a_second_result(tmp_path: Path):
 def test_found_reference_can_be_user_rejected_without_retrying_search(tmp_path: Path):
     """A reviewer rejection closes the found candidate rather than issuing another search."""
     project = _project_with_pending_reference(tmp_path)
+    image = tmp_path / "found.png"
+    image.write_bytes(b"found local image")
+    import_reference(project, page_number=1, request_id="request-1", image=image, source_url=None)
     receipt_path = project / "02_v6/reference_materials/page_001.json"
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["reference_acquisitions"][0].update(status="found", history=["pending", "found"])
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
 
-    result = fail_reference(project, page_number=1, request_id="request-1", reason="user_rejected")
+    result = reject_reference(project, page_number=1, request_id="request-1", reason="user_rejected")
 
     assert result["status"] == "user_rejected"
     saved = json.loads(receipt_path.read_text(encoding="utf-8"))

@@ -451,7 +451,7 @@ def new_page_materials(
 
 
 def extract_attachment_material(
-    *, attachment: Path, requirement: Mapping[str, Any],
+    *, attachment: Path, requirement: Mapping[str, Any], project: Path | None = None,
 ) -> dict[str, Any]:
     """Extract only the rows and fields a pre-UI attachment request selected."""
     attachment_id = requirement.get("attachment_id")
@@ -471,13 +471,30 @@ def extract_attachment_material(
     if not isinstance(fields, list) or any(not isinstance(field, str) or not field for field in fields):
         raise ValueError("attachment fields must be non-empty strings")
     source_bytes = path.read_bytes()
-    receipt = canonical_sha256({
+    requirement_digest = canonical_sha256({
         "attachment_id": attachment_id,
-        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "selector": requirement.get("selector", "selected_rows"),
         "rows": rows,
         "fields": fields,
     })
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    receipt = canonical_sha256({
+        "source_sha256": source_sha256,
+        "requirement_digest": requirement_digest,
+    })
+    receipt_path = None
+    if project is not None:
+        receipt_path = Path(project).resolve() / "02_v6" / "attachment_extracts" / f"{receipt}.json"
+        if receipt_path.is_file():
+            cached_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if (
+                isinstance(cached_receipt, Mapping)
+                and cached_receipt.get("receipt") == receipt
+                and cached_receipt.get("source_sha256") == source_sha256
+                and cached_receipt.get("requirement_digest") == requirement_digest
+                and isinstance(cached_receipt.get("result"), Mapping)
+            ):
+                return copy.deepcopy(dict(cached_receipt["result"]))
     cached = _ATTACHMENT_EXTRACTION_CACHE.get(receipt)
     if cached is not None:
         return copy.deepcopy(cached)
@@ -507,6 +524,16 @@ def extract_attachment_material(
         "receipt": receipt,
     }
     _ATTACHMENT_EXTRACTION_CACHE[receipt] = copy.deepcopy(result)
+    if receipt_path is not None:
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = receipt_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({
+            "receipt": receipt,
+            "source_sha256": source_sha256,
+            "requirement_digest": requirement_digest,
+            "result": result,
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(receipt_path)
     return result
 
 

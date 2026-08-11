@@ -3197,6 +3197,10 @@ def emit_reference_work_items(project: Path) -> list[dict[str, Any]]:
                         "workflow_v6_cli.py fail-reference --project <project> "
                         f"--page {page_number} --request-id {request_id} --reason <reason>"
                     ),
+                    "reject_reference": (
+                        "workflow_v6_cli.py reject-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --reason <reason>"
+                    ),
                 },
             })
     items = sorted(items, key=lambda item: (item["page_number"], item["request_id"]))

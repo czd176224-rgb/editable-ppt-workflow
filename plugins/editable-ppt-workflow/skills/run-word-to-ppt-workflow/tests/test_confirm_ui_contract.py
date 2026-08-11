@@ -219,6 +219,7 @@ def valid_one_screen_submission(direction: int = 0) -> dict:
         "background_system": "light",
         "image_role": {"role": "evidence", "proportion": "medium-low"},
         "evidence_strength": "data-case",
+        "image_usage_policy": "content-driven",
         "composition_tendency": "formal-consulting",
         "brand_device": "light",
         "production_profile": "balanced",
@@ -233,6 +234,21 @@ def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: 
     response = client.post("/api/confirm", json=valid_one_screen_submission())
 
     assert response.status_code == 200
+    result = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert result["image_usage_policy"] == "content-driven"
+
+
+def test_one_screen_rejects_a_per_page_image_quota_policy(project: Path):
+    write_recommendations(project, one_screen_recommendations())
+    server = load_server()
+    client = server.create_app(project).test_client()
+    payload = valid_one_screen_submission()
+    payload["image_usage_policy"] = "three-images-per-page"
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 400
+    assert "image_usage_policy" in response.get_json()["error"]
 
 
 @pytest.mark.parametrize(

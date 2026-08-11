@@ -21,7 +21,7 @@
   ];
   var fieldLabels = {
     background_system: "页面背景体系", composition_tendency: "页面构图倾向", evidence_strength: "证据表达强度",
-    brand_device: "品牌装置", image_role: "图像角色与占比", color: "语义配色", typography: "字体与字号",
+    brand_device: "品牌装置", image_role: "图像角色与占比", image_usage_policy: "图片使用策略", color: "语义配色", typography: "字体与字号",
     information_density: "信息密度", layout_preferences: "页面组织优先级", image_rendering: "图像表现方式",
     style_axes: "风格程度", regional_style: "地区特色", additional_requirements: "补充要求"
   };
@@ -144,6 +144,7 @@
     state.additional_requirements = recommended.additional_requirements || "";
     state.production_profile = recommended.production_profile || "balanced";
     applyPreset(preset.id, preset.substyles ? preset.substyles[0].id : null, false);
+    state.image_usage_policy = recommended.image_usage_policy || "content-driven";
   }
 
   function fixedRegionNotice() {
@@ -410,7 +411,7 @@
       ["正文", state.typography.body.cjk + " · " + state.typography.type_scale_pt.body + "pt"],
       ["密度", optionName("information_density", state.information_density)],
       ["构图", optionName("composition_tendency", state.composition_tendency)],
-      ["图片", optionName("image_role", state.image_role.role)],
+      ["图片", optionName("image_usage_policy", state.image_usage_policy)],
       ["已修改", customFields.size ? customFields.size + " 项" : "使用模板默认"]
     ].forEach(function (pair) { var row = node("div"); row.append(node("dt", "", pair[0]), node("dd", "", pair[1])); list.appendChild(row); });
     aside.appendChild(list);
@@ -443,12 +444,10 @@
       choiceCards("evidence_strength", "证据表达强度", "决定数据、案例、实物和来源在页面中的优先级。", state.evidence_strength, function (id) { state.evidence_strength = id; markCustom("evidence_strength"); renderStep(true); }, false),
       choiceCards("brand_device", "品牌装置强度", "控制页眉、品牌线条、页脚和背景纹理的存在感。", state.brand_device, function (id) { state.brand_device = id; markCustom("brand_device"); renderStep(true); }, false)
     );
-    var imageRole = section("图像角色与占比", "先确定图像在页面里承担什么作用，再确定大致占比。 ");
-    imageRole.append(
-      choiceCards("image_role", "图像角色", "", state.image_role.role, function (id) { state.image_role.role = id; markCustom("image_role"); renderStep(true); }, false).querySelector(".option-grid"),
-      choiceCards("image_proportion", "图像占比", "", state.image_role.proportion, function (id) { state.image_role.proportion = id; markCustom("image_role"); renderStep(true); }, false).querySelector(".option-grid")
+    form.append(
+      choiceCards("image_usage_policy", "图片使用策略", "这是跨页的使用边界，不会转换为每页图片数量要求。", state.image_usage_policy, function (id) { state.image_usage_policy = id; markCustom("image_usage_policy"); renderStep(true); }, false),
+      fixedRegionNotice(), colorControls(), typographyControls()
     );
-    form.append(imageRole, fixedRegionNotice(), colorControls(), typographyControls());
     form.append(choiceCards("information_density", "信息密度", "影响留白、字号和每页可承载的信息量。", state.information_density, function (id) { state.information_density = id; markCustom("information_density"); renderStep(true); }, false));
     form.append(choiceCards("layout_preferences", "页面组织优先级", "可多选；已选择的顺序就是优先级。", state.layout_preferences, function (id) {
       var index = state.layout_preferences.indexOf(id);
@@ -565,13 +564,13 @@
     var specification = node("div", "specification-board");
     specification.append(
       specificationGroup("已锁定", "固定框架每页面积和位置完全相同；正文区域共享同一视觉合同。", [["模板", state.template_selection.label + (state.template_selection.substyle_id ? " · " + optionSubstyleName() : "")], ["页面区域", "距左0.81 cm · 距上2.3 cm · 23.78 × 11.18 cm"], ["固定区域", "统一标题、右上角Logo、页脚、页码与留白"], ["标题颜色", state.color.palette.primary], ["标题字体", state.typography.heading.cjk + " · " + state.typography.type_scale_pt.page_title + "pt"], ["正文字体", state.typography.body.cjk + " · " + state.typography.type_scale_pt.body + "pt"]], "locked"),
-      specificationGroup("设计偏好", "Image2遵循这些方向，但仍可根据每页原文决定具体构图。", [["页面组织", layoutNames], ["构图倾向", optionName("composition_tendency", state.composition_tendency)], ["信息密度", optionName("information_density", state.information_density)], ["图片与证据", optionName("image_role", state.image_role.role) + " · " + optionName("evidence_strength", state.evidence_strength)]], "preference"),
+      specificationGroup("设计偏好", "Image2遵循这些方向，但仍可根据每页原文决定具体构图。", [["页面组织", layoutNames], ["构图倾向", optionName("composition_tendency", state.composition_tendency)], ["信息密度", optionName("information_density", state.information_density)], ["图片策略", optionName("image_usage_policy", state.image_usage_policy)]], "preference"),
       specificationGroup("您修改的内容", customFields.size ? "以下项目覆盖了模板默认值。" : "当前完整使用模板默认值。", customFields.size ? Array.from(customFields).map(function (field) { return [fieldLabel(field), "已自定义"]; }) : [["自定义项目", "无"]], "changed")
     );
     panel.append(specification, renderPageRequirementSummary(), renderProductionProfiles());
     var audit = node("details", "contract-sheet contract-audit"); audit.appendChild(node("summary", "", "展开完整合同字段"));
     var list = node("dl", "contract-list");
-    list.append(summaryRow("背景体系", optionName("background_system", state.background_system), customFields.has("background_system")), summaryRow("构图倾向", optionName("composition_tendency", state.composition_tendency), customFields.has("composition_tendency")), summaryRow("证据强度", optionName("evidence_strength", state.evidence_strength), customFields.has("evidence_strength")), summaryRow("图像角色", optionName("image_role", state.image_role.role) + " · 占比" + optionName("image_proportion", state.image_role.proportion), customFields.has("image_role")), summaryRow("品牌装置", optionName("brand_device", state.brand_device), customFields.has("brand_device")), summaryRow("页面组织", layoutNames, customFields.has("layout_preferences")), summaryRow("信息密度", optionName("information_density", state.information_density), customFields.has("information_density")), summaryRow("补充要求", state.additional_requirements.trim() || "无", customFields.has("additional_requirements")));
+    list.append(summaryRow("背景体系", optionName("background_system", state.background_system), customFields.has("background_system")), summaryRow("构图倾向", optionName("composition_tendency", state.composition_tendency), customFields.has("composition_tendency")), summaryRow("图片策略", optionName("image_usage_policy", state.image_usage_policy), customFields.has("image_usage_policy")), summaryRow("品牌装置", optionName("brand_device", state.brand_device), customFields.has("brand_device")), summaryRow("页面组织", layoutNames, customFields.has("layout_preferences")), summaryRow("信息密度", optionName("information_density", state.information_density), customFields.has("information_density")), summaryRow("补充要求", state.additional_requirements.trim() || "无", customFields.has("additional_requirements")));
     audit.appendChild(list); panel.appendChild(audit);
     var boundary = node("section", "contract-boundary");
     boundary.append(node("h3", "", "合同怎样参与生成"), node("p", "", "Image2接收完整UI视觉合同、本页完整原文和一条“不生成页面主标题”的硬约束，自由完成正文构图。程序精确生成固定标题、Logo、页脚、页码和留白；确认后系统连续执行，不再逐页询问。"));
@@ -638,6 +637,7 @@
       image_rendering: state.image_rendering, style_axes: state.style_axes, layout_preferences: state.layout_preferences,
       information_density: state.information_density, regional_style: state.regional_style,
       background_system: state.background_system, image_role: state.image_role, evidence_strength: state.evidence_strength,
+      image_usage_policy: state.image_usage_policy,
       composition_tendency: state.composition_tendency, brand_device: state.brand_device,
       production_profile: state.production_profile,
       additional_requirements: state.additional_requirements

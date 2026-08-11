@@ -161,6 +161,11 @@
   "image_proportion": [
     {"id":"low","name":"低"},{"id":"medium-low","name":"中低"},{"id":"medium","name":"中"},{"id":"high","name":"高"}
   ],
+  "image_usage_policy": [
+    {"id":"content-driven","name":"按页面内容决定（推荐）","note":"不强制每页有照片；只有批注或本页可用材料支持时才使用图像"},
+    {"id":"visual-preference","name":"偏视觉化表达","note":"允许克制概念插画，但不虚构新闻、会议、人物、企业或Logo照片"},
+    {"id":"source-only","name":"仅使用已有材料","note":"仅使用Word图片、可用附件和批注搜索材料，不新生成照片型素材"}
+  ],
   "evidence_strength": [
     {"id":"business","name":"普通商务","note":"观点与说明为主"},
     {"id":"data-case","name":"数据和案例优先","note":"优先呈现原文已有的数据与案例"},

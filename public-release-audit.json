@@ -4,7 +4,7 @@
   "releaseTag": "v2.0.3",
   "pluginVersion": "2.0.3",
   "workflowContractVersion": "word-ppt-workflow-v6",
-  "sourceManifestSha256": "7aa3e0fbd7e30e35d454fec49e3e37095be6d8e3a16656d120ebcc704dc0ca2a",
+  "sourceManifestSha256": "82fc66eafc690e84f73151d2ab9b9f20afc25e6d77f3ce644e9fd17bda1f34b9",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1582,7 +1582,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 59719,
-      "sha256": "7aa3e0fbd7e30e35d454fec49e3e37095be6d8e3a16656d120ebcc704dc0ca2a"
+      "sha256": "82fc66eafc690e84f73151d2ab9b9f20afc25e6d77f3ce644e9fd17bda1f34b9"
     },
     {
       "path": "README.md",
@@ -1632,7 +1632,7 @@
     {
       "path": "tests/test_install_receipt_state_machine.py",
       "bytes": 12315,
-      "sha256": "f4a7c241b76c811c4feef4a6cfe50947bac1a58a2d9e6920bdd5f4d623cec5b5"
+      "sha256": "8064e7debc8c0f1179f3bb47d3d11c4b65c5a9b24267066e536db3202a9f00d2"
     },
     {
       "path": "tests/test_public_distribution.py",
@@ -1642,7 +1642,7 @@
     {
       "path": "tests/test_release_hardening_v2.py",
       "bytes": 13017,
-      "sha256": "c0037ecd9f24d1019459b612c0d0b4cd474f701120517cf74c74d7be3918d5ca"
+      "sha256": "b66fa0c84cde677208eb67bf2398c4b4fa4d38eee6bb0fea9b6a979e063932de"
     },
     {
       "path": "tests/test_skill_role_names.py",

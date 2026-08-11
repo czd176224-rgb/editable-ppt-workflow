@@ -130,21 +130,164 @@ def test_comment_fact_change_builds_complete_body_without_reintroducing_fixed_ti
     assert result.image_requirements == ()
 
 
+def test_fact_change_preserves_unaffected_multi_paragraph_body():
+    """Replacing the whole body for one fact would discard surrounding Word content."""
+    result = resolve_page_comments(
+        word_original=(
+            "Growth strategy\n\nContext remains unchanged.\n\n"
+            "Revenue was 20%.\n\nClosing remains unchanged."
+        ),
+        fixed_page_title="Growth strategy",
+        comments=[{
+            "comment_id": "fact",
+            "text": "Change the revenue fact Revenue was 20% to Revenue was 30%.",
+        }],
+    )
+
+    assert result.effective_body == (
+        "Context remains unchanged.\n\nRevenue was 30%.\n\nClosing remains unchanged."
+    )
+
+
+@pytest.mark.parametrize(
+    "word_original, comment, expected_body",
+    [
+        (
+            "Title\n\nFirst paragraph.\n\nOld final paragraph.",
+            "Replace final body paragraph with Revised final paragraph.",
+            "First paragraph.\n\nRevised final paragraph.",
+        ),
+        (
+            "Title\n\n第一段保留。\n\n旧结论。",
+            "将正文最后一段替换为新结论。",
+            "第一段保留。\n\n新结论。",
+        ),
+        (
+            "Title\n\nIntro.\n\n| Metric | Value |\n| Revenue | 20% |\n\nClosing.",
+            "Replace the table with | Metric | Value |\n| Revenue | 30% |",
+            "Intro.\n\n| Metric | Value |\n| Revenue | 30% |\n\nClosing.",
+        ),
+    ],
+)
+def test_body_fact_and_table_comment_classes_apply_targeted_replacements(
+    word_original: str, comment: str, expected_body: str,
+):
+    """Ignoring one resolver-emitted Word class would leave that confirmed content stale."""
+    result = resolve_page_comments(
+        word_original=word_original,
+        fixed_page_title="Title",
+        comments=[{"comment_id": "change", "text": comment}],
+    )
+
+    assert result.effective_body == expected_body
+    assert result.degradations == ()
+
+
+@pytest.mark.parametrize(
+    "word_original, comment, expected_body",
+    [
+        (
+            "Title\n\n\u6536\u5165\u4e3a20%\u3002\n\n\u7ed3\u8bba\u4fdd\u7559\u3002",
+            "\u5c06\u6536\u5165\u4e3a20%\u6539\u4e3a\u6536\u5165\u4e3a30%\u3002",
+            "\u6536\u5165\u4e3a30%\u3002\n\n\u7ed3\u8bba\u4fdd\u7559\u3002",
+        ),
+        (
+            "Title\n\n\u5f00\u573a\u3002\n\n| \u6307\u6807 | \u6570\u503c |\n| \u6536\u5165 | 20% |\n\n\u7ed3\u5c3e\u3002",
+            "\u5c06\u8868\u683c\u66ff\u6362\u4e3a| \u6307\u6807 | \u6570\u503c |\n| \u6536\u5165 | 30% |",
+            "\u5f00\u573a\u3002\n\n| \u6307\u6807 | \u6570\u503c |\n| \u6536\u5165 | 30% |\n\n\u7ed3\u5c3e\u3002",
+        ),
+    ],
+)
+def test_chinese_fact_and_table_changes_are_targeted(
+    word_original: str, comment: str, expected_body: str,
+):
+    """Chinese change classes must preserve the same unaffected sections as English ones."""
+    result = resolve_page_comments(
+        word_original=word_original,
+        fixed_page_title="Title",
+        comments=[{"comment_id": "change", "text": comment}],
+    )
+
+    assert result.effective_body == expected_body
+    assert result.degradations == ()
+
+
+def test_ambiguous_word_change_degrades_without_discarding_source_body():
+    """A change directive lacking a replacement must not erase the original page content."""
+    result = resolve_page_comments(
+        word_original="Title\n\nRevenue was 20%.\n\nClosing remains.",
+        fixed_page_title="Title",
+        comments=[{"comment_id": "ambiguous", "text": "Change the revenue fact."}],
+    )
+
+    assert result.effective_body == "Revenue was 20%.\n\nClosing remains."
+    assert result.degradations == ({
+        "code": "unsupported_word_modification", "comment_id": "ambiguous",
+    },)
+
+
 def test_selected_attachment_rows_become_extraction_requirement_without_comment_prose():
     """Passing the reviewer prose to Image2 would bypass attachment extraction."""
     result = resolve_page_comments(
         word_original="Status update.",
         fixed_page_title="Status",
         comments=[{"comment_id": "rows", "text": "Use selected attachment rows as evidence."}],
+        available_attachments=[{"attachment_id": "report-a"}],
     )
 
     assert result.attachment_requirements == ({
         "comment_id": "rows",
-        "operation": "extract_selected_rows",
+        "attachment_id": "report-a",
+        "selector": "selected_rows",
+        "rows": [],
+        "fields": [],
     },)
     assert "Use selected attachment rows as evidence." not in str((
         result.effective_body, result.attachment_requirements, result.image_requirements,
     ))
+
+
+def test_attachment_request_preserves_selected_attachment_rows_and_fields():
+    """Using availability as a boolean would make Task 3 extract the wrong attachment rows."""
+    result = resolve_page_comments(
+        word_original="Status update.",
+        fixed_page_title="Status",
+        comments=[{
+            "comment_id": "rows",
+            "text": "Use attachment report-b rows 2, 4 fields Revenue, Margin.",
+        }],
+        available_attachments=[
+            {"attachment_id": "report-a", "fields": ["Revenue"]},
+            {"attachment_id": "report-b", "fields": ["Revenue", "Margin"]},
+        ],
+    )
+
+    assert result.attachment_requirements == ({
+        "comment_id": "rows",
+        "attachment_id": "report-b",
+        "selector": "selected_rows",
+        "rows": [2, 4],
+        "fields": ["Revenue", "Margin"],
+    },)
+
+
+def test_source_backed_request_preserves_resolver_query_and_material_identity():
+    """Dropping resolver identity would allow Task 3 to acquire the same evidence twice."""
+    result = resolve_page_comments(
+        word_original="Growth\n\nRevenue was 20%.",
+        fixed_page_title="Growth",
+        comments=[{"comment_id": "evidence", "text": "[search-evidence:growth evidence]"}],
+    )
+    expected_id = "search-request-" + hashlib.sha256(b"growth evidence").hexdigest()[:16]
+
+    assert result.image_requirements == ({
+        "kind": "reference_acquisition",
+        "mode": "one_shot",
+        "purpose": "source_backed_evidence",
+        "request_id": expected_id,
+        "material_id": expected_id,
+        "search_query": "growth evidence",
+    },)
 
 
 def test_real_person_photo_becomes_one_shot_reference_acquisition():

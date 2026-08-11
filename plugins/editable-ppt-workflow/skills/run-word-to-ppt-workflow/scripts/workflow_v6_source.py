@@ -231,8 +231,11 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             fixed_page_title=title,
             body_render_content=body_render_content,
         )
-        attachment_ids = [
-            str(reference.get("asset_id") or f"attachment-{index:02d}")
+        attachments = [
+            {
+                "attachment_id": str(reference.get("asset_id") or f"attachment-{index:02d}"),
+                "source_kind": reference.get("kind"),
+            }
             for index, reference in enumerate(references, start=1)
             if reference.get("kind") != "word_image" and reference.get("status") == "available"
         ]
@@ -240,7 +243,7 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             word_original=text,
             fixed_page_title=title,
             comments=page_source["comments"],
-            available_attachment_ids=attachment_ids,
+            available_attachments=attachments,
         )
         materials = new_page_materials(
             page_number=page_number,

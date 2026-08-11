@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from PIL import Image
 
 
@@ -14,6 +18,18 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_source import compile_effective_page, initialize_v6_project  # noqa: E402
+
+
+def _add_hyperlink(paragraph, url: str, text: str) -> None:
+    relationship_id = paragraph.part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), relationship_id)
+    run = OxmlElement("w:r")
+    value = OxmlElement("w:t")
+    value.text = text
+    run.append(value)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
 
 
 def test_comments_override_word_and_unavailable_attachment_invalidates_only_reference():
@@ -82,6 +98,60 @@ def test_initialize_v6_project_uses_explicit_word_pages_without_legacy_state(tmp
     assert materials["effective_body"] == "第一页正文"
     assert materials["reference_images"] == []
     assert state["page_materials_status"] == "pre_confirmation"
+
+
+def test_initialize_v6_project_compiles_comment_resolution_into_confirmed_materials(tmp_path: Path):
+    """Initialization must carry concrete pre-UI inputs without leaking reviewer prose to materials."""
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("第1页")
+    title = document.add_paragraph("Growth")
+    body = document.add_paragraph("Context remains. Revenue was 20%.")
+    closing = document.add_paragraph("Closing remains.")
+    link = document.add_paragraph()
+    _add_hyperlink(link, "https://example.test/report-b", "report-b")
+    document.add_comment(
+        [body.runs[0]],
+        "Change the revenue fact Revenue was 20% to Revenue was 30%.",
+        author="Reviewer",
+        initials="RV",
+    )
+    document.add_comment(
+        [closing.runs[0]],
+        "Use attachment attachment-01 rows 2, 4 fields Revenue, Margin.",
+        author="Reviewer",
+        initials="RV",
+    )
+    document.add_comment(
+        [title.runs[0]],
+        "[search-evidence:growth evidence]",
+        author="Reviewer",
+        initials="RV",
+    )
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    initialize_v6_project(word, logo, project)
+
+    materials = json.loads(
+        (project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8")
+    )
+    expected_id = "search-request-" + hashlib.sha256(b"growth evidence").hexdigest()[:16]
+    assert materials["effective_body"] == "Context remains. Revenue was 30%.\n\nClosing remains.\n\nreport-b"
+    assert {item["attachment_id"] for item in materials["attachment_extracts"] if "attachment_id" in item} == {"attachment-01"}
+    request = next(item for item in materials["attachment_extracts"] if item.get("attachment_id") == "attachment-01")
+    assert request["selector"] == "selected_rows"
+    assert request["rows"] == [2, 4]
+    assert request["fields"] == ["Revenue", "Margin"]
+    assert materials["image_requirements"] == [{
+        "kind": "reference_acquisition", "mode": "one_shot",
+        "purpose": "source_backed_evidence", "request_id": expected_id,
+        "material_id": expected_id, "search_query": "growth evidence",
+    }]
+    assert "Change the revenue fact" not in json.dumps(materials)
+    assert "Use attachment attachment-01" not in json.dumps(materials)
 
 
 def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):

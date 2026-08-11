@@ -595,6 +595,25 @@ def test_word_conflicts_preserve_the_audited_target(text, target):
     assert result.decisions[0]["target"] == target
 
 
+@pytest.mark.parametrize(
+    "text, target",
+    [
+        ("Change the revenue fact Revenue was 20% to Revenue was 30%.", "word.facts"),
+        ("Replace final body paragraph with Revised conclusion.", "word.body_text"),
+        ("将正文最后一段替换为新结论。", "word.body_text"),
+        ("将收入为20%改为收入为30%。", "word.facts"),
+        ("Replace the table with revised values.", "word.tables"),
+        ("将表格替换为修订数据。", "word.tables"),
+    ],
+)
+def test_word_change_classes_remain_deterministically_auditable(text: str, target: str):
+    """The V6 adapter relies on the resolver retaining the exact Word target class."""
+    result = resolve_comment_deterministically(text, page_context())
+
+    assert result is not None
+    assert result.decisions[0]["target"] == target
+
+
 def test_fact_change_exposes_the_replacement_text_to_pre_ui_compilation():
     """A fact decision without its replacement text could not produce a complete effective body."""
     result = resolve_comment_deterministically(

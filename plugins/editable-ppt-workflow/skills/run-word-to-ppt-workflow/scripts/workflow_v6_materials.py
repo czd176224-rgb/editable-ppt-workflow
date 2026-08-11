@@ -50,6 +50,20 @@ _FACT_REPLACEMENT = re.compile(
     r"(?:change|replace)\s+(?:the\s+)?(?:key\s+)?(?:fact|data)\s+(?:to|with)\s+(.+)$",
     re.IGNORECASE,
 )
+_FACT_FROM_TO = re.compile(
+    r"(?:change|replace)\s+(?:the\s+)?(?:[\w-]+\s+)?(?:fact|data)\s+"
+    r"(?P<old>.+?)\s+(?:to|with)\s+(?P<new>.+)$",
+    re.IGNORECASE,
+)
+_CHINESE_FROM_TO = re.compile(r"将(?P<old>.+?)(?:改为|替换为)(?P<new>.+)$")
+_FINAL_BODY_REPLACEMENT = re.compile(
+    r"(?:replace)\s+(?:the\s+)?final\s+body\s+paragraph\s+with\s+(?P<new>.+)$",
+    re.IGNORECASE,
+)
+_CHINESE_FINAL_BODY_REPLACEMENT = re.compile(r"正文最后一段替换为(?P<new>.+)$")
+_BODY_REPLACEMENT = re.compile(r"(?:replace)\s+(?:the\s+)?body\s+with\s+(?P<new>.+)$", re.IGNORECASE)
+_TABLE_REPLACEMENT = re.compile(r"(?:replace)\s+(?:the\s+)?table\s+with\s+(?P<new>.+)$", re.IGNORECASE | re.DOTALL)
+_CHINESE_TABLE_REPLACEMENT = re.compile(r"(?:将)?(?:表格).{0,24}(?:替换为|改为)(?P<new>.+)$", re.DOTALL)
 _PERSON_PHOTO = re.compile(
     r"(?:real\s+(?:photo|photograph)|(?:photo|photograph)\s+of)\s+(?:of\s+)?"
     r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
@@ -62,6 +76,9 @@ _ATTACHMENT_ROWS = re.compile(
     r"(?:selected\s+)?attachment\s+rows|(?:selected\s+)?rows\s+(?:from|in)\s+(?:the\s+)?attachment",
     re.IGNORECASE,
 )
+_NAMED_ATTACHMENT = re.compile(r"attachment +([A-Za-z0-9._-]+)", re.IGNORECASE)
+_ATTACHMENT_ROW_NUMBERS = re.compile(r"\brows?\s+([0-9][0-9,\s]*)", re.IGNORECASE)
+_ATTACHMENT_FIELDS = re.compile(r"\bfields?\s+([A-Za-z][A-Za-z0-9 _,-]*?)(?:[.;]|$)", re.IGNORECASE)
 _FIXED_TITLE_CHANGE = re.compile(
     r"(?:change|replace).{0,24}(?:title)|(?:title).{0,24}(?:change|replace)",
     re.IGNORECASE,
@@ -73,12 +90,18 @@ def _comment_id(comment: Mapping[str, Any], position: int) -> str:
     return str(value)
 
 
-def _fact_replacement(text: str) -> str | None:
+def _fact_replacement(text: str) -> tuple[str | None, str] | None:
+    from_to = _FACT_FROM_TO.search(text.strip()) or _CHINESE_FROM_TO.search(text.strip())
+    if from_to:
+        old = from_to.group("old").strip()
+        replacement = from_to.group("new").strip()
+        if old and replacement:
+            return old, replacement
     match = _FACT_REPLACEMENT.search(text.strip())
     if not match:
         return None
     replacement = match.group(1).strip()
-    return replacement or None
+    return (None, replacement) if replacement else None
 
 
 def _real_person_photo(text: str) -> str | None:
@@ -95,10 +118,108 @@ def _brand_logo(text: str) -> str | None:
     return match.group(1) or None
 
 
+def _paragraphs(value: str) -> list[str]:
+    return [paragraph for paragraph in re.split(r"\n\s*\n", value) if paragraph.strip()]
+
+
+def _replace_word_content(*, body: str, target: str, text: str) -> str | None:
+    """Apply a deterministic, localized Word change or return ``None`` if unclear."""
+    if target == "word.facts":
+        replacement = _fact_replacement(text)
+        if replacement is None:
+            return None
+        old, new = replacement
+        if old:
+            if new[-1:] in ".。!?！？" and old + new[-1] in body:
+                return body.replace(old + new[-1], new, 1)
+            return body.replace(old, new, 1) if old in body else None
+        paragraphs = _paragraphs(body)
+        return new if len(paragraphs) == 1 else None
+    if target == "word.body_text":
+        final = _FINAL_BODY_REPLACEMENT.search(text) or _CHINESE_FINAL_BODY_REPLACEMENT.search(text)
+        if final:
+            paragraphs = _paragraphs(body)
+            replacement = final.group("new").strip()
+            if not paragraphs or not replacement:
+                return None
+            paragraphs[-1] = replacement
+            return "\n\n".join(paragraphs)
+        whole = _BODY_REPLACEMENT.search(text)
+        return whole.group("new").strip() if whole and whole.group("new").strip() else None
+    if target == "word.tables":
+        match = _TABLE_REPLACEMENT.search(text) or _CHINESE_TABLE_REPLACEMENT.search(text)
+        if not match or not match.group("new").strip():
+            return None
+        paragraphs = _paragraphs(body)
+        table_index = next(
+            (index for index, paragraph in enumerate(paragraphs) if "|" in paragraph), None,
+        )
+        if table_index is None:
+            return None
+        paragraphs[table_index] = match.group("new").strip()
+        return "\n\n".join(paragraphs)
+    return None
+
+
+def _available_attachments(
+    *,
+    available_attachment_ids: Sequence[str] | None,
+    available_attachments: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if available_attachments is not None:
+        if any(not isinstance(item, Mapping) for item in available_attachments):
+            raise ValueError("available attachments must be objects")
+        normalized = [dict(item) for item in available_attachments]
+    else:
+        normalized = [{"attachment_id": value} for value in (available_attachment_ids or ())]
+    for item in normalized:
+        attachment_id = item.get("attachment_id")
+        if not isinstance(attachment_id, str) or not attachment_id:
+            raise ValueError("available attachment ids must be non-empty strings")
+    return normalized
+
+
+def _attachment_requirement(
+    *, text: str, comment_id: str, available_attachments: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    normalized = text.lower()
+    explicit_ids = [str(item["attachment_id"]) for item in available_attachments if str(item["attachment_id"]).lower() in normalized]
+    named = _NAMED_ATTACHMENT.search(text)
+    if named and named.group(1) not in explicit_ids:
+        explicit_ids.append(named.group(1))
+    attachment_id = next(
+        (
+            str(item["attachment_id"])
+            for item in available_attachments
+            if str(item["attachment_id"]) in explicit_ids
+        ),
+        None,
+    )
+    if attachment_id is None and len(available_attachments) == 1:
+        attachment_id = str(available_attachments[0]["attachment_id"])
+    if attachment_id is None:
+        return None
+    rows_match = _ATTACHMENT_ROW_NUMBERS.search(text)
+    rows = [int(value) for value in re.findall(r"\d+", rows_match.group(1))] if rows_match else []
+    fields_match = _ATTACHMENT_FIELDS.search(text)
+    fields = (
+        [value.strip() for value in fields_match.group(1).split(",") if value.strip()]
+        if fields_match else []
+    )
+    return {
+        "comment_id": comment_id,
+        "attachment_id": attachment_id,
+        "selector": "selected_rows",
+        "rows": rows,
+        "fields": fields,
+    }
+
+
 def resolve_page_comments(
     *, word_original: str, fixed_page_title: str,
     comments: Sequence[Mapping[str, Any]],
     available_attachment_ids: Sequence[str] | None = None,
+    available_attachments: Sequence[Mapping[str, Any]] | None = None,
 ) -> CommentResolution:
     """Compile Word comments into body changes and concrete material requirements.
 
@@ -110,10 +231,10 @@ def resolve_page_comments(
         raise ValueError("Word content and fixed page title must be strings")
     if not isinstance(comments, Sequence) or isinstance(comments, (str, bytes)):
         raise ValueError("comments must be a sequence")
-    if available_attachment_ids is not None and any(
-        not isinstance(value, str) or not value for value in available_attachment_ids
-    ):
-        raise ValueError("available attachment ids must be non-empty strings")
+    attachments = _available_attachments(
+        available_attachment_ids=available_attachment_ids,
+        available_attachments=available_attachments,
+    )
 
     effective_body = _remove_duplicated_title(
         fixed_page_title=fixed_page_title.strip(),
@@ -154,14 +275,16 @@ def resolve_page_comments(
                 "visual": "logo",
             })
             continue
-        if _ATTACHMENT_ROWS.search(normalized):
-            if available_attachment_ids == []:
+        if _ATTACHMENT_ROWS.search(normalized) or (
+            "attachment" in normalized.lower() and "row" in normalized.lower()
+        ):
+            requirement = _attachment_requirement(
+                text=normalized, comment_id=comment_id, available_attachments=attachments,
+            )
+            if requirement is None:
                 degradations.append({"code": "attachment_unavailable", "comment_id": comment_id})
             else:
-                attachment_requirements.append({
-                    "comment_id": comment_id,
-                    "operation": "extract_selected_rows",
-                })
+                attachment_requirements.append(requirement)
             continue
         if _FIXED_TITLE_CHANGE.search(normalized):
             degradations.append({"code": "unsupported_fixed_layer_request", "comment_id": comment_id})
@@ -187,24 +310,48 @@ def resolve_page_comments(
         if any(target.startswith("fixed.") for target in targets):
             degradations.append({"code": "unsupported_fixed_layer_request", "comment_id": comment_id})
             continue
-        if "word.facts" in targets or "word.body_text" in targets or "word.tables" in targets:
-            replacement = _fact_replacement(normalized)
+        word_target = next(
+            (target for target in ("word.facts", "word.body_text", "word.tables") if target in targets),
+            None,
+        )
+        if word_target:
+            replacement = _replace_word_content(
+                body=effective_body, target=word_target, text=normalized,
+            )
             if replacement:
                 effective_body = replacement
             else:
                 degradations.append({"code": "unsupported_word_modification", "comment_id": comment_id})
             continue
         if directive.kind == "attachment_reference":
-            if available_attachment_ids == []:
+            requirement = _attachment_requirement(
+                text=normalized, comment_id=comment_id, available_attachments=attachments,
+            )
+            if requirement is None:
                 degradations.append({"code": "attachment_unavailable", "comment_id": comment_id})
             else:
-                attachment_requirements.append({"comment_id": comment_id, "operation": "extract_attachment"})
+                attachment_requirements.append(requirement)
             continue
         if directive.kind == "external_image":
+            material_id = next(
+                (
+                    str(decision["material_id"])
+                    for decision in directive.decisions
+                    if decision.get("target") == "material.search_evidence"
+                    and isinstance(decision.get("material_id"), str)
+                ),
+                None,
+            )
+            if not material_id or not directive.search_query:
+                degradations.append({"code": "unsupported_evidence_request", "comment_id": comment_id})
+                continue
             image_requirements.append({
                 "kind": "reference_acquisition",
                 "mode": "one_shot",
                 "purpose": "source_backed_evidence",
+                "request_id": material_id,
+                "material_id": material_id,
+                "search_query": directive.search_query,
             })
             continue
         if directive.visual_overrides:

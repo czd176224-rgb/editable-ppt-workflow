@@ -5,7 +5,9 @@ import hashlib
 import struct
 import subprocess
 import sys
+import threading
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
@@ -30,6 +32,7 @@ from workflow_v6_image import (  # noqa: E402
 )
 from workflow_v6_state import create, load, save  # noqa: E402
 from workflow_v6_cli import _parser  # noqa: E402
+from adaptive_scheduler import SCHEDULER_STATE_FILE  # noqa: E402
 
 
 def _project(tmp_path: Path) -> Path:
@@ -85,6 +88,31 @@ def _confirmed_reference(path: Path, *, status: str = "available", digest: str |
             "model_input_sha256": digest if digest is not None else hashlib.sha256(path.read_bytes()).hexdigest(),
         },
     }
+
+
+def _multi_page_project(tmp_path: Path, page_count: int = 3) -> Path:
+    project = _project(tmp_path)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"] = [
+        {
+            "page_number": number,
+            "effective_body": f"Approved page {number}",
+            "attachment_extracts": [],
+            "chart_facts": [],
+            "image_requirements": [],
+            "degradations": [],
+            "reference_images": [],
+            "reference_decisions": [],
+        }
+        for number in range(1, page_count + 1)
+    ]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    state = load(project)
+    state["pages"] = [new_page(number, title=f"Page {number}") for number in range(1, page_count + 1)]
+    state["confirmed_ui_digest"] = canonical_sha256(result)
+    save(project, state)
+    return project
 
 
 @pytest.mark.parametrize(
@@ -857,7 +885,7 @@ def test_completed_page_with_verified_receipt_is_never_regenerated(tmp_path: Pat
         project, page_number=1, runner=runner,
         reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
     )
-    state_before = (project / "workflow_v6.json").read_bytes()
+    page1_state_before = load(project)["pages"][0]
     receipt_before = (project / "04_v6/images/page_001.json").read_bytes()
 
     resumed = generate_page_body(
@@ -867,7 +895,7 @@ def test_completed_page_with_verified_receipt_is_never_regenerated(tmp_path: Pat
     )
 
     assert resumed == first
-    assert (project / "workflow_v6.json").read_bytes() == state_before
+    assert load(project)["pages"][0] == page1_state_before
     assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before
 
 
@@ -912,3 +940,74 @@ def test_second_candidate_missing_output_falls_back_to_first_and_finalizes(tmp_p
     assert receipt["state"] == "accepted_fallback_first"
     assert "later_generation_missing_output" in receipt["degraded_reasons"]
     assert load(project)["pages"][0]["state"] == "accepted_fallback_first"
+
+
+def test_project_429_throttle_limits_subsequent_page_launches_and_preserves_completed(
+    tmp_path: Path,
+):
+    project = _multi_page_project(tmp_path)
+    page1_calls = 0
+
+    def write_candidate(command):
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    def page1_runner(command, timeout):
+        nonlocal page1_calls
+        page1_calls += 1
+        if page1_calls == 1:
+            raise ProviderFailure("rate limited", status_code=429)
+        write_candidate(command)
+
+    reviewer = lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []}
+    first = generate_page_body(
+        project, page_number=1, runner=page1_runner, reviewer=reviewer,
+        retry_sleep=lambda _delay: None, retry_jitter=lambda: 0.5,
+    )
+    scheduler_state = json.loads((project / SCHEDULER_STATE_FILE).read_text(encoding="utf-8"))
+    assert scheduler_state["active_limit"] == 1
+    assert scheduler_state["leases"] == {}
+    page1_state_before = load(project)["pages"][0]
+    receipt_before = (project / "04_v6/images/page_001.json").read_bytes()
+
+    page2_entered = threading.Event()
+    page2_release = threading.Event()
+    page3_entered = threading.Event()
+
+    def page2_runner(command, timeout):
+        page2_entered.set()
+        assert page2_release.wait(5)
+        write_candidate(command)
+
+    def page3_runner(command, timeout):
+        page3_entered.set()
+        write_candidate(command)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        page2 = pool.submit(
+            generate_page_body, project, page_number=2, runner=page2_runner, reviewer=reviewer,
+        )
+        assert page2_entered.wait(5)
+        page3 = pool.submit(
+            generate_page_body, project, page_number=3, runner=page3_runner, reviewer=reviewer,
+        )
+        assert not page3_entered.wait(0.25)
+
+        resumed = generate_page_body(
+            project, page_number=1,
+            runner=lambda *_args, **_kwargs: pytest.fail("completed page must stay untouched"),
+            reviewer=lambda *_args, **_kwargs: pytest.fail("completed page must stay untouched"),
+        )
+        assert resumed == first
+        page2_release.set()
+        assert page2.result(timeout=10)["state"] == "accepted"
+        assert page3.result(timeout=10)["state"] == "accepted"
+
+    assert page3_entered.is_set()
+    assert load(project)["pages"][0] == page1_state_before
+    assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before

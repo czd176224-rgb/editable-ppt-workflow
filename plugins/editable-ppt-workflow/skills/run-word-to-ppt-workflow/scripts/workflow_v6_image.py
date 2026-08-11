@@ -16,7 +16,7 @@ from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
-from adaptive_scheduler import AdaptiveScheduler
+from adaptive_scheduler import AdaptiveScheduler, ProjectGenerationGate
 import workflow_v6_media as v6_media
 
 
@@ -655,6 +655,10 @@ def generate_page_body(
     )
     profile = str(confirmed.get("production_profile") or "balanced")
     provider_scheduler = AdaptiveScheduler.for_profile(profile)
+    lease_ttl = min(max(float(timeout) * 3.0 + 120.0, 300.0), 86_400.0)
+    project_gate = ProjectGenerationGate(
+        root, profile=profile, stale_after=lease_ttl,
+    )
     existing = _verified_existing_receipt(
         root,
         page_number,
@@ -717,12 +721,24 @@ def generate_page_body(
             command = build_image_command(
                 request, prompt_file=prompt_file, output=output, trace=trace,
             )
-            provider_scheduler.run_transient(
-                lambda: runner(command, timeout),
-                max_attempts=3,
-                sleep=retry_sleep,
-                jitter=retry_jitter,
-            )
+            def invoke_provider() -> None:
+                try:
+                    runner(command, timeout)
+                except Exception as exc:
+                    if getattr(exc, "status_code", None) == 429:
+                        project_gate.throttle_on_429()
+                    raise
+
+            with project_gate.lease(
+                page_number=page_number,
+                wait_timeout=lease_ttl,
+            ):
+                provider_scheduler.run_transient(
+                    invoke_provider,
+                    max_attempts=3,
+                    sleep=retry_sleep,
+                    jitter=retry_jitter,
+                )
         except Exception:
             if attempt == 1:
                 page["technical_failure"] = {"stage": "image2_generate", "attempt": attempt}

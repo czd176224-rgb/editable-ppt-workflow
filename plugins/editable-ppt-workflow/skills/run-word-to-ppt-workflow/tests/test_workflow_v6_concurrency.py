@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,14 @@ sys.path.insert(0, str(SCRIPTS))
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_state import create, load, update_page
 import workflow_v6_state
-from adaptive_scheduler import AdaptiveScheduler, RoundOutcome, jittered_retry_delay, should_retry
+from adaptive_scheduler import (
+    AdaptiveScheduler,
+    ProjectGenerationGate,
+    RoundOutcome,
+    SCHEDULER_STATE_FILE,
+    jittered_retry_delay,
+    should_retry,
+)
 
 
 def test_page_updates_merge_against_latest_project_state(tmp_path: Path):
@@ -141,3 +150,32 @@ def test_page_retry_reuses_completed_receipt_and_retries_only_transient_failure(
 
     with pytest.raises(ValueError, match="invalid"):
         scheduler.run_page(3, lambda: (_ for _ in ()).throw(ValueError("invalid")))
+
+
+def test_project_gate_recovers_stale_crashed_lease_under_project_lock(tmp_path: Path):
+    path = tmp_path / SCHEDULER_STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "artifact_version": "v6-generation-scheduler-v1",
+        "profile": "speed",
+        "configured_max": 3,
+        "active_limit": 1,
+        "leases": {
+            "crashed-owner": {
+                "page_number": 1,
+                "owner": "crashed-owner",
+                "acquired_at": time.time() - 60,
+            },
+        },
+    }), encoding="utf-8")
+    gate = ProjectGenerationGate(
+        tmp_path, profile="speed", stale_after=0.01, poll_interval=0.001,
+    )
+
+    with gate.lease(page_number=2, wait_timeout=0.2):
+        active = json.loads(path.read_text(encoding="utf-8"))["leases"]
+        assert "crashed-owner" not in active
+        assert len(active) == 1
+        assert next(iter(active.values()))["page_number"] == 2
+
+    assert json.loads(path.read_text(encoding="utf-8"))["leases"] == {}

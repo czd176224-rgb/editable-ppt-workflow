@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import math
+import os
 import random
 import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 
 PROFILE_CONCURRENCY = {"balanced": 2, "quality": 2, "speed": 3}
+SCHEDULER_STATE_FILE = "04_v6/generation_scheduler.json"
+SCHEDULER_ARTIFACT_VERSION = "v6-generation-scheduler-v1"
 
 
 def _status_code(error: BaseException) -> int | None:
@@ -30,6 +38,153 @@ def jittered_retry_delay(attempt: int, *, jitter: float) -> float:
         raise ValueError("jitter must be between 0 and 1")
     base = min(30.0, float(2 ** attempt))
     return base * (0.75 + 0.5 * float(jitter))
+
+
+class ProjectGenerationGate:
+    """Cross-process V6 provider lease gate with a persisted 429 throttle."""
+
+    def __init__(
+        self,
+        project: Path,
+        *,
+        profile: str,
+        stale_after: float = 1_200.0,
+        poll_interval: float = 0.05,
+    ) -> None:
+        try:
+            configured = PROFILE_CONCURRENCY[profile]
+        except KeyError as exc:
+            raise ValueError("profile must be quality, balanced, or speed") from exc
+        if not isinstance(stale_after, (int, float)) or not 0 < float(stale_after) <= 86_400:
+            raise ValueError("stale_after must be between 0 and 86400 seconds")
+        if not isinstance(poll_interval, (int, float)) or not 0 < float(poll_interval) <= 1:
+            raise ValueError("poll_interval must be between 0 and 1 second")
+        self.project = Path(project).resolve()
+        self.path = self.project / SCHEDULER_STATE_FILE
+        self.profile = profile
+        self.configured_max = configured
+        self.stale_after = float(stale_after)
+        self.poll_interval = float(poll_interval)
+
+    def _default_state(self) -> dict[str, Any]:
+        return {
+            "artifact_version": SCHEDULER_ARTIFACT_VERSION,
+            "profile": self.profile,
+            "configured_max": self.configured_max,
+            "active_limit": self.configured_max,
+            "leases": {},
+        }
+
+    def _load(self) -> dict[str, Any]:
+        if not self.path.is_file():
+            return self._default_state()
+        value = json.loads(self.path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("V6 generation scheduler state must be an object")
+        if (
+            value.get("artifact_version") != SCHEDULER_ARTIFACT_VERSION
+            or value.get("profile") != self.profile
+            or value.get("configured_max") != self.configured_max
+            or type(value.get("active_limit")) is not int
+            or not 1 <= value["active_limit"] <= self.configured_max
+            or not isinstance(value.get("leases"), dict)
+        ):
+            raise ValueError("V6 generation scheduler state is invalid")
+        for lease_id, lease in value["leases"].items():
+            if (
+                not isinstance(lease_id, str)
+                or not 1 <= len(lease_id) <= 96
+                or not isinstance(lease, dict)
+                or lease.get("owner") != lease_id
+                or type(lease.get("page_number")) is not int
+                or lease["page_number"] < 1
+                or not isinstance(lease.get("acquired_at"), (int, float))
+                or not math.isfinite(float(lease["acquired_at"]))
+            ):
+                raise ValueError("V6 generation scheduler lease is invalid")
+        return value
+
+    def _purge_stale(self, state: dict[str, Any], now: float) -> bool:
+        before = len(state["leases"])
+        state["leases"] = {
+            lease_id: lease
+            for lease_id, lease in state["leases"].items()
+            if -300.0 <= now - float(lease["acquired_at"]) <= self.stale_after
+        }
+        return len(state["leases"]) != before
+
+    def _write(self, state: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        try:
+            for attempt in range(10):
+                try:
+                    os.replace(temporary, self.path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def throttle_on_429(self) -> None:
+        from workflow_v6_state import mutation_lock
+
+        with mutation_lock(self.project):
+            state = self._load()
+            self._purge_stale(state, time.time())
+            state["active_limit"] = 1
+            self._write(state)
+
+    @contextmanager
+    def lease(self, *, page_number: int, wait_timeout: float = 960.0):
+        from workflow_v6_state import mutation_lock
+
+        if type(page_number) is not int or page_number < 1:
+            raise ValueError("page_number must be positive")
+        if not isinstance(wait_timeout, (int, float)) or float(wait_timeout) <= 0:
+            raise ValueError("wait_timeout must be positive")
+        lease_id = f"{os.getpid()}-{uuid.uuid4().hex}"
+        deadline = time.monotonic() + float(wait_timeout)
+        while True:
+            acquired = False
+            with mutation_lock(self.project):
+                now = time.time()
+                state = self._load()
+                changed = self._purge_stale(state, now)
+                if len(state["leases"]) < state["active_limit"]:
+                    state["leases"][lease_id] = {
+                        "page_number": page_number,
+                        "owner": lease_id,
+                        "acquired_at": now,
+                    }
+                    acquired = True
+                    changed = True
+                if changed:
+                    self._write(state)
+            if acquired:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out waiting for a V6 generation concurrency lease")
+            time.sleep(self.poll_interval)
+        try:
+            yield lease_id
+        finally:
+            with mutation_lock(self.project):
+                state = self._load()
+                changed = self._purge_stale(state, time.time())
+                lease = state["leases"].get(lease_id)
+                if isinstance(lease, dict) and lease.get("owner") == lease_id:
+                    del state["leases"][lease_id]
+                    changed = True
+                if changed:
+                    self._write(state)
 
 
 ReadyState = Literal["queued", "repair", "accepted"]

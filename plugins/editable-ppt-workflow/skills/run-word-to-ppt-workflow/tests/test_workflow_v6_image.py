@@ -1509,3 +1509,51 @@ def test_existing_receipt_rejects_valid_candidate_artifact_from_another_page(tmp
 
     assert recovered["selected"] == page_one["selected"]
     assert recovered["selected"] != page_two["selected"]
+
+
+@pytest.mark.parametrize(
+    "malformed_attempt",
+    [[], {}, "1", True, None, 0, 3],
+    ids=["list", "dict", "string", "bool", "null", "zero", "three"],
+)
+def test_existing_receipt_safely_rejects_malformed_candidate_attempt(
+    tmp_path: Path, malformed_attempt,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    receipt_path = project / "04_v6/images/page_001.json"
+    forged = json.loads(json.dumps(original))
+    forged_candidate = json.loads(json.dumps(original["selected"]))
+    forged_candidate["attempt"] = malformed_attempt
+    forged["candidates"].append(forged_candidate)
+    receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid page artifact should recover"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("receipt recovery must not call QA"),
+    )
+
+    assert recovered["candidates"] == [original["selected"]]
+    assert recovered["selected"] == original["selected"]
+
+
+@pytest.mark.parametrize("malformed_state", [[], {}], ids=["list", "dict"])
+def test_existing_receipt_safely_rejects_unhashable_state(
+    tmp_path: Path, malformed_state,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    receipt_path = project / "04_v6/images/page_001.json"
+    forged = json.loads(json.dumps(original))
+    forged["state"] = malformed_state
+    receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid page artifact should recover"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("receipt recovery must not call QA"),
+    )
+
+    assert recovered["state"] == "accepted"
+    assert recovered["selected"] == original["selected"]

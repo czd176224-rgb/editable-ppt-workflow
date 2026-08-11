@@ -598,6 +598,7 @@ def _verified_existing_receipt(
         or receipt.get("confirmed_ui_digest") != confirmed_digest
         or receipt.get("request_operation") != request.operation
         or receipt.get("request_input_images") != expected_inputs
+        or not isinstance(receipt.get("state"), str)
         or receipt.get("state") not in {"accepted", "accepted_fallback_first"}
         or not isinstance(receipt.get("degraded_reasons"), list)
         or not _receipt_candidates_are_valid(
@@ -679,8 +680,8 @@ def _receipt_candidates_are_valid(
     ]
     if (
         len(attempts) != len(candidates)
+        or any(type(attempt) is not int or attempt not in {1, 2} for attempt in attempts)
         or len(set(attempts)) != len(attempts)
-        or not set(attempts).issubset({1, 2})
         or sum(candidate == selected for candidate in candidates) != 1
     ):
         return False

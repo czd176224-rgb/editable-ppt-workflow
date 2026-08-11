@@ -199,13 +199,13 @@ def test_initialize_v6_project_preserves_embedded_image_integrity_and_paths(tmp_
     reference = material["reference_images"][0]
     generation_input = asset["generation_input"]
 
-    assert reference["original_path"] == f"01_source_assets/{asset['relative_path']}"
-    assert reference["model_input_path"] == f"01_source_assets/{generation_input['relative_path']}"
+    assert reference["original_path"].startswith("02_v6/reference_media/word_asset_001/original.")
+    assert reference["model_input_path"].startswith("02_v6/reference_media/word_asset_001/model-input.")
     assert reference["original_path"] != reference["model_input_path"]
     assert reference["integrity"]["original_sha256"] == asset["sha256"]
-    assert reference["integrity"]["model_input_sha256"] == generation_input["sha256"]
-    assert reference["thumbnail_path"] is None
-    assert reference["integrity"]["thumbnail_sha256"] is None
+    assert reference["integrity"]["model_input_sha256"] != generation_input["sha256"]
+    assert reference["thumbnail_path"].endswith("thumbnail.png")
+    assert len(reference["integrity"]["thumbnail_sha256"]) == 64
 
 
 def test_initialize_v6_project_wires_source_chart_records_as_text_facts_only(tmp_path: Path, monkeypatch):

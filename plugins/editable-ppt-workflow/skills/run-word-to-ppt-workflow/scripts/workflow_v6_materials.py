@@ -17,6 +17,7 @@ from referencing import Registry, Resource
 
 from workflow_v6_contract import canonical_sha256
 from natural_comment_resolver import resolve_comment_deterministically
+from workflow_v6_media import NormalizedReference, normalize_reference
 
 
 PAGE_MATERIALS_VERSION = "page-materials-v6"
@@ -593,6 +594,7 @@ def validate_page_materials(value: Mapping[str, Any], *, confirmed: bool) -> Non
 
 def reference_image_from_source(
     source: Mapping[str, Any], *, page_number: int, position: int,
+    project: Path | None = None,
 ) -> dict[str, Any]:
     """Normalize an extracted Word image into a stable V6 reference record."""
     original_path = source.get("original_path")
@@ -603,8 +605,25 @@ def reference_image_from_source(
         and isinstance(original_path, str)
         and isinstance(model_input_path, str)
     )
+    reference_id = str(source.get("asset_id") or f"page-{page_number:03d}-reference-{position:02d}")
+    if available and project is not None:
+        original = Path(project).resolve() / original_path
+        kind = "screenshot" if source.get("media_type") == "image/png" else "photo"
+        normalized = normalize_reference(
+            project, original, reference_id=reference_id, kind=kind,
+        )
+        return reference_image_from_normalized(
+            normalized,
+            reference_id=reference_id,
+            source="word_embedded",
+            purpose=str(source.get("purpose") or "Word embedded image"),
+            source_url=None,
+            thumbnail_sha256=hashlib.sha256(
+                (Path(project).resolve() / normalized.thumbnail_path).read_bytes()
+            ).hexdigest(),
+        )
     return {
-        "reference_id": str(source.get("asset_id") or f"page-{page_number:03d}-reference-{position:02d}"),
+        "reference_id": reference_id,
         "source": "word_embedded",
         "purpose": str(source.get("purpose") or "Word embedded image"),
         "preservation": "reference_only",
@@ -619,5 +638,30 @@ def reference_image_from_source(
             "original_sha256": source.get("original_sha256") if isinstance(source.get("original_sha256"), str) else None,
             "model_input_sha256": source.get("model_input_sha256") if isinstance(source.get("model_input_sha256"), str) else None,
             "thumbnail_sha256": source.get("thumbnail_sha256") if isinstance(source.get("thumbnail_sha256"), str) else None,
+        },
+    }
+
+
+def reference_image_from_normalized(
+    normalized: NormalizedReference, *, reference_id: str, source: str,
+    purpose: str, source_url: str | None, thumbnail_sha256: str,
+) -> dict[str, Any]:
+    """Translate bounded local media into the V6 reference-image schema."""
+    return {
+        "reference_id": reference_id,
+        "source": source,
+        "purpose": purpose,
+        "preservation": "reference_only",
+        "allow_crop": True,
+        "allow_restyle": False,
+        "status": "available",
+        "original_path": normalized.original_path,
+        "model_input_path": normalized.model_input_path,
+        "thumbnail_path": normalized.thumbnail_path,
+        "source_url": source_url,
+        "integrity": {
+            "original_sha256": normalized.original_sha256,
+            "model_input_sha256": normalized.model_input_sha256,
+            "thumbnail_sha256": thumbnail_sha256,
         },
     }

@@ -49,6 +49,7 @@ from fixed_region_contract import (  # noqa: E402
 from style_contract import compile_style_execution, revise_style_contract  # noqa: E402
 from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: E402
 from workflow_v5_dag import DagStore  # noqa: E402
+from workflow_v6_media import resolve_project_media, validated_media_mime  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -876,6 +877,28 @@ def create_app(
             return response
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             return jsonify({"error": str(exc)}), 409
+
+    @app.get("/api/media/<variant>")
+    @app.get("/api/media/<variant>/<path:relative_path>")
+    def media(variant: str, relative_path: str | None = None):
+        """Serve only authenticated, decoded V6 raster derivatives."""
+        owner = app.config.get("LOCK_OWNER")
+        if (
+            not _valid_owner(owner, project)
+            or request.headers.get("X-Confirm-Nonce") != owner.get("nonce")
+        ):
+            return jsonify({"error": "confirmation UI media ownership mismatch"}), 403
+        path_value = relative_path or request.args.get("path")
+        try:
+            path = resolve_project_media(project, path_value, variant=variant)
+            mime_type = validated_media_mime(path)
+        except (OSError, ValueError):
+            return jsonify({"error": "media was not found"}), 404
+        response = Response(path.read_bytes(), mimetype=mime_type)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Disposition"] = f'attachment; filename="{path.name}"'
+        return response
 
     @app.get("/api/recommendations")
     def recommendations():

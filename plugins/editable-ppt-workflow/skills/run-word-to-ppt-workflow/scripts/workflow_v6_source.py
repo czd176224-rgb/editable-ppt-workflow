@@ -17,9 +17,10 @@ from source_assets import extract_source_assets
 from build_page_contracts import split_page_title_body
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_materials import (
-    chart_to_facts, extract_attachment_material, new_page_materials, reference_image_from_source, resolve_page_comments,
+    chart_to_facts, extract_attachment_material, new_page_materials, reference_image_from_normalized, reference_image_from_source, resolve_page_comments,
     validate_page_materials,
 )
+from workflow_v6_media import normalize_reference
 from workflow_v6_state import create, mutation_lock
 from style_recommendations import _recommendations
 
@@ -252,30 +253,22 @@ def import_reference(
             raise ValueError("V6 reference acquisition history is invalid")
         acquisition["status"] = "found"
         history.append("found")
-        suffix = image.suffix.lower() if image.suffix else ".bin"
-        target = project / "02_v6" / "reference_images" / f"page_{page_number:03d}_{request_id}{suffix}"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(image, target)
-        digest = _sha256(target)
-        relative = target.relative_to(project).as_posix()
-        reference = {
-            "reference_id": f"acquisition-{request_id}",
-            "source": "external_url" if source_url else "attachment",
-            "purpose": str(acquisition.get("purpose") or "found reference"),
-            "preservation": "reference_only",
-            "allow_crop": True,
-            "allow_restyle": False,
-            "status": "available",
-            "original_path": relative,
-            "model_input_path": relative,
-            "thumbnail_path": None,
-            "source_url": source_url,
-            "integrity": {
-                "original_sha256": digest,
-                "model_input_sha256": digest,
-                "thumbnail_sha256": None,
-            },
-        }
+        purpose = str(acquisition.get("purpose") or "found reference")
+        kind = "logo" if image.suffix.lower() == ".svg" or "logo" in purpose.lower() else "screenshot" if "screenshot" in purpose.lower() else "photo"
+        normalized = normalize_reference(
+            project, image, reference_id=f"acquisition-{request_id}", kind=kind,
+        )
+        thumbnail = project / normalized.thumbnail_path
+        reference = reference_image_from_normalized(
+            normalized,
+            reference_id=f"acquisition-{request_id}",
+            source="external_url" if source_url else "attachment",
+            purpose=purpose,
+            source_url=source_url,
+            thumbnail_sha256=_sha256(thumbnail),
+        )
+        digest = normalized.original_sha256
+        relative = normalized.original_path
         acquisition["candidate"] = {
             "local_path": relative,
             "source_url": source_url,
@@ -337,17 +330,28 @@ def _found_candidate_reference(project: Path, acquisition: Mapping[str, Any]) ->
         raise ValueError("V6 reference candidate bytes are missing or corrupt")
     expected_reference = dict(reference)
     integrity = expected_reference.get("integrity")
+    thumbnail_path = expected_reference.get("thumbnail_path")
+    model_input_path = expected_reference.get("model_input_path")
     if (
         expected_reference.get("original_path") != local_path
-        or expected_reference.get("model_input_path") != local_path
         or expected_reference.get("source_url") != candidate.get("source_url")
         or not isinstance(integrity, Mapping)
         or integrity.get("original_sha256") != expected_digest
-        or integrity.get("model_input_sha256") != expected_digest
-        or expected_reference.get("thumbnail_path") is not None
-        or integrity.get("thumbnail_sha256") is not None
+        or not isinstance(model_input_path, str)
+        or not isinstance(thumbnail_path, str)
     ):
         raise ValueError("V6 reference candidate metadata is corrupt")
+    for path_value, digest_key in (
+        (model_input_path, "model_input_sha256"),
+        (thumbnail_path, "thumbnail_sha256"),
+    ):
+        path = (project / path_value).resolve()
+        try:
+            path.relative_to(project)
+        except ValueError as exc:
+            raise ValueError("V6 reference candidate escapes the project") from exc
+        if not path.is_file() or integrity.get(digest_key) != _sha256(path):
+            raise ValueError("V6 reference candidate bytes are missing or corrupt")
     return expected_reference
 
 
@@ -516,7 +520,9 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             if reference.get("kind") == "word_image"
         ]
         materials["reference_images"] = [
-            reference_image_from_source(reference, page_number=page_number, position=index)
+            reference_image_from_source(
+                reference, page_number=page_number, position=index, project=project,
+            )
             for index, reference in enumerate(image_sources[:16], start=1)
         ]
         attachments_by_id = {

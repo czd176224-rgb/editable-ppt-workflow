@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,47 @@ def load_server():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_media_endpoint_requires_matching_project_owner_and_nonce_for_every_variant(
+    tmp_path: Path,
+):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    for name in ("original.png", "thumbnail.png", "model-input.png"):
+        Image.new("RGB", (2, 2), "#336699").save(media_dir / name, format="PNG")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    paths = {
+        "original": "02_v6/reference_media/ref/original.png",
+        "thumbnail": "02_v6/reference_media/ref/thumbnail.png",
+        "model-input": "02_v6/reference_media/ref/model-input.png",
+    }
+    for variant, path in paths.items():
+        assert client.get(f"/api/media/{variant}/{path}").status_code == 403
+        response = client.get(
+            f"/api/media/{variant}/{path}", headers={"X-Confirm-Nonce": "n" * 32},
+        )
+        assert response.status_code == 200
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Content-Type"].startswith("image/png")
+
+
+def test_media_endpoint_rejects_svg_html_and_project_path_escape(tmp_path: Path):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    (media_dir / "original.svg").write_text("<svg/>", encoding="utf-8")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+    headers = {"X-Confirm-Nonce": "n" * 32}
+
+    assert client.get("/api/media/original/02_v6/reference_media/ref/original.svg", headers=headers).status_code == 404
+    assert client.get("/api/media/thumbnail/../workflow_run.json", headers=headers).status_code == 404
 
 
 @pytest.fixture

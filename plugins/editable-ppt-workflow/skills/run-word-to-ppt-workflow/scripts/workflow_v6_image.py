@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
@@ -20,6 +19,7 @@ from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
+import workflow_v6_media as v6_media
 
 
 IMAGE_CLI = (
@@ -37,6 +37,7 @@ class ImageRequest:
     prompt: str
     input_images: tuple[Path, ...]
     image_roles: tuple[str, ...]
+    input_sha256s: tuple[str, ...] = ()
 
 
 _MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
@@ -260,11 +261,12 @@ def _verified_image_bytes(path: Path, expected_sha256: str) -> bytes | None:
 
 def _resolved_confirmed_page(
     confirmed_page: Mapping[str, Any],
-) -> tuple[dict[str, Any], tuple[Path, ...], tuple[str, ...]]:
+) -> tuple[dict[str, Any], tuple[Path, ...], tuple[str, ...], tuple[str, ...]]:
     resolved_page = copy.deepcopy(dict(confirmed_page))
     valid_references: list[dict[str, Any]] = []
     images: list[Path] = []
     roles: list[str] = []
+    digests: list[str] = []
     for reference in resolved_page.get("reference_images", []):
         if not isinstance(reference, Mapping) or reference.get("status") != "available":
             continue
@@ -285,8 +287,9 @@ def _resolved_confirmed_page(
         valid_references.append(copy.deepcopy(dict(reference)))
         images.append(path)
         roles.append(role.strip())
+        digests.append(expected)
     resolved_page["reference_images"] = valid_references
-    return resolved_page, tuple(images), tuple(roles)
+    return resolved_page, tuple(images), tuple(roles), tuple(digests)
 
 
 def build_image_request(
@@ -296,7 +299,7 @@ def build_image_request(
     qa_feedback: Sequence[str] = (),
 ) -> ImageRequest:
     """Resolve usable frozen references, then select the only valid operation."""
-    resolved_page, images, roles = _resolved_confirmed_page(confirmed_page)
+    resolved_page, images, roles, digests = _resolved_confirmed_page(confirmed_page)
     if len(images) > 16:
         raise ValueError("Image2 accepts at most 16 confirmed reference images")
     prompt = build_prompt(
@@ -310,6 +313,7 @@ def build_image_request(
         prompt=prompt,
         input_images=images,
         image_roles=roles,
+        input_sha256s=digests,
     )
 
 
@@ -322,6 +326,8 @@ def build_image_command(
         raise ValueError("Image2 quality must be medium or high")
     if len(request.input_images) != len(request.image_roles):
         raise ValueError("Image2 image roles must align with image inputs")
+    if len(request.input_images) != len(request.input_sha256s):
+        raise ValueError("Image2 input digests must align with image inputs")
     if len(request.input_images) > 16:
         raise ValueError("Image2 accepts at most 16 image inputs")
     if request.operation == "edit" and not request.input_images:
@@ -345,8 +351,13 @@ def build_image_command(
         "--quality",
         request.quality,
     ]
-    for path, role in zip(request.input_images, request.image_roles):
-        expected_digest = _expected_input_digest(path)
+    for path, role, expected_digest in zip(
+        request.input_images, request.image_roles, request.input_sha256s,
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise ValueError("Image2 input digest is invalid")
+        if _sha256(path) != expected_digest:
+            raise ValueError(f"Image2 request input changed after confirmation: {path}")
         command.extend([
             "--image", str(path),
             "--image-role", role,
@@ -355,15 +366,13 @@ def build_image_command(
     return command
 
 
-def _expected_input_digest(path: Path) -> str:
-    snapshot_match = re.search(r"\.([0-9a-f]{64})\.img$", path.name)
-    return snapshot_match.group(1) if snapshot_match else _sha256(path)
-
-
 def _request_input_records(request: ImageRequest) -> list[dict[str, str]]:
     records = []
-    for path, role in zip(request.input_images, request.image_roles):
-        expected = _expected_input_digest(path)
+    if len(request.input_images) != len(request.input_sha256s):
+        raise ValueError("Image2 request input digests are not aligned")
+    for path, role, expected in zip(
+        request.input_images, request.image_roles, request.input_sha256s,
+    ):
         if _sha256(path) != expected:
             raise ValueError(f"Image2 request input changed after confirmation: {path}")
         records.append({"role": role, "path": str(path.resolve()), "sha256": expected})
@@ -413,14 +422,14 @@ def _with_project_reference_paths(
                 reference["status"] = "unavailable"
                 continue
             if snapshot.exists():
-                if not snapshot.is_file() or snapshot.read_bytes() != data:
+                if v6_media._read_file_limited(root, snapshot) != data:
                     reference["status"] = "unavailable"
                     continue
             else:
-                with snapshot.open("xb") as destination:
-                    destination.write(data)
-                    destination.flush()
-                    os.fsync(destination.fileno())
+                written_digest = v6_media._write_new(root, snapshot, data)
+                if written_digest != expected:
+                    reference["status"] = "unavailable"
+                    continue
                 snapshot.chmod(0o444)
         except (OSError, ValueError):
             reference["status"] = "unavailable"
@@ -511,7 +520,7 @@ def generate_page_body(
         sealed_digest=str(state["confirmed_ui_digest"]),
         page_number=page_number,
     )
-    resolved_request_page, _, _ = _resolved_confirmed_page(request_page)
+    resolved_request_page, _, _, _ = _resolved_confirmed_page(request_page)
     initial_request = build_image_request(
         confirmed_page=resolved_request_page,
         visual_contract=global_contract,
@@ -563,6 +572,7 @@ def generate_page_body(
             ),
             input_images=initial_request.input_images,
             image_roles=initial_request.image_roles,
+            input_sha256s=initial_request.input_sha256s,
         )
         prompt_file.write_text(request.prompt, encoding="utf-8")
         try:

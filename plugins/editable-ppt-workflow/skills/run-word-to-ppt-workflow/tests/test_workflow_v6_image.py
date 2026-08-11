@@ -201,7 +201,8 @@ def test_image_command_uses_aligned_edit_inputs_and_roles(tmp_path: Path):
     first, second = tmp_path / "first.png", tmp_path / "second.png"
     Image.new("RGB", (8, 4), "blue").save(first)
     Image.new("RGB", (8, 4), "green").save(second)
-    request = ImageRequest("edit", "high", "approved prompt", (first, second), ("logo", "screenshot"))
+    digests = (hashlib.sha256(first.read_bytes()).hexdigest(), hashlib.sha256(second.read_bytes()).hexdigest())
+    request = ImageRequest("edit", "high", "approved prompt", (first, second), ("logo", "screenshot"), digests)
 
     command = build_image_command(request, prompt_file=tmp_path / "prompt.txt", output=tmp_path / "out.png", trace=tmp_path / "trace.json")
 
@@ -215,6 +216,57 @@ def test_image_command_uses_aligned_edit_inputs_and_roles(tmp_path: Path):
     assert command[command.index("--quality") + 1] == "high"
 
 
+def test_public_request_keeps_verified_digest_when_file_is_replaced_between_build_calls(tmp_path: Path):
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (8, 4), "blue").save(image)
+    original_digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    request = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": [_confirmed_reference(image)]},
+        visual_contract={"visual_style": "minimal"},
+    )
+    Image.new("RGB", (8, 4), "red").save(image)
+
+    assert request.input_sha256s == (original_digest,)
+    with pytest.raises(ValueError, match="changed|digest"):
+        build_image_command(
+            request, prompt_file=tmp_path / "prompt.txt",
+            output=tmp_path / "out.png", trace=tmp_path / "trace.json",
+        )
+
+
+def test_snapshot_writer_rejects_injected_final_handle_escape_before_payload_write(tmp_path: Path, monkeypatch):
+    import workflow_v6_media as media
+
+    project = _project(tmp_path)
+    model_input = project / "02_v6" / "reference_media" / "approved" / "model-input.png"
+    model_input.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 18), "navy").save(model_input)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"][0]["reference_images"] = [_confirmed_reference(model_input)]
+    result["confirmed_pages"][0]["reference_images"][0]["model_input_path"] = model_input.relative_to(project).as_posix()
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    state = load(project); state["confirmed_ui_digest"] = canonical_sha256(result); save(project, state)
+    outside = tmp_path / "outside" / "snapshot.img"
+    final_paths = iter((project, outside))
+    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: next(final_paths))
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    assert calls[0][2] == "generate"
+    assert not outside.exists() or outside.read_bytes() != model_input.read_bytes()
+
+
 @pytest.mark.parametrize("image_request", [
     ImageRequest("edit", "medium", "prompt", (), ()),
     ImageRequest("generate", "medium", "prompt", (Path("reference.png"),), ("evidence",)),
@@ -223,7 +275,7 @@ def test_image_command_uses_aligned_edit_inputs_and_roles(tmp_path: Path):
     ImageRequest("generate", "unsupported", "prompt", (), ()),  # type: ignore[arg-type]
 ])
 def test_image_command_rejects_operation_input_invariants(tmp_path: Path, image_request: ImageRequest):
-    with pytest.raises(ValueError, match="image|role|edit|generate|quality|operation"):
+    with pytest.raises(ValueError, match="image|role|edit|generate|quality|operation|digest"):
         build_image_command(image_request, prompt_file=tmp_path / "prompt.txt", output=tmp_path / "out.png", trace=tmp_path / "trace.json")
 
 

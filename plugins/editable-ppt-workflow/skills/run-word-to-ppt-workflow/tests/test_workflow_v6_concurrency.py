@@ -225,6 +225,15 @@ def test_stale_page_owner_is_fenced_and_cannot_release_newer_owner(tmp_path: Pat
             assert current_lease.generation == stale_lease.generation + 1
             with pytest.raises(RuntimeError, match="superseded"):
                 ownership.assert_current(stale_lease)
+            stale_commit_called = False
+
+            def stale_commit():
+                nonlocal stale_commit_called
+                stale_commit_called = True
+
+            with pytest.raises(RuntimeError, match="superseded"):
+                ownership.commit_if_current(stale_lease, stale_commit)
+            assert not stale_commit_called
             ownership.assert_current(current_lease)
 
         assert json.loads(path.read_text(encoding="utf-8"))["owners"] == {}

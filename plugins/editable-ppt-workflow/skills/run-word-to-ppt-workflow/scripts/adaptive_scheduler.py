@@ -303,6 +303,28 @@ class ProjectPageOwnership:
             if changed:
                 self._write(state)
 
+    def commit_if_current(
+        self, lease: PageOwnershipLease, action: Callable[[], Any],
+    ) -> Any:
+        """Run one short artifact commit atomically with the ownership fence."""
+        from workflow_v6_state import mutation_lock
+
+        with mutation_lock(self.project):
+            state = self._load()
+            changed = self._purge_stale(state, time.time())
+            current = state["owners"].get(str(lease.page_number))
+            if not isinstance(current, dict) or (
+                current.get("owner") != lease.owner
+                or current.get("generation") != lease.generation
+            ):
+                if changed:
+                    self._write(state)
+                raise RuntimeError("V6 page ownership was superseded")
+            result = action()
+            current["acquired_at"] = time.time()
+            self._write(state)
+            return result
+
     @contextmanager
     def own(self, *, page_number: int, wait_timeout: float = 7_200.0):
         from workflow_v6_state import mutation_lock

@@ -33,6 +33,7 @@ from workflow_v6_image import (  # noqa: E402
 from workflow_v6_state import create, load, save  # noqa: E402
 from workflow_v6_cli import _parser  # noqa: E402
 from adaptive_scheduler import PAGE_OWNERSHIP_STATE_FILE, SCHEDULER_STATE_FILE  # noqa: E402
+import workflow_v6_image  # noqa: E402
 
 
 def _project(tmp_path: Path) -> Path:
@@ -1058,3 +1059,161 @@ def test_same_page_waiter_resumes_owner_result_without_duplicate_candidate_or_re
     assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before_waiter_return
     ownership_state = json.loads((project / PAGE_OWNERSHIP_STATE_FILE).read_text(encoding="utf-8"))
     assert ownership_state["owners"] == {}
+
+
+def test_crash_after_receipt_commit_before_accepted_state_resumes_without_provider_or_qa(
+    tmp_path: Path, monkeypatch,
+):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    real_write = workflow_v6_image._atomic_write_json
+
+    def crash_after_write(path, value):
+        real_write(path, value)
+        raise RuntimeError("injected crash after receipt commit")
+
+    monkeypatch.setattr(workflow_v6_image, "_atomic_write_json", crash_after_write)
+    with pytest.raises(RuntimeError, match="injected crash"):
+        generate_page_body(
+            project, page_number=1, runner=runner,
+            reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+        )
+    assert load(project)["pages"][0]["state"] == "generating"
+    assert (project / "04_v6/images/page_001.json").is_file()
+
+    monkeypatch.setattr(workflow_v6_image, "_atomic_write_json", real_write)
+    receipt = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("resume must not call provider"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("resume must not call QA"),
+    )
+    assert receipt["state"] == "accepted"
+    assert load(project)["pages"][0]["state"] == "accepted"
+
+
+@pytest.mark.parametrize("crash_stage", [
+    "after_receipt_commit",
+    "after_receipt_verification",
+    "after_state_commit",
+])
+def test_every_finalization_boundary_is_resumable_without_duplicate_work(
+    tmp_path: Path, monkeypatch, crash_stage: str,
+):
+    project = _project(tmp_path)
+    calls = {"provider": 0, "qa": 0}
+
+    def runner(command, timeout):
+        calls["provider"] += 1
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    def reviewer(*_args, **_kwargs):
+        calls["qa"] += 1
+        return {"accepted": True, "score": 6, "issues": []}
+
+    def crash_at(stage):
+        if stage == crash_stage:
+            raise RuntimeError(f"injected {stage}")
+
+    monkeypatch.setattr(workflow_v6_image, "_finalization_boundary", crash_at)
+    with pytest.raises(RuntimeError, match="injected"):
+        generate_page_body(project, page_number=1, runner=runner, reviewer=reviewer)
+    assert calls == {"provider": 1, "qa": 1}
+
+    monkeypatch.setattr(workflow_v6_image, "_finalization_boundary", lambda _stage: None)
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("resume must not call provider"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("resume must not call QA"),
+    )
+    assert recovered["state"] == "accepted"
+    assert load(project)["pages"][0]["state"] == "accepted"
+
+
+@pytest.mark.parametrize("receipt_damage", ["missing", "partial", "forged_identity"])
+def test_legacy_accepted_state_recovers_selected_artifact_without_provider_or_qa(
+    tmp_path: Path, receipt_damage: str,
+):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    original = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    receipt_path = project / "04_v6/images/page_001.json"
+    if receipt_damage == "missing":
+        receipt_path.unlink()
+    elif receipt_damage == "forged_identity":
+        forged = json.loads(json.dumps(original))
+        forged["confirmed_ui_digest"] = "0" * 64
+        receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+    else:
+        receipt_path.write_text("{", encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("recovery must not call provider"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("recovery must not call QA"),
+    )
+    assert recovered["selected"] == original["selected"]
+    assert recovered["state"] == "accepted"
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == recovered
+
+
+def test_unrecoverable_accepted_artifact_regenerates_without_accepted_to_accepted_transition(
+    tmp_path: Path,
+):
+    project = _project(tmp_path)
+
+    def write_candidate(command, color):
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), color).save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    first = generate_page_body(
+        project, page_number=1, runner=lambda command, _timeout: write_candidate(command, "white"),
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    (project / "04_v6/images/page_001.json").unlink()
+    (project / first["selected"]["path"]).unlink()
+    calls = 0
+
+    def replacement_runner(command, timeout):
+        nonlocal calls
+        calls += 1
+        write_candidate(command, "blue")
+
+    replacement = generate_page_body(
+        project, page_number=1, runner=replacement_runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    assert calls == 1
+    assert replacement["state"] == "accepted"
+    assert load(project)["pages"][0]["state"] == "accepted"

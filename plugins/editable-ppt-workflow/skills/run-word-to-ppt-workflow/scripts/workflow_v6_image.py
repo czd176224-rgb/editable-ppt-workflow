@@ -5,9 +5,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
@@ -598,6 +601,11 @@ def _verified_existing_receipt(
         or receipt.get("confirmed_ui_digest") != confirmed_digest
         or receipt.get("request_operation") != request.operation
         or receipt.get("request_input_images") != expected_inputs
+        or receipt.get("state") not in {"accepted", "accepted_fallback_first"}
+        or not isinstance(receipt.get("candidates"), list)
+        or not receipt["candidates"]
+        or selected not in receipt["candidates"]
+        or not isinstance(receipt.get("degraded_reasons"), list)
         or selected.get("operation") != request.operation
         or not image.is_file()
         or trace_value.get("operation") != request.operation
@@ -606,6 +614,147 @@ def _verified_existing_receipt(
     ):
         return None
     return receipt
+
+
+def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Commit JSON as one replace so a crash cannot expose a partial receipt."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _finalization_boundary(_stage: str) -> None:
+    """Fault-injection seam for verifying recoverable finalization boundaries."""
+
+
+def _committed_receipt_matches(
+    root: Path, receipt_path: Path, expected: Mapping[str, Any],
+) -> bool:
+    """Verify the atomic receipt bytes and all candidate outputs before state commit."""
+    try:
+        committed = _read_json(receipt_path)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    if committed != dict(expected):
+        return False
+    for candidate in committed.get("candidates", []):
+        if not isinstance(candidate, Mapping) or not isinstance(candidate.get("path"), str):
+            return False
+        relative = Path(candidate["path"])
+        if relative.is_absolute() or ".." in relative.parts or not (root / relative).is_file():
+            return False
+    return True
+
+
+def _candidate_artifact_is_valid(
+    root: Path, candidate: Any, *, request: ImageRequest,
+) -> bool:
+    if (
+        not isinstance(candidate, Mapping)
+        or type(candidate.get("attempt")) is not int
+        or candidate["attempt"] < 1
+        or candidate.get("operation") != request.operation
+        or not isinstance(candidate.get("path"), str)
+    ):
+        return False
+    relative = Path(candidate["path"])
+    if relative.is_absolute() or ".." in relative.parts:
+        return False
+    image = root / relative
+    trace = image.with_name(image.name.replace(".png", ".trace.json"))
+    try:
+        trace_value = _read_json(trace)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    expected_inputs = _request_input_records(request)
+    return (
+        image.is_file()
+        and trace_value.get("operation") == request.operation
+        and trace_value.get("model") == "gpt-image-2"
+        and trace_value.get("input_images") == expected_inputs
+    )
+
+
+def _receipt_from_accepted_page(
+    root: Path,
+    page_number: int,
+    *,
+    page: Mapping[str, Any],
+    confirmed: Mapping[str, Any],
+    confirmed_digest: str,
+    request: ImageRequest,
+) -> dict[str, Any] | None:
+    """Recover the old accepted-before-receipt crash window from fenced page state."""
+    if page.get("state") not in {
+        "accepted", "accepted_fallback_first", "reconstructing", "page_complete",
+    }:
+        return None
+    selected = page.get("selected_candidate")
+    if not _candidate_artifact_is_valid(root, selected, request=request):
+        return None
+    candidates: list[dict[str, Any]] = []
+    first = page.get("first_candidate")
+    same_artifact = isinstance(first, Mapping) and all(
+        first.get(field) == selected.get(field) for field in ("attempt", "path", "operation")
+    )
+    if not same_artifact and _candidate_artifact_is_valid(root, first, request=request):
+        candidates.append(copy.deepcopy(dict(first)))
+    selected_copy = copy.deepcopy(dict(selected))
+    if selected_copy not in candidates:
+        candidates.append(selected_copy)
+    accepted_state = (
+        "accepted_fallback_first"
+        if page.get("state") == "accepted_fallback_first"
+        else "accepted"
+    )
+    return {
+        "artifact_version": "image2-generate-v6",
+        "page_number": page_number,
+        "confirmed_ui_revision": confirmed["revision"],
+        "confirmed_ui_digest": confirmed_digest,
+        "request_operation": request.operation,
+        "request_input_images": _request_input_records(request),
+        "candidates": candidates,
+        "selected": selected_copy,
+        "state": accepted_state,
+        "degraded_reasons": list(page.get("degraded_reasons", [])),
+    }
+
+
+def _advance_page_to_accepted_receipt(
+    page: Mapping[str, Any], receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    updated = copy.deepcopy(dict(page))
+    target = str(receipt["state"])
+    if updated["state"] in {"accepted", "accepted_fallback_first", "reconstructing", "page_complete"}:
+        return updated
+    if updated["state"] == "technical_failed":
+        updated = transition_page(updated, "generating")
+    if updated["state"] == "prepared":
+        updated = transition_page(updated, "generating")
+    if updated["state"] == "generating":
+        updated = transition_page(updated, "qa_review")
+    if updated["state"] != "qa_review":
+        raise ValueError("V6 page cannot resume an accepted receipt from its current state")
+    updated["first_candidate"] = copy.deepcopy(receipt["candidates"][0])
+    updated["selected_candidate"] = copy.deepcopy(receipt["selected"])
+    updated["degraded_reasons"] = list(receipt["degraded_reasons"])
+    return transition_page(updated, target)
 
 
 def generate_page_body(
@@ -714,19 +863,45 @@ def _generate_page_body_owned(
     }:
         return existing
     if existing is not None and page["state"] in {"prepared", "generating", "qa_review", "technical_failed"}:
-        if page["state"] in {"prepared", "technical_failed"}:
-            page = transition_page(page, "generating")
-        if page["state"] == "generating":
-            page = transition_page(page, "qa_review")
-        page["first_candidate"] = copy.deepcopy(existing["selected"])
-        page["selected_candidate"] = copy.deepcopy(existing["selected"])
-        page["degraded_reasons"] = list(dict.fromkeys([
-            *page["degraded_reasons"], "resumed_verified_generate_receipt",
-        ]))
-        page = transition_page(page, "accepted_fallback_first")
+        page = _advance_page_to_accepted_receipt(page, existing)
         require_current_owner()
         update_page(root, page_number, page)
         return existing
+    recovered = _receipt_from_accepted_page(
+        root,
+        page_number,
+        page=page,
+        confirmed=confirmed,
+        confirmed_digest=str(state["confirmed_ui_digest"]),
+        request=initial_request,
+    )
+    if recovered is not None:
+        receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+        page_ownership.commit_if_current(
+            ownership_lease, lambda: _atomic_write_json(receipt_path, recovered),
+        )
+        require_current_owner()
+        verified_recovery = _verified_existing_receipt(
+            root,
+            page_number,
+            confirmed_revision=int(confirmed["revision"]),
+            confirmed_digest=str(state["confirmed_ui_digest"]),
+            request=initial_request,
+        )
+        if verified_recovery is None:
+            raise RuntimeError("V6 recovered Image2 receipt failed verification")
+        return verified_recovery
+    if page["state"] in {"accepted", "accepted_fallback_first"}:
+        page["technical_failure"] = {
+            "stage": "accepted_artifact_recovery",
+            "reason": "missing_or_invalid_receipt_or_candidate",
+        }
+        page["degraded_reasons"] = list(dict.fromkeys([
+            *page["degraded_reasons"], "accepted_artifact_recovery_failed",
+        ]))
+        page = transition_page(page, "technical_failed")
+    elif page["state"] in {"reconstructing", "page_complete"}:
+        raise RuntimeError("V6 completed page has no recoverable Image2 receipt")
     logo_name = Path(state["logo_source"]["path"]).stem
     directory = root / "04_v6" / "images"
     directory.mkdir(parents=True, exist_ok=True)
@@ -870,8 +1045,6 @@ def _generate_page_body_owned(
     else:
         page["selected_candidate"] = copy.deepcopy(selected)
         page = transition_page(page, "accepted")
-    require_current_owner()
-    update_page(root, page_number, page)
     receipt = {
         "artifact_version": "image2-generate-v6",
         "page_number": page_number,
@@ -885,6 +1058,15 @@ def _generate_page_body_owned(
         "degraded_reasons": page["degraded_reasons"],
     }
     receipt_path = directory / f"page_{page_number:03d}.json"
+    page_ownership.commit_if_current(
+        ownership_lease, lambda: _atomic_write_json(receipt_path, receipt),
+    )
+    _finalization_boundary("after_receipt_commit")
     require_current_owner()
-    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not _committed_receipt_matches(root, receipt_path, receipt):
+        raise RuntimeError("V6 Image2 receipt failed verification before accepted state")
+    _finalization_boundary("after_receipt_verification")
+    require_current_owner()
+    update_page(root, page_number, page)
+    _finalization_boundary("after_state_commit")
     return receipt

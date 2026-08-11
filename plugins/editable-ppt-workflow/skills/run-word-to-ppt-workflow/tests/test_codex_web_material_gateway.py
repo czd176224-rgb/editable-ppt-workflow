@@ -2525,5 +2525,6 @@ def test_v6_reference_gateway_emits_one_bounded_orchestrator_item_without_downlo
             "import_reference": "workflow_v6_cli.py import-reference --project <project> --page 1 --request-id request-1 --image <local-file> [--source-url <metadata-url>]",
             "fail_reference": "workflow_v6_cli.py fail-reference --project <project> --page 1 --request-id request-1 --reason <reason>",
             "reject_reference": "workflow_v6_cli.py reject-reference --project <project> --page 1 --request-id request-1 --reason <reason>",
+            "confirm_reference": "workflow_v6_cli.py confirm-reference --project <project> --page 1 --request-id request-1",
         },
     }]

@@ -14,7 +14,13 @@ from workflow_v6_reconstruction import (
     build_reconstruction_request,
     finalize_reconstructed_page,
 )
-from workflow_v6_source import fail_reference, import_reference, initialize_v6_project, reject_reference
+from workflow_v6_source import (
+    confirm_reference,
+    fail_reference,
+    import_reference,
+    initialize_v6_project,
+    reject_reference,
+)
 from workflow_v6_state import load, save
 
 
@@ -88,6 +94,10 @@ def _parser() -> argparse.ArgumentParser:
     reject_ref.add_argument("--page", type=int, required=True)
     reject_ref.add_argument("--request-id", required=True)
     reject_ref.add_argument("--reason", required=True)
+    confirm_ref = sub.add_parser("confirm-reference", help="confirm one found local real-image candidate")
+    confirm_ref.add_argument("--project", type=Path, required=True)
+    confirm_ref.add_argument("--page", type=int, required=True)
+    confirm_ref.add_argument("--request-id", required=True)
     return parser
 
 
@@ -129,6 +139,10 @@ def main() -> int:
         _emit(reject_reference(
             args.project, page_number=args.page, request_id=args.request_id,
             reason=args.reason,
+        ))
+    elif args.command == "confirm-reference":
+        _emit(confirm_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
         ))
     return 0
 

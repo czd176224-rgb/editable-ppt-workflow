@@ -316,6 +316,87 @@ def reject_reference(
     return {"page_number": page_number, "request_id": request_id, "status": "user_rejected"}
 
 
+def _found_candidate_reference(project: Path, acquisition: Mapping[str, Any]) -> dict[str, Any]:
+    candidate = acquisition.get("candidate")
+    if not isinstance(candidate, Mapping):
+        raise ValueError("V6 reference candidate is missing")
+    local_path = candidate.get("local_path")
+    expected_digest = candidate.get("sha256")
+    reference = candidate.get("reference")
+    if (
+        not isinstance(local_path, str) or not isinstance(expected_digest, str)
+        or not isinstance(reference, Mapping)
+    ):
+        raise ValueError("V6 reference candidate is corrupt")
+    candidate_path = (project / local_path).resolve()
+    try:
+        candidate_path.relative_to(project)
+    except ValueError as exc:
+        raise ValueError("V6 reference candidate escapes the project") from exc
+    if not candidate_path.is_file() or _sha256(candidate_path) != expected_digest:
+        raise ValueError("V6 reference candidate bytes are missing or corrupt")
+    expected_reference = dict(reference)
+    integrity = expected_reference.get("integrity")
+    if (
+        expected_reference.get("original_path") != local_path
+        or expected_reference.get("model_input_path") != local_path
+        or expected_reference.get("source_url") != candidate.get("source_url")
+        or not isinstance(integrity, Mapping)
+        or integrity.get("original_sha256") != expected_digest
+        or integrity.get("model_input_sha256") != expected_digest
+        or expected_reference.get("thumbnail_path") is not None
+        or integrity.get("thumbnail_sha256") is not None
+    ):
+        raise ValueError("V6 reference candidate metadata is corrupt")
+    return expected_reference
+
+
+def confirm_reference(
+    project: Path, *, page_number: int, request_id: str,
+) -> dict[str, Any]:
+    """Confirm one intact found candidate into the V6 page material authority."""
+    project = Path(project).resolve()
+    if type(page_number) is not int or page_number < 1:
+        raise ValueError("page_number must be a positive integer")
+    if not isinstance(request_id, str) or not request_id:
+        raise ValueError("request_id is required")
+    with mutation_lock(project):
+        materials, receipt = _load_reference_materials(project, page_number)
+        acquisition = _acquisition(receipt, request_id)
+        status = acquisition.get("status")
+        if status not in {"found", "confirmed"}:
+            raise ValueError("V6 reference request requires a found candidate before confirmation")
+        reference = _found_candidate_reference(project, acquisition)
+        reference_id = reference.get("reference_id")
+        matching = [
+            item for item in materials["reference_images"]
+            if isinstance(item, Mapping) and item.get("reference_id") == reference_id
+        ]
+        if status == "confirmed":
+            if matching != [reference]:
+                raise ValueError("V6 confirmed reference material is missing or does not match its candidate")
+            validate_page_materials(materials, confirmed=False)
+            return {
+                "page_number": page_number, "request_id": request_id,
+                "status": "confirmed", "reference": reference,
+            }
+        if len(matching) > 1 or (matching and matching[0] != reference):
+            raise ValueError("V6 reference material identity is duplicated or corrupt")
+        if not matching:
+            if len(materials["reference_images"]) >= 16:
+                raise ValueError("V6 page cannot confirm more than 16 reference images")
+            materials["reference_images"].append(reference)
+        acquisition["status"] = "confirmed"
+        acquisition.setdefault("history", ["pending", "found"]).append("confirmed")
+        validate_page_materials(materials, confirmed=False)
+        _write_json(_material_path(project, page_number), materials)
+        _write_json(_reference_material_path(project, page_number), receipt)
+    return {
+        "page_number": page_number, "request_id": request_id,
+        "status": "confirmed", "reference": reference,
+    }
+
+
 def fail_reference(
     project: Path, *, page_number: int, request_id: str, reason: str,
 ) -> dict[str, Any]:

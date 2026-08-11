@@ -12,7 +12,12 @@ if str(SCRIPTS) not in sys.path:
 import workflow_v6_cli  # noqa: E402
 from workflow_v6_contract import new_page, new_project  # noqa: E402
 from workflow_v6_materials import new_page_materials  # noqa: E402
-from workflow_v6_source import fail_reference, import_reference, reject_reference  # noqa: E402
+from workflow_v6_source import (  # noqa: E402
+    confirm_reference,
+    fail_reference,
+    import_reference,
+    reject_reference,
+)
 from workflow_v6_state import create  # noqa: E402
 
 
@@ -66,7 +71,7 @@ def test_v6_cli_does_not_import_legacy_workflows():
     assert "workflow_v5" not in source
 
 
-def test_cli_exposes_local_import_failure_and_found_rejection_commands_without_a_url_fetch():
+def test_cli_exposes_local_import_failure_rejection_and_confirmation_commands_without_a_url_fetch():
     parser = workflow_v6_cli._parser()
 
     imported = parser.parse_args([
@@ -81,11 +86,15 @@ def test_cli_exposes_local_import_failure_and_found_rejection_commands_without_a
         "reject-reference", "--project", "project", "--page", "1", "--request-id", "request-1",
         "--reason", "not suitable",
     ])
+    confirmed = parser.parse_args([
+        "confirm-reference", "--project", "project", "--page", "1", "--request-id", "request-1",
+    ])
 
     assert imported.command == "import-reference"
     assert imported.source_url == "http://127.0.0.1/private.png"
     assert failed.command == "fail-reference"
     assert rejected.command == "reject-reference"
+    assert confirmed.command == "confirm-reference"
 
 
 def test_import_reference_records_found_candidate_and_reject_api_closes_it_without_url_fetch(
@@ -113,6 +122,95 @@ def test_import_reference_records_found_candidate_and_reject_api_closes_it_witho
 
     rejected = reject_reference(project, page_number=1, request_id="request-1", reason="not suitable")
     assert rejected["status"] == "user_rejected"
+
+
+def test_confirm_reference_promotes_one_valid_found_candidate_into_page_materials(tmp_path: Path):
+    """Skipping the material insertion would leave a confirmed acquisition unavailable to the page."""
+    project = _project_with_pending_reference(tmp_path)
+    image = tmp_path / "candidate.png"
+    image.write_bytes(b"candidate bytes")
+    import_reference(
+        project, page_number=1, request_id="request-1", image=image,
+        source_url="https://example.test/candidate.png",
+    )
+
+    confirmed = confirm_reference(project, page_number=1, request_id="request-1")
+
+    assert confirmed["status"] == "confirmed"
+    receipt = json.loads((project / "02_v6/reference_materials/page_001.json").read_text(encoding="utf-8"))
+    assert receipt["reference_acquisitions"][0]["history"] == ["pending", "found", "confirmed"]
+    materials = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))
+    assert len(materials["reference_images"]) == 1
+    assert materials["reference_images"][0]["source_url"] == "https://example.test/candidate.png"
+    assert materials["reference_images"][0]["thumbnail_path"] is None
+    assert materials["reference_images"][0]["integrity"]["thumbnail_sha256"] is None
+
+
+def test_confirm_reference_is_idempotent_only_for_the_same_intact_candidate(tmp_path: Path):
+    """A repeated confirmation must not duplicate a reference or bless altered candidate bytes."""
+    project = _project_with_pending_reference(tmp_path)
+    image = tmp_path / "candidate.png"
+    image.write_bytes(b"candidate bytes")
+    import_reference(project, page_number=1, request_id="request-1", image=image, source_url=None)
+
+    first = confirm_reference(project, page_number=1, request_id="request-1")
+    second = confirm_reference(project, page_number=1, request_id="request-1")
+
+    assert second == first
+    materials = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))
+    assert len(materials["reference_images"]) == 1
+    candidate = project / first["reference"]["original_path"]
+    candidate.write_bytes(b"changed bytes")
+    with pytest.raises(ValueError, match="candidate"):
+        confirm_reference(project, page_number=1, request_id="request-1")
+
+
+def test_confirm_reference_refuses_a_missing_found_candidate(tmp_path: Path):
+    """A receipt alone must not confirm a candidate file that has disappeared."""
+    project = _project_with_pending_reference(tmp_path)
+    image = tmp_path / "candidate.png"
+    image.write_bytes(b"candidate bytes")
+    imported = import_reference(project, page_number=1, request_id="request-1", image=image, source_url=None)
+    (project / imported["candidate"]["local_path"]).unlink()
+
+    with pytest.raises(ValueError, match="candidate"):
+        confirm_reference(project, page_number=1, request_id="request-1")
+
+
+@pytest.mark.parametrize("terminal", ["pending", "failed_no_retry", "user_rejected"])
+def test_confirm_reference_rejects_non_found_lifecycle_states(tmp_path: Path, terminal: str):
+    """Confirming a state without a selected local candidate would bypass one-shot authority."""
+    project = _project_with_pending_reference(tmp_path)
+    if terminal == "failed_no_retry":
+        fail_reference(project, page_number=1, request_id="request-1", reason="not found")
+    elif terminal == "user_rejected":
+        image = tmp_path / "candidate.png"
+        image.write_bytes(b"candidate bytes")
+        import_reference(project, page_number=1, request_id="request-1", image=image, source_url=None)
+        reject_reference(project, page_number=1, request_id="request-1", reason="not suitable")
+
+    with pytest.raises(ValueError, match="found|terminal"):
+        confirm_reference(project, page_number=1, request_id="request-1")
+
+
+def test_confirm_reference_refuses_the_sixteenth_plus_one_page_reference(tmp_path: Path):
+    """Confirming a seventeenth result would violate the V6 material authority cap."""
+    project = _project_with_pending_reference(tmp_path)
+    image = tmp_path / "candidate.png"
+    image.write_bytes(b"candidate bytes")
+    import_reference(project, page_number=1, request_id="request-1", image=image, source_url=None)
+    material_path = project / "02_v6/page_materials/page_001.json"
+    materials = json.loads(material_path.read_text(encoding="utf-8"))
+    candidate = json.loads(
+        (project / "02_v6/reference_materials/page_001.json").read_text(encoding="utf-8")
+    )["reference_acquisitions"][0]["candidate"]["reference"]
+    materials["reference_images"] = [
+        {**candidate, "reference_id": f"existing-{index}"} for index in range(16)
+    ]
+    material_path.write_text(json.dumps(materials), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="16"):
+        confirm_reference(project, page_number=1, request_id="request-1")
 
 
 def test_failed_no_retry_reference_refuses_a_second_result(tmp_path: Path):

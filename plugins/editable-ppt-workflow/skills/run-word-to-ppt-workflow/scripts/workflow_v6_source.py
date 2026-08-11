@@ -16,7 +16,10 @@ from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
 from build_page_contracts import split_page_title_body
 from workflow_v6_contract import new_page, new_project
-from workflow_v6_materials import new_page_materials, reference_image_from_source, validate_page_materials
+from workflow_v6_materials import (
+    new_page_materials, reference_image_from_source, resolve_page_comments,
+    validate_page_materials,
+)
 from workflow_v6_state import create
 from style_recommendations import _recommendations
 
@@ -228,11 +231,22 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             fixed_page_title=title,
             body_render_content=body_render_content,
         )
+        attachment_ids = [
+            str(reference.get("asset_id") or f"attachment-{index:02d}")
+            for index, reference in enumerate(references, start=1)
+            if reference.get("kind") != "word_image" and reference.get("status") == "available"
+        ]
+        comment_resolution = resolve_page_comments(
+            word_original=text,
+            fixed_page_title=title,
+            comments=page_source["comments"],
+            available_attachment_ids=attachment_ids,
+        )
         materials = new_page_materials(
             page_number=page_number,
             fixed_page_title=title,
             word_original=text,
-            effective_body=body_render_content,
+            effective_body=comment_resolution.effective_body,
         )
         image_sources = [
             reference for reference in references
@@ -245,7 +259,13 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
         materials["attachment_extracts"] = [
             dict(reference) for reference in references
             if reference.get("kind") != "word_image"
+        ] + [dict(requirement) for requirement in comment_resolution.attachment_requirements]
+        materials["image_requirements"] = [
+            dict(requirement) for requirement in comment_resolution.image_requirements
         ]
+        materials["degradations"].extend(
+            dict(degradation) for degradation in comment_resolution.degradations
+        )
         if len(image_sources) > 16:
             materials["degradations"].append({
                 "code": "reference_image_limit_exceeded",

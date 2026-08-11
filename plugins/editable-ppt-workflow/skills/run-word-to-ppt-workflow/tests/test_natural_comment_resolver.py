@@ -595,6 +595,20 @@ def test_word_conflicts_preserve_the_audited_target(text, target):
     assert result.decisions[0]["target"] == target
 
 
+def test_fact_change_exposes_the_replacement_text_to_pre_ui_compilation():
+    """A fact decision without its replacement text could not produce a complete effective body."""
+    result = resolve_comment_deterministically(
+        "Change the key fact to Revenue expanded by 30%.", page_context(),
+    )
+
+    assert result is not None
+    assert result.decisions == ({
+        "target": "word.facts",
+        "action": "replace",
+        "value": "Change the key fact to Revenue expanded by 30%.",
+    },)
+
+
 def test_timeline_is_a_required_closed_layout_decision_consumed_by_authority():
     """Downgrading timeline to an empty note would erase a required natural comment."""
     result = resolve_comment_deterministically("本页采用时间轴", page_context())

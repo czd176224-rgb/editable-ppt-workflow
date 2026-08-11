@@ -17,9 +17,11 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_materials import (  # noqa: E402
+    CommentResolution,
     confirmed_revision_digest,
     new_page_materials,
     reference_image_from_source,
+    resolve_page_comments,
     validate_page_materials,
 )
 
@@ -112,6 +114,119 @@ def test_new_page_materials_removes_duplicated_fixed_title_from_body():
     assert material["fixed_page_title"] == "Growth strategy"
     assert material["effective_body"] == "Revenue expanded by 20%."
     validate_page_materials(material, confirmed=False)
+
+
+def test_comment_fact_change_builds_complete_body_without_reintroducing_fixed_title():
+    """Dropping the replacement would leave the confirmed body on the obsolete Word fact."""
+    result = resolve_page_comments(
+        word_original="Growth strategy\n\nRevenue expanded by 20%.",
+        fixed_page_title="Growth strategy",
+        comments=[{"comment_id": "fact", "text": "Change the key fact to Revenue expanded by 30%."}],
+    )
+
+    assert isinstance(result, CommentResolution)
+    assert result.effective_body == "Revenue expanded by 30%."
+    assert result.attachment_requirements == ()
+    assert result.image_requirements == ()
+
+
+def test_selected_attachment_rows_become_extraction_requirement_without_comment_prose():
+    """Passing the reviewer prose to Image2 would bypass attachment extraction."""
+    result = resolve_page_comments(
+        word_original="Status update.",
+        fixed_page_title="Status",
+        comments=[{"comment_id": "rows", "text": "Use selected attachment rows as evidence."}],
+    )
+
+    assert result.attachment_requirements == ({
+        "comment_id": "rows",
+        "operation": "extract_selected_rows",
+    },)
+    assert "Use selected attachment rows as evidence." not in str((
+        result.effective_body, result.attachment_requirements, result.image_requirements,
+    ))
+
+
+def test_real_person_photo_becomes_one_shot_reference_acquisition():
+    """Treating a named person as a generic visual would permit invented identity evidence."""
+    result = resolve_page_comments(
+        word_original="Founder profile.",
+        fixed_page_title="Founder",
+        comments=[{"comment_id": "photo", "text": "Use a real photo of Ada Lovelace."}],
+    )
+
+    assert result.image_requirements == ({
+        "kind": "reference_acquisition",
+        "mode": "one_shot",
+        "subject": "Ada Lovelace",
+        "visual": "photo",
+    },)
+
+
+def test_named_brand_logo_becomes_one_shot_reference_acquisition():
+    """A brand-specific logo cannot be generated as a generic icon without identity evidence."""
+    result = resolve_page_comments(
+        word_original="Partner ecosystem.",
+        fixed_page_title="Partners",
+        comments=[{"comment_id": "logo", "text": "Use the Microsoft logo."}],
+    )
+
+    assert result.image_requirements == ({
+        "kind": "reference_acquisition",
+        "mode": "one_shot",
+        "subject": "Microsoft",
+        "visual": "logo",
+    },)
+
+
+@pytest.mark.parametrize("comment", ["Use a timeline diagram.", "Add a generic growth icon."])
+def test_generic_visual_requests_stay_text_only_image_requirements(comment: str):
+    """Acquiring references for generic visuals would add an unnecessary evidence dependency."""
+    result = resolve_page_comments(
+        word_original="Growth plan.",
+        fixed_page_title="Growth",
+        comments=[{"comment_id": "visual", "text": comment}],
+    )
+
+    assert result.image_requirements[0]["kind"] == "text_only"
+    assert "reference_acquisition" not in str(result.image_requirements)
+
+
+@pytest.mark.parametrize(
+    "comment, expected_code",
+    [
+        ("Change the title to New title.", "unsupported_fixed_layer_request"),
+        ("Use selected attachment rows as evidence.", "attachment_unavailable"),
+    ],
+)
+def test_prohibited_or_unavailable_comment_becomes_editable_degradation(
+    comment: str, expected_code: str,
+):
+    """Silently accepting an unsupported request would make the editable page misleading."""
+    result = resolve_page_comments(
+        word_original="Status update.",
+        fixed_page_title="Status",
+        comments=[{"comment_id": "blocked", "text": comment}],
+        available_attachment_ids=[] if "attachment" in comment else None,
+    )
+
+    assert result.degradations == ({"code": expected_code, "comment_id": "blocked"},)
+
+
+def test_no_comments_preserve_body_and_produce_no_material_requirements():
+    """A comment-free page must not acquire hidden requirements or alter Word content."""
+    result = resolve_page_comments(
+        word_original="Summary\n\nRevenue expanded by 20%.",
+        fixed_page_title="Summary",
+        comments=[],
+    )
+
+    assert result == CommentResolution(
+        effective_body="Revenue expanded by 20%.",
+        attachment_requirements=(),
+        image_requirements=(),
+        degradations=(),
+    )
 
 
 def test_confirmed_page_materials_require_confirmed_revision_digest():

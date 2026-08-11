@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
 from workflow_v6_contract import canonical_sha256
+from natural_comment_resolver import resolve_comment_deterministically
 
 
 PAGE_MATERIALS_VERSION = "page-materials-v6"
@@ -31,6 +34,196 @@ _SCHEMA_REGISTRY = Registry().with_resources((
 _PAGE_MATERIALS_VALIDATOR = Draft202012Validator(
     _PAGE_MATERIALS_SCHEMA, registry=_SCHEMA_REGISTRY
 )
+
+
+@dataclass(frozen=True)
+class CommentResolution:
+    """The only comment-derived material inputs that may reach V6 confirmation."""
+
+    effective_body: str
+    attachment_requirements: tuple[dict[str, Any], ...]
+    image_requirements: tuple[dict[str, Any], ...]
+    degradations: tuple[dict[str, Any], ...]
+
+
+_FACT_REPLACEMENT = re.compile(
+    r"(?:change|replace)\s+(?:the\s+)?(?:key\s+)?(?:fact|data)\s+(?:to|with)\s+(.+)$",
+    re.IGNORECASE,
+)
+_PERSON_PHOTO = re.compile(
+    r"(?:real\s+(?:photo|photograph)|(?:photo|photograph)\s+of)\s+(?:of\s+)?"
+    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
+    re.IGNORECASE,
+)
+_BRAND_LOGO = re.compile(
+    r"(?:use|add|show) +(?>the +)?([A-Z][A-Za-z0-9&.-]{1,}) +logo", re.IGNORECASE,
+)
+_ATTACHMENT_ROWS = re.compile(
+    r"(?:selected\s+)?attachment\s+rows|(?:selected\s+)?rows\s+(?:from|in)\s+(?:the\s+)?attachment",
+    re.IGNORECASE,
+)
+_FIXED_TITLE_CHANGE = re.compile(
+    r"(?:change|replace).{0,24}(?:title)|(?:title).{0,24}(?:change|replace)",
+    re.IGNORECASE,
+)
+
+
+def _comment_id(comment: Mapping[str, Any], position: int) -> str:
+    value = comment.get("comment_id", position)
+    return str(value)
+
+
+def _fact_replacement(text: str) -> str | None:
+    match = _FACT_REPLACEMENT.search(text.strip())
+    if not match:
+        return None
+    replacement = match.group(1).strip()
+    return replacement or None
+
+
+def _real_person_photo(text: str) -> str | None:
+    match = _PERSON_PHOTO.search(text.strip())
+    if not match:
+        return None
+    return match.group(1).strip().rstrip(".,;:") or None
+
+
+def _brand_logo(text: str) -> str | None:
+    match = _BRAND_LOGO.search(text.strip())
+    if not match:
+        return None
+    return match.group(1) or None
+
+
+def resolve_page_comments(
+    *, word_original: str, fixed_page_title: str,
+    comments: Sequence[Mapping[str, Any]],
+    available_attachment_ids: Sequence[str] | None = None,
+) -> CommentResolution:
+    """Compile Word comments into body changes and concrete material requirements.
+
+    The legacy resolver supplies deterministic closed classifications.  This
+    adapter deliberately discards its reviewer prose and exposes only values
+    that a later Image2 confirmation boundary may consume.
+    """
+    if not isinstance(word_original, str) or not isinstance(fixed_page_title, str):
+        raise ValueError("Word content and fixed page title must be strings")
+    if not isinstance(comments, Sequence) or isinstance(comments, (str, bytes)):
+        raise ValueError("comments must be a sequence")
+    if available_attachment_ids is not None and any(
+        not isinstance(value, str) or not value for value in available_attachment_ids
+    ):
+        raise ValueError("available attachment ids must be non-empty strings")
+
+    effective_body = _remove_duplicated_title(
+        fixed_page_title=fixed_page_title.strip(),
+        word_original=word_original,
+        effective_body=word_original,
+    )
+    attachment_requirements: list[dict[str, Any]] = []
+    image_requirements: list[dict[str, Any]] = []
+    degradations: list[dict[str, Any]] = []
+    page_context = {
+        "page_title": fixed_page_title,
+        "body_text": effective_body,
+        "source_text": word_original,
+    }
+    for position, comment in enumerate(comments, start=1):
+        if not isinstance(comment, Mapping):
+            raise ValueError("page comment must be an object")
+        comment_id = _comment_id(comment, position)
+        text = comment.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"page comment {comment_id} text is required")
+        normalized = text.strip()
+        person = _real_person_photo(normalized)
+        if person:
+            image_requirements.append({
+                "kind": "reference_acquisition",
+                "mode": "one_shot",
+                "subject": person,
+                "visual": "photo",
+            })
+            continue
+        brand = _brand_logo(normalized)
+        if brand:
+            image_requirements.append({
+                "kind": "reference_acquisition",
+                "mode": "one_shot",
+                "subject": brand,
+                "visual": "logo",
+            })
+            continue
+        if _ATTACHMENT_ROWS.search(normalized):
+            if available_attachment_ids == []:
+                degradations.append({"code": "attachment_unavailable", "comment_id": comment_id})
+            else:
+                attachment_requirements.append({
+                    "comment_id": comment_id,
+                    "operation": "extract_selected_rows",
+                })
+            continue
+        if _FIXED_TITLE_CHANGE.search(normalized):
+            degradations.append({"code": "unsupported_fixed_layer_request", "comment_id": comment_id})
+            continue
+
+        directive = resolve_comment_deterministically(
+            normalized, page_context, source_comment_id=comment_id,
+        )
+        if directive is None:
+            generic = (
+                "timeline" if "timeline" in normalized.lower()
+                else "icon" if "icon" in normalized.lower()
+                else "diagram" if "diagram" in normalized.lower()
+                else None
+            )
+            if generic:
+                image_requirements.append({"kind": "text_only", "concept": generic})
+            else:
+                degradations.append({"code": "unsupported_comment", "comment_id": comment_id})
+            continue
+
+        targets = {str(decision.get("target", "")) for decision in directive.decisions}
+        if any(target.startswith("fixed.") for target in targets):
+            degradations.append({"code": "unsupported_fixed_layer_request", "comment_id": comment_id})
+            continue
+        if "word.facts" in targets or "word.body_text" in targets or "word.tables" in targets:
+            replacement = _fact_replacement(normalized)
+            if replacement:
+                effective_body = replacement
+            else:
+                degradations.append({"code": "unsupported_word_modification", "comment_id": comment_id})
+            continue
+        if directive.kind == "attachment_reference":
+            if available_attachment_ids == []:
+                degradations.append({"code": "attachment_unavailable", "comment_id": comment_id})
+            else:
+                attachment_requirements.append({"comment_id": comment_id, "operation": "extract_attachment"})
+            continue
+        if directive.kind == "external_image":
+            image_requirements.append({
+                "kind": "reference_acquisition",
+                "mode": "one_shot",
+                "purpose": "source_backed_evidence",
+            })
+            continue
+        if directive.visual_overrides:
+            image_requirements.append({
+                "kind": "text_only",
+                "visual": dict(directive.visual_overrides),
+            })
+            continue
+        if "icon" in normalized.lower():
+            image_requirements.append({"kind": "text_only", "concept": "icon"})
+            continue
+        degradations.append({"code": "unsupported_comment", "comment_id": comment_id})
+
+    return CommentResolution(
+        effective_body=effective_body,
+        attachment_requirements=tuple(attachment_requirements),
+        image_requirements=tuple(image_requirements),
+        degradations=tuple(degradations),
+    )
 
 
 def canonical_json(value: Any) -> str:

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +13,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from workflow_v6_contract import new_page, new_project  # noqa: E402
+from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_image import build_generate_command, build_prompt, generate_page_body  # noqa: E402
 from workflow_v6_state import create, load, save  # noqa: E402
 
@@ -24,11 +25,6 @@ def _project(tmp_path: Path) -> Path:
         logo_source={"path": "00_source/logo.svg"},
         pages=[new_page(1, title="标题")],
     )
-    state["style_confirmation"] = {
-        "status": "confirmed",
-        "contract": {"visual_style": "简洁专业"},
-    }
-    create(project, state)
     for folder, payload in (
         ("effective_pages", {
             "artifact_version": "effective-page-v6",
@@ -54,6 +50,14 @@ def _project(tmp_path: Path) -> Path:
     result_path = project / "confirm_ui" / "result.json"
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    state["style_confirmation"] = {
+        "status": "confirmed",
+        "contract": {"visual_style": "简洁专业"},
+    }
+    state["confirmed_ui_revision"] = 1
+    state["confirmed_ui_digest"] = canonical_sha256(result)
+    state["page_materials_status"] = "confirmed"
+    create(project, state)
     return project
 
 
@@ -150,6 +154,87 @@ def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path
     assert receipt["state"] == "accepted_fallback_first"
     assert "qa_no_effective_improvement" in receipt["degraded_reasons"]
     assert load(project)["pages"][0]["state"] == "accepted_fallback_first"
+
+
+def test_generation_rejects_an_altered_live_confirmation_before_runner_or_qa(tmp_path: Path):
+    project = _project(tmp_path)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"][0]["effective_body"] = "altered after sealing"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="identity|digest"):
+        generate_page_body(
+            project,
+            page_number=1,
+            runner=lambda *_args, **_kwargs: pytest.fail("runner must not be called"),
+            reviewer=lambda *_args, **_kwargs: pytest.fail("reviewer must not be called"),
+        )
+
+
+def test_generation_rejects_revision_two_until_it_is_resealed(tmp_path: Path):
+    project = _project(tmp_path)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["revision"] = 2
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="revision|identity"):
+        generate_page_body(
+            project,
+            page_number=1,
+            runner=lambda *_args, **_kwargs: pytest.fail("runner must not be called"),
+            reviewer=lambda *_args, **_kwargs: pytest.fail("reviewer must not be called"),
+        )
+
+
+def test_qa_feedback_over_prompt_limit_uses_first_candidate_without_retry(tmp_path: Path):
+    project = _project(tmp_path)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"][0]["effective_body"] = "x" * 31_400
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    state = load(project)
+    state["confirmed_ui_digest"] = canonical_sha256(result)
+    save(project, state)
+    calls = []
+    feedback = "y" * 1_000
+
+    initial_prompt = build_prompt(
+        global_visual_contract=result["global_visual_contract"],
+        confirmed_page=result["confirmed_pages"][0],
+    )
+    retry_prompt = build_prompt(
+        global_visual_contract=result["global_visual_contract"],
+        confirmed_page=result["confirmed_pages"][0],
+        qa_feedback=[feedback],
+    )
+    assert len(initial_prompt) <= 32_000
+    assert len(retry_prompt) > 32_000
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project,
+        page_number=1,
+        runner=runner,
+        reviewer=lambda *_args, **_kwargs: {
+            "accepted": False,
+            "score": 3,
+            "issues": [feedback],
+        },
+    )
+
+    first_prompt = Path(calls[0][calls[0].index("--prompt-file") + 1]).read_text(encoding="utf-8")
+    assert len(first_prompt) <= 32_000
+    assert len(calls) == 1
+    assert receipt["selected"]["attempt"] == 1
+    assert receipt["state"] == "accepted_fallback_first"
+    assert "qa_feedback_exceeds_prompt_limit" in receipt["degraded_reasons"]
 
 
 def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):

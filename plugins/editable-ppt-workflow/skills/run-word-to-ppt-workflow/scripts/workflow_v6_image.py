@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from workflow_v6_contract import transition_page
+from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
@@ -21,6 +21,7 @@ IMAGE_CLI = (
     / "generate-slide-body-image" / "scripts" / "codex_gpt_image.py"
 )
 QA_TIMEOUT_SECONDS = 180
+_PROMPT_LIMIT = 32_000
 _MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
 
 
@@ -289,6 +290,11 @@ def generate_page_body(
     if page_index < 0 or page_index >= len(state["pages"]):
         raise ValueError("V6 page number is out of range")
     page = state["pages"][page_index]
+    confirmed = _read_json(root / "confirm_ui" / "result.json")
+    if confirmed.get("revision") != state.get("confirmed_ui_revision"):
+        raise ValueError("V6 live confirmation revision does not match the sealed state")
+    if canonical_sha256(confirmed) != state.get("confirmed_ui_digest"):
+        raise ValueError("V6 live confirmation digest does not match the sealed identity")
     existing = _verified_existing_receipt(root, page_number)
     if existing is not None and page["state"] in {"prepared", "generating", "qa_review", "technical_failed"}:
         if page["state"] in {"prepared", "technical_failed"}:
@@ -303,7 +309,6 @@ def generate_page_body(
         page = transition_page(page, "accepted_fallback_first")
         update_page(root, page_number, page)
         return existing
-    confirmed = _read_json(root / "confirm_ui" / "result.json")
     global_contract = confirmed.get("global_visual_contract")
     frozen_page = next(
         (item for item in confirmed.get("confirmed_pages", [])
@@ -383,6 +388,13 @@ def generate_page_body(
             degraded_reason = "qa_no_effective_improvement"
             break
         feedback = [str(item) for item in qa.get("issues", [])]
+        if attempt < max_candidates and len(build_prompt(
+            global_visual_contract=global_contract,
+            confirmed_page=frozen_page,
+            qa_feedback=feedback,
+        )) > _PROMPT_LIMIT:
+            degraded_reason = "qa_feedback_exceeds_prompt_limit"
+            break
         if page["state"] == "qa_review":
             page = transition_page(page, "generating")
 

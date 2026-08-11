@@ -46,6 +46,14 @@ def _project(tmp_path: Path) -> Path:
         path = project / "02_v6" / folder / "page_001.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    result = {
+        "status": "confirmed", "revision": 1, "confirmed_at": "2026-08-12T00:00:00+08:00",
+        "production_profile": "balanced", "global_visual_contract": {"visual_style": "minimal"},
+        "confirmed_pages": [{"page_number": 1, "effective_body": "姝ｆ枃", "attachment_extracts": [], "chart_facts": [], "image_requirements": [], "degradations": [], "reference_images": [], "reference_decisions": []}],
+    }
+    result_path = project / "confirm_ui" / "result.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     return project
 
 

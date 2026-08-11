@@ -542,6 +542,22 @@ def test_v6_ui_prompt_estimate_uses_the_shared_final_prompt_contract():
     assert server._estimate_v6_final_prompt_chars(contract, page) == estimate_frozen_page_chars(contract, page)
 
 
+def test_shared_confirmed_page_compiler_is_the_exact_ui_estimate_and_excludes_word_context():
+    """The UI cannot safely budget a different prompt than Image2 will receive."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_prompt_contract import compile_confirmed_page_prompt
+    server = load_server()
+    contract = {"visual_style": "editorial", "production_profile": "balanced"}
+    page = {"page_number": 1, "effective_body": "Approved body", "attachment_extracts": [], "chart_facts": [], "image_requirements": [], "reference_images": [], "degradations": [], "word_original": "raw comment must not leak", "fixed_page_title": "Fixed title must not leak"}
+    prompt = compile_confirmed_page_prompt(contract, page)
+
+    assert server._estimate_v6_final_prompt_chars(contract, page) == len(prompt)
+    assert "Approved body" in prompt and "editorial" in prompt
+    assert "raw comment must not leak" not in prompt and "Fixed title must not leak" not in prompt
+
+
 def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_receipt(tmp_path: Path):
     """A reviewer decision belongs to the frozen revision, not the acquisition lifecycle receipt."""
     project = _v6_project_for_final_confirmation(tmp_path)

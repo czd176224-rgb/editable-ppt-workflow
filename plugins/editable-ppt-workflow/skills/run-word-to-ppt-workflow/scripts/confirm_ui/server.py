@@ -1582,13 +1582,28 @@ def _wait(project: Path, stage: str, timeout: int) -> int:
                 # production with the same immutable identity.
                 if (project / "workflow_v6.json").is_file():
                     from workflow_v6_state import load as load_v6, save as save_v6
-
-                    state = load_v6(project)
-                    state["style_confirmation"] = {
-                        "status": "confirmed",
-                        "contract": compile_style_execution(_read_json(result_path)),
-                    }
-                    save_v6(project, state)
+                    with mutation_lock(project):
+                        live = _read_json(result_path)
+                        revision = live.get("revision")
+                        digest = hashlib.sha256(json.dumps(
+                            live, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                        ).encode("utf-8")).hexdigest()
+                        if type(revision) is not int or revision < 1:
+                            raise ValueError("V6 wait requires a valid confirmed UI revision")
+                        state = load_v6(project)
+                        existing_revision = state.get("confirmed_ui_revision")
+                        existing_digest = state.get("confirmed_ui_digest")
+                        if existing_revision is not None and (
+                            existing_revision != revision or existing_digest != digest
+                        ):
+                            raise ValueError("V6 live confirmation revision changed before sealing")
+                        state["style_confirmation"] = {
+                            "status": "confirmed", "contract": compile_style_execution(live),
+                        }
+                        state["confirmed_ui_revision"] = revision
+                        state["confirmed_ui_digest"] = digest
+                        state["page_materials_status"] = "confirmed"
+                        save_v6(project, state)
                 else:
                     from style_contract import freeze_style_contract
 

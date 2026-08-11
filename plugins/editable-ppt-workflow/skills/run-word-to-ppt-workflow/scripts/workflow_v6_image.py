@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 from workflow_v6_contract import transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
+from workflow_v6_prompt_contract import compile_confirmed_page_prompt
 
 
 IMAGE_CLI = (
@@ -120,7 +121,7 @@ def _prompt_comment_directives(
     return active, invalidated
 
 
-def build_prompt(
+def _legacy_build_prompt(
     *,
     effective_page: Mapping[str, Any],
     style_contract: Mapping[str, Any],
@@ -190,6 +191,28 @@ def build_prompt(
         + no_reference_instruction
         + "\n"
         + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    )
+
+
+def build_prompt(
+    *,
+    global_visual_contract: Mapping[str, Any] | None = None,
+    confirmed_page: Mapping[str, Any] | None = None,
+    qa_feedback: list[str] | None = None,
+    effective_page: Mapping[str, Any] | None = None,
+    style_contract: Mapping[str, Any] | None = None,
+    references: Mapping[str, Any] | None = None,
+) -> str:
+    """Compile frozen V6 material; legacy arguments remain test-only compatibility."""
+    if global_visual_contract is not None and confirmed_page is not None:
+        return compile_confirmed_page_prompt(
+            global_visual_contract, confirmed_page, qa_feedback or (),
+        )
+    if effective_page is None or style_contract is None or references is None:
+        raise ValueError("build_prompt requires a frozen V6 result page")
+    return _legacy_build_prompt(
+        effective_page=effective_page, style_contract=style_contract,
+        references=references, qa_feedback=qa_feedback,
     )
 
 
@@ -280,9 +303,19 @@ def generate_page_body(
         page = transition_page(page, "accepted_fallback_first")
         update_page(root, page_number, page)
         return existing
-    effective = _read_json(root / "02_v6" / "effective_pages" / f"page_{page_number:03d}.json")
-    references = _read_json(root / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json")
-    style = dict(state["style_confirmation"]["contract"])
+    confirmed = _read_json(root / "confirm_ui" / "result.json")
+    global_contract = confirmed.get("global_visual_contract")
+    frozen_page = next(
+        (item for item in confirmed.get("confirmed_pages", [])
+         if isinstance(item, Mapping) and item.get("page_number") == page_number),
+        None,
+    )
+    if (
+        confirmed.get("status") != "confirmed"
+        or not isinstance(global_contract, Mapping)
+        or not isinstance(frozen_page, Mapping)
+    ):
+        raise ValueError("V6 generation requires the authoritative frozen UI result page")
     logo_name = Path(state["logo_source"]["path"]).stem
     directory = root / "04_v6" / "images"
     directory.mkdir(parents=True, exist_ok=True)
@@ -301,9 +334,8 @@ def generate_page_body(
         prompt_file = directory / f"page_{page_number:03d}.candidate_{attempt}.prompt.txt"
         trace = directory / f"page_{page_number:03d}.candidate_{attempt}.trace.json"
         prompt_file.write_text(build_prompt(
-            effective_page=effective,
-            style_contract=style,
-            references=references,
+            global_visual_contract=global_contract,
+            confirmed_page=frozen_page,
             qa_feedback=feedback,
         ), encoding="utf-8")
         try:
@@ -332,8 +364,8 @@ def generate_page_body(
             qa = reviewer(
                 root,
                 image=output,
-                effective_page=effective,
-                style_contract=style,
+                effective_page=dict(frozen_page),
+                style_contract=dict(global_contract),
                 fixed_logo_name=logo_name,
                 timeout=min(timeout, QA_TIMEOUT_SECONDS),
             )

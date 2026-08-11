@@ -54,6 +54,39 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def request_identity(
+    *,
+    revision_digest: str,
+    prompt_sha256: str,
+    operation: str,
+    quality: str,
+    input_sha256s: Sequence[str],
+) -> str:
+    """Return the local, path-neutral identity of one adaptive Image2 request."""
+    for name, value in (
+        ("revision_digest", revision_digest),
+        ("prompt_sha256", prompt_sha256),
+    ):
+        if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+            raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    if operation not in {"generate", "edit"}:
+        raise ValueError("operation must be generate or edit")
+    if quality not in {"medium", "high"}:
+        raise ValueError("quality must be medium or high")
+    if isinstance(input_sha256s, (str, bytes)) or not isinstance(input_sha256s, Sequence):
+        raise ValueError("input_sha256s must be an ordered digest sequence")
+    inputs = list(input_sha256s)
+    if any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in inputs):
+        raise ValueError("input_sha256s contains an invalid digest")
+    return canonical_sha256({
+        "input_sha256s": inputs,
+        "operation": operation,
+        "prompt_sha256": prompt_sha256,
+        "quality": quality,
+        "revision_digest": revision_digest,
+    })
+
+
 def geometry_contract() -> dict[str, Any]:
     return {
         "version": CONTRACT_VERSION,

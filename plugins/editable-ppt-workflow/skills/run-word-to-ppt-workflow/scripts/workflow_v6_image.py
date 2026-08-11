@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
-from workflow_v6_contract import canonical_sha256, transition_page
+from workflow_v6_contract import canonical_sha256, request_identity, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
@@ -591,13 +591,25 @@ def _verified_existing_receipt(
         expected_inputs = _request_input_records(request)
     except (OSError, ValueError):
         return None
+    prompt_sha256 = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()
+    expected_identity = request_identity(
+        revision_digest=confirmed_digest,
+        prompt_sha256=prompt_sha256,
+        operation=request.operation,
+        quality=request.quality,
+        input_sha256s=request.input_sha256s,
+    )
     if (
-        receipt.get("artifact_version") != "image2-generate-v6"
+        receipt.get("artifact_version") != "image2-adaptive-v6"
         or receipt.get("page_number") != page_number
         or receipt.get("confirmed_ui_revision") != confirmed_revision
         or receipt.get("confirmed_ui_digest") != confirmed_digest
         or receipt.get("request_operation") != request.operation
+        or receipt.get("request_quality") != request.quality
+        or receipt.get("request_prompt_sha256") != prompt_sha256
+        or receipt.get("request_input_sha256s") != list(request.input_sha256s)
         or receipt.get("request_input_images") != expected_inputs
+        or receipt.get("request_identity") != expected_identity
         or not isinstance(receipt.get("state"), str)
         or receipt.get("state") not in {"accepted", "accepted_fallback_first"}
         or not isinstance(receipt.get("degraded_reasons"), list)
@@ -607,7 +619,9 @@ def _verified_existing_receipt(
             page_number=page_number,
             selected=selected,
             request=request,
+            revision_digest=confirmed_digest,
         )
+        or receipt.get("candidates_sha256") != canonical_sha256(receipt.get("candidates"))
     ):
         return None
     return receipt
@@ -655,6 +669,7 @@ def _committed_receipt_matches(
         page_number=committed.get("page_number"),
         selected=committed.get("selected"),
         request=request,
+        revision_digest=str(committed.get("confirmed_ui_digest", "")),
     )
 
 
@@ -665,6 +680,7 @@ def _receipt_candidates_are_valid(
     page_number: Any,
     selected: Any,
     request: ImageRequest,
+    revision_digest: str,
 ) -> bool:
     if (
         type(page_number) is not int
@@ -689,8 +705,91 @@ def _receipt_candidates_are_valid(
         _candidate_artifact_is_valid(
             root, candidate, page_number=page_number, request=request,
         )
+        and _candidate_receipt_integrity_is_valid(
+            root, candidate, request=request, revision_digest=revision_digest,
+        )
         for candidate in candidates
     )
+
+
+def _candidate_receipt_integrity(
+    root: Path,
+    candidate: Mapping[str, Any],
+    *,
+    request: ImageRequest,
+    revision_digest: str,
+) -> dict[str, str] | None:
+    """Compute receipt-only identity from stable candidate, prompt, and trace bytes."""
+    attempt = candidate.get("attempt")
+    relative = candidate.get("path")
+    if type(attempt) is not int or attempt not in {1, 2} or not isinstance(relative, str):
+        return None
+    image = root / relative
+    prompt = image.with_suffix(".prompt.txt")
+    trace = image.with_suffix(".trace.json")
+    try:
+        image_data = v6_media._read_file_limited(root, image)
+        prompt_data = v6_media._read_file_limited(root, prompt)
+        trace_data = v6_media._read_file_limited(root, trace)
+        prompt_text = prompt_data.decode("utf-8")
+        trace_value = json.loads(trace_data.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return None
+    if attempt == 1 and prompt_text != request.prompt:
+        return None
+    quality = "high" if attempt == 2 and request.quality == "medium" else request.quality
+    prompt_sha256 = hashlib.sha256(prompt_data).hexdigest()
+    return {
+        "quality": quality,
+        "prompt_sha256": prompt_sha256,
+        "request_identity": request_identity(
+            revision_digest=revision_digest,
+            prompt_sha256=prompt_sha256,
+            operation=request.operation,
+            quality=quality,
+            input_sha256s=request.input_sha256s,
+        ),
+        "output_sha256": hashlib.sha256(image_data).hexdigest(),
+        "trace_sha256": hashlib.sha256(trace_data).hexdigest(),
+        "trace_semantics_sha256": canonical_sha256(trace_value),
+    }
+
+
+def _candidate_receipt_integrity_is_valid(
+    root: Path,
+    candidate: Mapping[str, Any],
+    *,
+    request: ImageRequest,
+    revision_digest: str,
+) -> bool:
+    expected = _candidate_receipt_integrity(
+        root, candidate, request=request, revision_digest=revision_digest,
+    )
+    return expected is not None and all(
+        candidate.get(key) == value for key, value in expected.items()
+    )
+
+
+def _enrich_candidate_receipt(
+    root: Path,
+    candidate: Mapping[str, Any],
+    *,
+    request: ImageRequest,
+    revision_digest: str,
+) -> dict[str, Any] | None:
+    integrity = _candidate_receipt_integrity(
+        root, candidate, request=request, revision_digest=revision_digest,
+    )
+    if integrity is None:
+        return None
+    integrity_fields = set(integrity)
+    if integrity_fields.intersection(candidate) and any(
+        candidate.get(key) != value for key, value in integrity.items()
+    ):
+        return None
+    enriched = copy.deepcopy(dict(candidate))
+    enriched.update(integrity)
+    return enriched
 
 
 def _candidate_artifact_is_valid(
@@ -736,6 +835,7 @@ def _candidate_artifact_is_valid(
             canonical_relative,
         ) is None
         or dimensions != (1904, 896)
+        or not isinstance(trace_value, Mapping)
         or trace_value.get("operation") != request.operation
         or trace_value.get("model") != "gpt-image-2"
         or trace_value.get("input_images") != _request_input_records(request)
@@ -753,6 +853,45 @@ def _candidate_artifact_is_valid(
         traced_mimes = [output[key] for key in ("mime", "content_type") if key in output]
         return all(value == "image/png" for value in traced_mimes)
     return False
+
+
+def _adaptive_receipt(
+    *,
+    page_number: int,
+    confirmed_revision: int,
+    confirmed_digest: str,
+    request: ImageRequest,
+    candidates: Sequence[Mapping[str, Any]],
+    selected: Mapping[str, Any],
+    state: str,
+    degraded_reasons: Sequence[str],
+) -> dict[str, Any]:
+    prompt_sha256 = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()
+    candidate_values = [copy.deepcopy(dict(candidate)) for candidate in candidates]
+    selected_value = copy.deepcopy(dict(selected))
+    return {
+        "artifact_version": "image2-adaptive-v6",
+        "page_number": page_number,
+        "confirmed_ui_revision": confirmed_revision,
+        "confirmed_ui_digest": confirmed_digest,
+        "request_prompt_sha256": prompt_sha256,
+        "request_operation": request.operation,
+        "request_quality": request.quality,
+        "request_input_sha256s": list(request.input_sha256s),
+        "request_input_images": _request_input_records(request),
+        "request_identity": request_identity(
+            revision_digest=confirmed_digest,
+            prompt_sha256=prompt_sha256,
+            operation=request.operation,
+            quality=request.quality,
+            input_sha256s=request.input_sha256s,
+        ),
+        "candidates": candidate_values,
+        "candidates_sha256": canonical_sha256(candidate_values),
+        "selected": selected_value,
+        "state": state,
+        "degraded_reasons": list(degraded_reasons),
+    }
 
 
 def _receipt_from_accepted_page(
@@ -782,8 +921,17 @@ def _receipt_from_accepted_page(
     if not same_artifact and _candidate_artifact_is_valid(
         root, first, page_number=page_number, request=request,
     ):
-        candidates.append(copy.deepcopy(dict(first)))
-    selected_copy = copy.deepcopy(dict(selected))
+        first_enriched = _enrich_candidate_receipt(
+            root, first, request=request, revision_digest=confirmed_digest,
+        )
+        if first_enriched is None:
+            return None
+        candidates.append(first_enriched)
+    selected_copy = _enrich_candidate_receipt(
+        root, selected, request=request, revision_digest=confirmed_digest,
+    )
+    if selected_copy is None:
+        return None
     if selected_copy not in candidates:
         candidates.append(selected_copy)
     accepted_state = (
@@ -791,18 +939,16 @@ def _receipt_from_accepted_page(
         if page.get("state") == "accepted_fallback_first"
         else "accepted"
     )
-    return {
-        "artifact_version": "image2-generate-v6",
-        "page_number": page_number,
-        "confirmed_ui_revision": confirmed["revision"],
-        "confirmed_ui_digest": confirmed_digest,
-        "request_operation": request.operation,
-        "request_input_images": _request_input_records(request),
-        "candidates": candidates,
-        "selected": selected_copy,
-        "state": accepted_state,
-        "degraded_reasons": list(page.get("degraded_reasons", [])),
-    }
+    return _adaptive_receipt(
+        page_number=page_number,
+        confirmed_revision=int(confirmed["revision"]),
+        confirmed_digest=confirmed_digest,
+        request=request,
+        candidates=candidates,
+        selected=selected_copy,
+        state=accepted_state,
+        degraded_reasons=list(page.get("degraded_reasons", [])),
+    )
 
 
 def _advance_page_to_accepted_receipt(
@@ -1009,7 +1155,7 @@ def _generate_page_body_owned(
             image_roles=initial_request.image_roles,
             input_sha256s=initial_request.input_sha256s,
         )
-        prompt_file.write_text(request.prompt, encoding="utf-8")
+        prompt_file.write_text(request.prompt, encoding="utf-8", newline="\n")
         try:
             command = build_image_command(
                 request, prompt_file=prompt_file, output=output, trace=trace,
@@ -1128,18 +1274,39 @@ def _generate_page_body_owned(
         require_current_owner()
         update_page(root, page_number, page)
         raise RuntimeError("V6 selected Image2 candidate artifact failed validation")
-    receipt = {
-        "artifact_version": "image2-generate-v6",
-        "page_number": page_number,
-        "confirmed_ui_revision": confirmed["revision"],
-        "confirmed_ui_digest": state["confirmed_ui_digest"],
-        "request_operation": initial_request.operation,
-        "request_input_images": _request_input_records(initial_request),
-        "candidates": candidates,
-        "selected": page["selected_candidate"],
-        "state": page["state"],
-        "degraded_reasons": page["degraded_reasons"],
-    }
+    enriched_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        enriched = _enrich_candidate_receipt(
+            root,
+            candidate,
+            request=initial_request,
+            revision_digest=str(state["confirmed_ui_digest"]),
+        )
+        if enriched is None:
+            raise RuntimeError("V6 candidate receipt integrity could not be computed")
+        enriched_candidates.append(enriched)
+    selected_candidate = next(
+        (
+            candidate for candidate in enriched_candidates
+            if candidate.get("attempt") == page["selected_candidate"].get("attempt")
+            and candidate.get("path") == page["selected_candidate"].get("path")
+        ),
+        None,
+    )
+    if selected_candidate is None:
+        raise RuntimeError("V6 selected candidate is absent from the bounded candidate list")
+    page["first_candidate"] = copy.deepcopy(enriched_candidates[0])
+    page["selected_candidate"] = copy.deepcopy(selected_candidate)
+    receipt = _adaptive_receipt(
+        page_number=page_number,
+        confirmed_revision=int(confirmed["revision"]),
+        confirmed_digest=str(state["confirmed_ui_digest"]),
+        request=initial_request,
+        candidates=enriched_candidates,
+        selected=selected_candidate,
+        state=str(page["state"]),
+        degraded_reasons=page["degraded_reasons"],
+    )
     receipt_path = directory / f"page_{page_number:03d}.json"
     page_ownership.commit_if_current(
         ownership_lease, lambda: _atomic_write_json(receipt_path, receipt),

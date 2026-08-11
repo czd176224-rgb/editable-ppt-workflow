@@ -941,6 +941,193 @@ def test_completed_page_with_verified_receipt_is_never_regenerated(tmp_path: Pat
     assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before
 
 
+@pytest.mark.parametrize("with_reference", [False, True], ids=["generate", "edit"])
+def test_adaptive_receipt_resumes_generate_and_edit_without_provider(
+    tmp_path: Path, with_reference: bool,
+):
+    project = (
+        _project_with_confirmed_reference(tmp_path)
+        if with_reference else _project(tmp_path)
+    )
+    first = _generate_accepted_receipt(project)
+
+    resumed = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid adaptive receipt must resume"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("valid adaptive receipt must skip QA"),
+    )
+
+    assert resumed == first
+    assert resumed["artifact_version"] == "image2-adaptive-v6"
+    assert resumed["request_operation"] == ("edit" if with_reference else "generate")
+    assert resumed["request_quality"] in {"medium", "high"}
+    assert len(resumed["request_prompt_sha256"]) == 64
+    assert len(resumed["request_identity"]) == 64
+    assert all(len(item["output_sha256"]) == 64 for item in resumed["candidates"])
+    assert all(len(item["trace_sha256"]) == 64 for item in resumed["candidates"])
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "receipt_operation",
+        "receipt_quality",
+        "receipt_prompt",
+        "candidate_output",
+        "candidate_trace_bytes",
+        "candidate_trace_semantics",
+        "candidate_trace_wrong_shape",
+        "candidate_list",
+    ],
+)
+def test_adaptive_receipt_rejects_changed_request_or_artifact_and_regenerates(
+    tmp_path: Path, damage: str,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    selected_path = project / original["selected"]["path"]
+    if damage == "receipt_operation":
+        receipt["request_operation"] = "edit"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif damage == "receipt_quality":
+        receipt["request_quality"] = "high"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif damage == "receipt_prompt":
+        prompt = selected_path.with_suffix(".prompt.txt")
+        prompt.write_text(prompt.read_text(encoding="utf-8") + " changed", encoding="utf-8")
+    elif damage == "candidate_output":
+        Image.new("RGB", (1904, 896), "red").save(selected_path)
+    elif damage == "candidate_trace_bytes":
+        trace = selected_path.with_suffix(".trace.json")
+        trace.write_bytes(trace.read_bytes() + b" ")
+    elif damage == "candidate_trace_semantics":
+        trace = selected_path.with_suffix(".trace.json")
+        value = json.loads(trace.read_text(encoding="utf-8"))
+        value["model"] = "other-model"
+        trace.write_text(json.dumps(value), encoding="utf-8")
+    elif damage == "candidate_trace_wrong_shape":
+        selected_path.with_suffix(".trace.json").write_text("[]", encoding="utf-8")
+    else:
+        receipt["candidates"] = []
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    calls = 0
+
+    def runner(command, timeout):
+        nonlocal calls
+        calls += 1
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "blue").save(output)
+        _write_mock_trace(command)
+
+    replacement = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    should_regenerate = damage in {
+        "receipt_prompt", "candidate_output", "candidate_trace_bytes",
+        "candidate_trace_semantics",
+        "candidate_trace_wrong_shape",
+    }
+    assert calls == (1 if should_regenerate else 0)
+    assert replacement["artifact_version"] == "image2-adaptive-v6"
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == replacement
+
+
+@pytest.mark.parametrize("request_change", ["prompt", "quality"])
+def test_adaptive_receipt_invalidates_when_current_prompt_or_quality_changes(
+    tmp_path: Path, monkeypatch, request_change: str,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    if request_change == "prompt":
+        original_build_prompt = workflow_v6_image.build_prompt
+
+        def changed_prompt(*args, **kwargs):
+            return original_build_prompt(*args, **kwargs) + "\nchanged prompt contract"
+
+        monkeypatch.setattr(workflow_v6_image, "build_prompt", changed_prompt)
+    else:
+        monkeypatch.setattr(workflow_v6_image, "initial_quality", lambda _page: "high")
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "blue").save(output)
+        _write_mock_trace(command)
+
+    replacement = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    assert len(calls) == 1
+    assert replacement["request_identity"] != original["request_identity"]
+
+
+def test_edit_receipt_invalidates_when_confirmed_input_bytes_change_at_same_path(
+    tmp_path: Path,
+):
+    project = _project_with_confirmed_reference(tmp_path)
+    original = _generate_accepted_receipt(project)
+    source = project / "02_v6/reference_media/approved/model-input.png"
+    Image.new("RGB", (32, 18), "red").save(source)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "blue").save(output)
+        _write_mock_trace(command)
+
+    replacement = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    assert original["request_operation"] == "edit"
+    assert len(calls) == 1 and calls[0][2] == "generate"
+    assert replacement["request_operation"] == "generate"
+
+
+def test_receipt_hashes_stay_local_and_input_hash_is_only_an_integrity_argument(
+    tmp_path: Path,
+):
+    project = _project_with_confirmed_reference(tmp_path)
+    observed = {}
+
+    def runner(command, timeout):
+        observed["command"] = command
+        observed["prompt"] = Path(command[command.index("--prompt-file") + 1]).read_text(
+            encoding="utf-8",
+        )
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    local_only = {
+        receipt["confirmed_ui_digest"], receipt["request_prompt_sha256"],
+        receipt["request_identity"], receipt["candidates_sha256"],
+        receipt["selected"]["output_sha256"], receipt["selected"]["trace_sha256"],
+        receipt["selected"]["trace_semantics_sha256"],
+    }
+    assert all(value not in observed["prompt"] for value in local_only)
+    assert all(value not in observed["command"] for value in local_only)
+    input_digest = receipt["request_input_sha256s"][0]
+    positions = [index for index, value in enumerate(observed["command"]) if value == input_digest]
+    assert positions == [observed["command"].index("--image-sha256") + 1]
+
+
 def test_generate_page_does_not_retry_validation_provider_failure(tmp_path: Path):
     project = _project(tmp_path)
     calls = []

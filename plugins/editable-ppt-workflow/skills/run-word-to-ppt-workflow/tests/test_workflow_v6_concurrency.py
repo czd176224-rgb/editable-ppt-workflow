@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -13,7 +15,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from workflow_v6_contract import new_page, new_project
-from workflow_v6_state import create, load, update_page
+from workflow_v6_state import LOCK_DIRECTORY, create, load, mutation_lock, update_page
 import workflow_v6_state
 from adaptive_scheduler import (
     AdaptiveScheduler,
@@ -68,6 +70,58 @@ def test_state_save_retries_transient_windows_replace_denials(tmp_path: Path, mo
 
     assert calls == 4
     assert load(tmp_path)["pages"][0]["title"] == "one"
+
+
+def test_mutation_lock_keeps_one_regular_lock_file_across_handoffs(tmp_path: Path):
+    lock_path = tmp_path / LOCK_DIRECTORY
+
+    with mutation_lock(tmp_path):
+        assert lock_path.is_file()
+        first_identity = lock_path.stat()
+
+    assert lock_path.is_file()
+    with mutation_lock(tmp_path):
+        assert os.path.samestat(first_identity, lock_path.stat())
+
+    assert lock_path.is_file()
+
+
+def test_mutation_lock_rejects_a_preexisting_directory_at_the_lock_path(tmp_path: Path):
+    (tmp_path / LOCK_DIRECTORY).mkdir()
+
+    with pytest.raises(ValueError, match="mutation lock must be project-local"):
+        with mutation_lock(tmp_path, timeout=0):
+            pytest.fail("an invalid lock path must never be acquired")
+
+
+def test_mutation_lock_stress_serializes_threads_without_handoff_errors(tmp_path: Path):
+    failures: list[BaseException] = []
+    active = 0
+    maximum_active = 0
+    count = 0
+
+    def worker() -> None:
+        nonlocal active, maximum_active, count
+        try:
+            for _ in range(250):
+                with mutation_lock(tmp_path, timeout=5):
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                    count += 1
+                    active -= 1
+        except BaseException as exc:  # captured so worker failures reach pytest
+            failures.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert failures == []
+    assert maximum_active == 1
+    assert count == 2_000
 
 
 def test_profile_concurrency_is_conservative_and_429_reduces_to_one():

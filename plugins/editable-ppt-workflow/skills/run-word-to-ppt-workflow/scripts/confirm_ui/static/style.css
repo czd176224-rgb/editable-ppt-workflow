@@ -299,6 +299,8 @@ textarea.text-input { min-height: 88px; margin-top: .8rem; resize: vertical; lin
 .reference-warning { margin: 0; padding: 8px; font-size: 12px; font-weight: 700; }
 .reference-warning.warning { color: #7c5a13; background: #fff8e7; }
 .reference-warning.strong, .reference-warning.reject { color: #8a2020; background: #fff0f0; }
+.invalid-json { border-color: #b42318; background: #fff6f5; }
+.json-feedback { color: #b42318; font-size: 12px; }
 .progress-console {
   width: min(1040px, calc(100vw - 48px));
   margin: 38px auto 72px;

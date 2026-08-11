@@ -566,7 +566,9 @@
       card.append(node("h4", "", "第 " + page.page_number + " 页 · " + page.fixed_page_title));
       var context = node("details", "page-context"); context.append(node("summary", "", "查看 Word 原文（仅上下文）"), node("pre", "", page.word_original)); card.appendChild(context);
       var body = node("textarea", "text-input"); body.value = page.effective_body; body.addEventListener("input", function () { page.effective_body = body.value; }); card.appendChild(body);
-      card.append(requirementList("附件摘录", page.attachment_extracts.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("图表事实", page.chart_facts.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("图像要求", page.image_requirements.map(function (x) { return JSON.stringify(x); }), "无"), requirementList("降级说明", page.degradations.map(function (x) { return JSON.stringify(x); }), "无"));
+      [["attachment_extracts", "附件摘录"], ["chart_facts", "图表事实"], ["image_requirements", "图像要求"], ["degradations", "降级说明"]].forEach(function (field) {
+        var label = node("label", "field-stack"); label.appendChild(node("strong", "", field[1] + "（JSON，可编辑）")); var input = node("textarea", "text-input"); input.value = JSON.stringify(page[field[0]], null, 2); var feedback = node("small", "json-feedback", ""); input.addEventListener("input", function () { try { var value = JSON.parse(input.value); if (!Array.isArray(value)) throw new Error("必须是数组"); page[field[0]] = value; feedback.textContent = ""; input.classList.remove("invalid-json"); } catch (error) { feedback.textContent = "JSON 无效：" + error.message; input.classList.add("invalid-json"); } }); label.append(input, feedback); card.appendChild(label);
+      });
       var refs = node("div", "reference-controls"); refs.appendChild(node("strong", "", "参考图像（" + page.reference_count + "）"));
       if (page.reference_warning) refs.appendChild(node("p", "reference-warning " + page.reference_warning, page.reference_warning === "reject" ? "超过 16 张，不能提交" : (page.reference_warning === "strong" ? "11 张以上：强提示，请精简" : "7 张以上：请核对是否都必要")));
       page.reference_images.forEach(function (ref) {
@@ -576,6 +578,12 @@
         var purpose = node("input", "text-input"); purpose.value = ref.purpose || ""; purpose.addEventListener("input", function () { ref.purpose = purpose.value; }); item.appendChild(purpose);
         ["allow_crop", "allow_restyle"].forEach(function (field) { var label = node("label", "toggle-row"); var check = node("input"); check.type = "checkbox"; check.checked = !!ref[field]; check.addEventListener("change", function () { ref[field] = check.checked; }); label.append(check, document.createTextNode(field === "allow_crop" ? "允许裁切" : "允许重风格")); item.appendChild(label); });
         refs.appendChild(item);
+      });
+      (page.found_reference_candidates || []).forEach(function (candidate) {
+        var item = node("div", "reference-control found-candidate"); item.append(node("span", "", "待决定：" + (candidate.purpose || candidate.request_id)));
+        [["thumbnail_url", "缩略图"], ["original_url", "原始图"], ["model_input_url", "模型输入"]].forEach(function (entry) { var link = node("a", "", entry[1]); link.href = candidate[entry[0]]; link.target = "_blank"; link.rel = "noreferrer"; item.appendChild(link); });
+        var select = document.createElement("select"); select.className = "select-input"; ["", "accept", "reject"].forEach(function (value) { var option = document.createElement("option"); option.value = value; option.textContent = value ? (value === "accept" ? "接受此图片" : "拒绝此图片") : "请选择接受或拒绝"; select.appendChild(option); });
+        select.addEventListener("change", function () { page.reference_decisions = (page.reference_decisions || []).filter(function (decision) { return decision.request_id !== candidate.request_id; }); if (select.value) page.reference_decisions.push({request_id: candidate.request_id, decision: select.value}); }); item.appendChild(select); refs.appendChild(item);
       });
       card.appendChild(refs); board.appendChild(card);
     });
@@ -675,7 +683,8 @@
         page_number: page.page_number, effective_body: page.effective_body,
         attachment_extracts: page.attachment_extracts, chart_facts: page.chart_facts,
         image_requirements: page.image_requirements, degradations: page.degradations,
-        reference_images: page.reference_images.map(function (ref) { return { reference_id: ref.reference_id, purpose: ref.purpose, allow_crop: !!ref.allow_crop, allow_restyle: !!ref.allow_restyle, status: ref.status }; })
+        reference_images: page.reference_images.map(function (ref) { return { reference_id: ref.reference_id, purpose: ref.purpose, allow_crop: !!ref.allow_crop, allow_restyle: !!ref.allow_restyle, status: ref.status }; }),
+        reference_decisions: page.reference_decisions || []
       }; });
     }
     requestJson("/api/confirm", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)}).then(function () {

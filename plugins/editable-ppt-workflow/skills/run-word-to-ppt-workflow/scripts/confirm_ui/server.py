@@ -51,8 +51,8 @@ from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: 
 from workflow_v5_dag import DagStore  # noqa: E402
 from workflow_v6_media import read_validated_project_media  # noqa: E402
 from workflow_v6_materials import confirmed_revision_digest, validate_page_materials  # noqa: E402
-from workflow_v6_source import confirm_reference  # noqa: E402
-from workflow_v6_state import load as load_v6_state, save as save_v6_state  # noqa: E402
+from workflow_v6_source import _found_candidate_reference  # noqa: E402
+from workflow_v6_state import load as load_v6_state  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -309,11 +309,22 @@ def _project_facts(project: Path) -> dict[str, Any]:
 
 def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
     state = _read_json(project / "workflow_v6.json")
+    frozen_result = _read_json(project / CONFIRM_DIR / RESULT) if (project / CONFIRM_DIR / RESULT).is_file() else {}
+    frozen_pages = {
+        item.get("page_number"): item for item in frozen_result.get("confirmed_pages", [])
+        if isinstance(item, dict) and type(item.get("page_number")) is int
+    }
     pages = []
     for page in state.get("pages", []):
         number = page.get("page_number")
         source = _read_json(project / "02_v6" / "page_sources" / f"page_{number:03d}.json")
         materials = _read_json(project / "02_v6" / "page_materials" / f"page_{number:03d}.json")
+        frozen = frozen_pages.get(number)
+        if frozen:
+            materials = {**materials, **{field: frozen[field] for field in (
+                "effective_body", "attachment_extracts", "chart_facts", "image_requirements",
+                "degradations", "reference_images",
+            ) if field in frozen}}
         references = materials.get("reference_images", [])
         public_references = []
         for item in references:
@@ -328,6 +339,23 @@ def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
                 "thumbnail_url": "/api/media/thumbnail?path=" + str(item.get("thumbnail_path", "")),
                 "original_url": "/api/media/original?path=" + str(item.get("original_path", "")),
                 "model_input_url": "/api/media/model-input?path=" + str(item.get("model_input_path", "")),
+            })
+        receipt_path = project / "02_v6" / "reference_materials" / f"page_{number:03d}.json"
+        receipt = _read_json(receipt_path) if receipt_path.is_file() else {}
+        found_candidates = []
+        for acquisition in receipt.get("reference_acquisitions", []) if not frozen else []:
+            if not isinstance(acquisition, dict):
+                continue
+            candidate = acquisition.get("candidate")
+            reference = candidate.get("reference") if isinstance(candidate, dict) else None
+            if acquisition.get("status") != "found" or not isinstance(reference, dict):
+                continue
+            found_candidates.append({
+                "request_id": acquisition.get("request_id"),
+                "purpose": reference.get("purpose", acquisition.get("purpose", "")),
+                "thumbnail_url": "/api/media/thumbnail?path=" + str(reference.get("thumbnail_path", "")),
+                "original_url": "/api/media/original?path=" + str(reference.get("original_path", "")),
+                "model_input_url": "/api/media/model-input?path=" + str(reference.get("model_input_path", "")),
             })
         pages.append({
             "page_number": number,
@@ -346,108 +374,142 @@ def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
                 "strong" if len(public_references) >= 11 else
                 "warning" if len(public_references) >= 7 else None
             ),
+            "found_reference_candidates": found_candidates,
+            "reference_decisions": frozen.get("reference_decisions", []) if frozen else [],
         })
     return pages
 
 
 _V6_PAGE_EDITABLE_FIELDS = (
     "page_number", "effective_body", "attachment_extracts", "chart_facts",
-    "image_requirements", "degradations", "reference_images",
+    "image_requirements", "degradations", "reference_images", "reference_decisions",
 )
 _V6_PROMPT_LIMIT = 32000
 
 
+@contextmanager
+def _v6_confirmation_lock(project: Path, timeout: float = 15.0):
+    """Serialize the one authoritative UI commit without touching V6 source state."""
+    lock = project / CONFIRM_DIR / ".final-confirmation.lock"
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out waiting for final confirmation lock")
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        lock.rmdir()
+
+
+def _estimate_v6_final_prompt_chars(global_contract: dict[str, Any], page: dict[str, Any]) -> int:
+    """Conservative shared prompt-size budget; Task 9 imports this exact helper."""
+    # Fixed system, geometry, reference, and compiler framing reserve.  The
+    # JSON part intentionally uses the complete frozen material, never a
+    # truncated presentation projection.
+    return 4096 + len(json.dumps({"global_visual_contract": global_contract, "page": page}, ensure_ascii=False))
+
+
 def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Validate and seal all V6 page material in the same final UI revision."""
-    state = load_v6_state(project)
-    supplied_revision = payload.get("revision")
-    current_revision = state.get("confirmed_ui_revision") or 0
-    if type(supplied_revision) is not int or supplied_revision != current_revision:
-        raise ValueError("stale confirmation revision; reload the final page before submitting")
-    pages = payload.get("confirmed_pages")
-    if not isinstance(pages, list) or len(pages) != len(state["pages"]):
-        raise ValueError("confirmed_pages must contain one complete record for every page")
-    numbers = [item.get("page_number") for item in pages if isinstance(item, dict)]
-    if numbers != list(range(1, len(state["pages"]) + 1)):
-        raise ValueError("confirmed_pages must preserve the locked V6 page order")
+    with _v6_confirmation_lock(project):
+        result_path = project / CONFIRM_DIR / RESULT
+        current = _read_json(result_path) if result_path.is_file() else {}
+        current_revision = current.get("revision", 0)
+        if type(current_revision) is not int or current_revision < 0:
+            raise ValueError("authoritative confirmation revision is invalid")
+        supplied_revision = payload.get("revision")
+        if type(supplied_revision) is not int or supplied_revision != current_revision:
+            raise ValueError("stale confirmation revision; reload the final page before submitting")
+        state = load_v6_state(project)
+        pages = payload.get("confirmed_pages")
+        if not isinstance(pages, list) or len(pages) != len(state["pages"]):
+            raise ValueError("confirmed_pages must contain one complete record for every page")
+        numbers = [item.get("page_number") for item in pages if isinstance(item, dict)]
+        if numbers != list(range(1, len(state["pages"]) + 1)):
+            raise ValueError("confirmed_pages must preserve the locked V6 page order")
 
-    # A found acquisition is intentionally promoted only at this one final boundary.
-    for page_number in numbers:
-        receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
-        if not receipt_path.is_file():
-            continue
-        receipt = _read_json(receipt_path)
-        for acquisition in receipt.get("reference_acquisitions", []):
-            if isinstance(acquisition, dict) and acquisition.get("status") == "found":
-                confirm_reference(project, page_number=page_number, request_id=str(acquisition.get("request_id", "")))
-
-    revision = current_revision + 1
-    frozen_pages: list[dict[str, Any]] = []
-    material_updates: list[tuple[Path, dict[str, Any]]] = []
-    for submitted in pages:
-        page_number = submitted["page_number"]
-        if set(submitted) != set(_V6_PAGE_EDITABLE_FIELDS):
-            raise ValueError("confirmed page records may contain only editable Image2 material fields")
-        material_path = project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
-        material = _read_json(material_path)
-        updated = dict(material)
-        for field in _V6_PAGE_EDITABLE_FIELDS:
-            if field != "page_number":
-                updated[field] = _clean(submitted[field])
-        base_references = {
+        revision = current_revision + 1
+        frozen_pages: list[dict[str, Any]] = []
+        for submitted in pages:
+            page_number = submitted["page_number"]
+            if set(submitted) != set(_V6_PAGE_EDITABLE_FIELDS):
+                raise ValueError("confirmed page records may contain only editable Image2 material fields")
+            material_path = project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
+            material = _read_json(material_path)
+            updated = dict(material)
+            for field in _V6_PAGE_EDITABLE_FIELDS:
+                if field not in {"page_number", "reference_decisions"}:
+                    updated[field] = _clean(submitted[field])
+            base_references = {
             item.get("reference_id"): dict(item) for item in material.get("reference_images", [])
             if isinstance(item, dict) and isinstance(item.get("reference_id"), str)
-        }
-        controlled_references = []
-        for reference in submitted["reference_images"]:
-            if not isinstance(reference, dict) or set(reference) != {
+            }
+            controlled_references = []
+            for reference in submitted["reference_images"]:
+                if not isinstance(reference, dict) or set(reference) != {
                 "reference_id", "purpose", "allow_crop", "allow_restyle", "status",
-            }:
-                raise ValueError("reference controls must identify an existing safe reference")
-            original = base_references.get(reference.get("reference_id"))
-            if original is None:
-                raise ValueError("reference controls cannot add a new local image")
-            if not isinstance(reference["purpose"], str) or type(reference["allow_crop"]) is not bool or type(reference["allow_restyle"]) is not bool:
-                raise ValueError("reference purpose, crop, and restyle controls are invalid")
-            original.update({
+                }:
+                    raise ValueError("reference controls must identify an existing safe reference")
+                original = base_references.get(reference.get("reference_id"))
+                if original is None:
+                    raise ValueError("reference controls cannot add a new local image")
+                if not isinstance(reference["purpose"], str) or type(reference["allow_crop"]) is not bool or type(reference["allow_restyle"]) is not bool:
+                    raise ValueError("reference purpose, crop, and restyle controls are invalid")
+                original.update({
                 "purpose": reference["purpose"],
                 "allow_crop": reference["allow_crop"],
                 "allow_restyle": reference["allow_restyle"],
-            })
-            controlled_references.append(original)
-        controlled_ids = {item["reference_id"] for item in controlled_references}
-        controlled_references.extend(
+                })
+                controlled_references.append(original)
+            controlled_ids = {item["reference_id"] for item in controlled_references}
+            controlled_references.extend(
             item for reference_id, item in base_references.items() if reference_id not in controlled_ids
-        )
-        updated["reference_images"] = controlled_references
-        if len(updated["reference_images"]) > 16:
-            raise ValueError("a page may not contain more than 16 reference images")
-        estimated = len(json.dumps({"global_visual_contract": global_contract, "page": updated}, ensure_ascii=False))
-        if estimated > _V6_PROMPT_LIMIT:
-            raise ValueError("final Image2 prompt estimate exceeds 32,000 characters")
-        updated["confirmed_revision"] = revision
-        updated["confirmed_revision_digest"] = confirmed_revision_digest(updated)
-        validate_page_materials(updated, confirmed=True)
-        frozen_pages.append({field: updated[field] for field in _V6_PAGE_EDITABLE_FIELDS})
-        material_updates.append((material_path, updated))
+            )
+            decisions = submitted["reference_decisions"]
+            receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
+            acquisitions = _read_json(receipt_path).get("reference_acquisitions", []) if receipt_path.is_file() else []
+            found = {item.get("request_id"): item for item in acquisitions if isinstance(item, dict) and item.get("status") == "found"}
+            decision_map = {}
+            for decision in decisions:
+                if not isinstance(decision, dict) or set(decision) != {"request_id", "decision"} or decision.get("decision") not in {"accept", "reject"}:
+                    raise ValueError("found reference decisions must be explicit accept or reject values")
+                request_id = decision.get("request_id")
+                if request_id not in found or request_id in decision_map:
+                    raise ValueError("found reference decision is unknown or duplicated")
+                decision_map[request_id] = decision["decision"]
+            if set(decision_map) != set(found):
+                raise ValueError("every found reference candidate requires an explicit decision")
+            frozen_decisions = []
+            for request_id, acquisition in found.items():
+                decision = decision_map[request_id]
+                if decision == "accept":
+                    controlled_references.append(_found_candidate_reference(project, acquisition))
+                else:
+                    updated["degradations"].append({"code": "reference_rejected", "detail": f"Reference request {request_id} was rejected by the reviewer."})
+                frozen_decisions.append({"request_id": request_id, "decision": decision})
+            updated["reference_images"] = controlled_references
+            if len(updated["reference_images"]) > 16:
+                raise ValueError("a page may not contain more than 16 reference images")
+            if _estimate_v6_final_prompt_chars(global_contract, updated) > _V6_PROMPT_LIMIT:
+                raise ValueError("final Image2 prompt estimate exceeds 32,000 characters")
+            validate_page_materials(updated, confirmed=False)
+            frozen = {field: updated[field] for field in _V6_PAGE_EDITABLE_FIELDS if field != "reference_decisions"}
+            frozen["reference_decisions"] = frozen_decisions
+            frozen_pages.append(frozen)
 
-    result = {
-        "status": "confirmed",
-        "revision": revision,
-        "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "production_profile": global_contract["production_profile"],
-        "global_visual_contract": global_contract,
-        "confirmed_pages": frozen_pages,
-    }
-    result_digest = hashlib.sha256(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-    for path, updated in material_updates:
-        _write_json(path, updated)
-    state["style_confirmation"] = {"status": "confirmed", "contract": compile_style_execution(global_contract)}
-    state["confirmed_ui_revision"] = revision
-    state["confirmed_ui_digest"] = result_digest
-    state["page_materials_status"] = "confirmed"
-    save_v6_state(project, state)
-    return result
+        result = {
+            "status": "confirmed", "revision": revision,
+            "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "production_profile": global_contract["production_profile"],
+            "global_visual_contract": global_contract, "confirmed_pages": frozen_pages,
+        }
+        _write_json(result_path, result)
+        return result
 
 
 def _field_value(value: Any, default: Any = "") -> Any:
@@ -792,7 +854,9 @@ def _session_state(project: Path) -> dict[str, Any]:
     }
     if (project / "workflow_v6.json").is_file():
         try:
-            state["revision"] = load_v6_state(project).get("confirmed_ui_revision") or 0
+            result_path = confirm_dir / RESULT
+            result = _read_json(result_path) if result_path.is_file() else {}
+            state["revision"] = result.get("revision") or 0
         except (OSError, ValueError, json.JSONDecodeError):
             state["revision"] = 0
     return state
@@ -1066,7 +1130,11 @@ def create_app(
             expected = _expected_recommendation_stage(project / CONFIRM_DIR / RESULT)
             if expected == 1 and rec_stage == 4 and not (project / CONFIRM_DIR / RESULT).exists():
                 expected = 4
-            if rec_stage != expected:
+            v6_reopen = (
+                (project / "workflow_v6.json").is_file()
+                and rec_stage == 4 and expected == 0
+            )
+            if rec_stage != expected and not v6_reopen:
                 return jsonify(
                     {
                         "error": (

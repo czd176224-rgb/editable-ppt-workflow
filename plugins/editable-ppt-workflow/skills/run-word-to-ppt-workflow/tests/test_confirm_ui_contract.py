@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import http.server
 import json
 import os
@@ -403,6 +404,7 @@ def test_v6_final_submission_freezes_one_complete_revision_and_rejects_stale_pay
             "image_requirements": view["image_requirements"],
             "degradations": view["degradations"],
             "reference_images": [],
+            "reference_decisions": [],
         }],
     })
     first = client.post("/api/confirm", json=payload)
@@ -421,6 +423,120 @@ def test_v6_final_submission_freezes_one_complete_revision_and_rejects_stale_pay
     second = client.post("/api/confirm", json=payload)
     assert second.status_code == 200, second.get_json()
     assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 2
+
+
+def test_v6_final_submission_only_replaces_result_and_never_mutates_source_artifacts(tmp_path: Path):
+    """A failed or successful final submit must not rewrite pre-confirmation evidence."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    client = server.create_app(project).test_client()
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    state_path = project / "workflow_v6.json"
+    before = {path: path.read_bytes() for path in (material_path, state_path)}
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Frozen only in result",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    assert {path: path.read_bytes() for path in before} == before
+    result = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert result["confirmed_pages"][0]["effective_body"] == "Frozen only in result"
+    reopened = client.get("/api/recommendations")
+    assert reopened.status_code == 200 and reopened.get_json()["stage"] == "final"
+    assert client.get("/api/session").get_json()["revision"] == 1
+    assert client.get("/api/pages").get_json()["pages"][0]["effective_body"] == "Frozen only in result"
+
+
+def test_v6_concurrent_same_base_submissions_leave_one_authoritative_revision(tmp_path: Path):
+    """Without the project confirmation lock, two same-base submits could both claim revision 1."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    page = server.create_app(project).test_client().get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Concurrent body",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+
+    def submit():
+        try:
+            return server._stage_submission(project, payload)
+        except ValueError as error:
+            return None, str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _index: submit(), range(2)))
+
+    successes = [result for result, error in outcomes if result is not None and error is None]
+    failures = [error for result, error in outcomes if result is None or error is not None]
+    assert len(successes) == 1
+    assert len(failures) == 1 and "stale" in failures[0]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
+
+
+def test_v6_final_write_fault_leaves_every_source_artifact_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A persistence fault must fail before any material, receipt, or state mutation."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    page = server.create_app(project).test_client().get("/api/pages").get_json()["pages"][0]
+    tracked = [project / "02_v6" / "page_materials" / "page_001.json", project / "workflow_v6.json"]
+    before = {path: path.read_bytes() for path in tracked}
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "No partial write",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+    monkeypatch.setattr(server, "_write_json", lambda *_args: (_ for _ in ()).throw(OSError("injected write failure")))
+
+    with pytest.raises(OSError, match="injected write failure"):
+        server._stage_submission(project, payload)
+
+    assert {path: path.read_bytes() for path in tracked} == before
+    assert not (project / "confirm_ui" / "result.json").exists()
+
+
+def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_receipt(tmp_path: Path):
+    """A reviewer decision belongs to the frozen revision, not the acquisition lifecycle receipt."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_source import import_reference
+    receipt_path = project / "02_v6" / "reference_materials" / "page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({"artifact_version": "reference-materials-v6", "page_number": 1, "references": [], "search_requests": [], "reference_acquisitions": [{"request_id": "found-1", "page_number": 1, "purpose": "evidence", "identity_evidence_need": "show evidence", "status": "pending", "history": ["pending"]}]}), encoding="utf-8")
+    image = tmp_path / "candidate.png"; Image.new("RGB", (4, 2), "#336699").save(image, format="PNG")
+    import_reference(project, page_number=1, request_id="found-1", image=image, source_url="https://example.test/image.png")
+    receipt_before = receipt_path.read_bytes()
+    server = load_server(); client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    assert page["found_reference_candidates"][0]["request_id"] == "found-1"
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [{"request_id": "found-1", "decision": "accept"}],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    frozen = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["confirmed_pages"][0]
+    assert frozen["reference_decisions"] == [{"request_id": "found-1", "decision": "accept"}]
+    assert frozen["reference_images"][0]["source_url"] == "https://example.test/image.png"
+    assert receipt_path.read_bytes() == receipt_before
 
 
 def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: Path):

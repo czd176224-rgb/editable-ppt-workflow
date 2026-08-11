@@ -23,7 +23,6 @@ from workflow_v6_source import (
     reject_reference,
 )
 from workflow_v6_state import load, save
-from workflow_v6_materials import validate_page_materials
 
 
 def _emit(value: Any) -> None:
@@ -112,29 +111,31 @@ def main() -> int:
         _emit(_status(args.project))
     elif args.command == "confirm-style":
         raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
+        live_path = args.project / "confirm_ui" / "result.json"
+        if not live_path.is_file():
+            raise ValueError("confirm-style requires the authoritative confirm_ui/result.json")
+        live = json.loads(live_path.read_text(encoding="utf-8"))
+        canonical = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if canonical(raw) != canonical(live):
+            raise ValueError("confirm-style input does not match the authoritative UI result")
         state = load(args.project)
-        if not isinstance(raw, dict) or raw.get("status") != "confirmed":
+        if not isinstance(live, dict) or live.get("status") != "confirmed":
             raise ValueError("confirm-style requires one confirmed UI revision")
-        if isinstance(raw.get("global_visual_contract"), dict):
-            revision = raw.get("revision")
-            pages = raw.get("confirmed_pages")
+        if isinstance(live.get("global_visual_contract"), dict):
+            revision = live.get("revision")
+            pages = live.get("confirmed_pages")
             if type(revision) is not int or revision < 1 or not isinstance(pages, list):
                 raise ValueError("confirmed UI revision is incomplete")
             if [item.get("page_number") for item in pages if isinstance(item, dict)] != list(range(1, len(state["pages"]) + 1)):
                 raise ValueError("confirmed UI pages are incomplete")
-            for page_number in range(1, len(state["pages"]) + 1):
-                material = json.loads((args.project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json").read_text(encoding="utf-8"))
-                validate_page_materials(material, confirmed=True)
-                if material.get("confirmed_revision") != revision:
-                    raise ValueError("page materials do not match the confirmed UI revision")
             state["confirmed_ui_revision"] = revision
             state["confirmed_ui_digest"] = hashlib.sha256(
-                json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                canonical(live).encode("utf-8")
             ).hexdigest()
             state["page_materials_status"] = "confirmed"
         state["style_confirmation"] = {
             "status": "confirmed",
-            "contract": compile_style_execution(raw),
+            "contract": compile_style_execution(live),
         }
         save(args.project, state)
         _emit(_status(args.project))

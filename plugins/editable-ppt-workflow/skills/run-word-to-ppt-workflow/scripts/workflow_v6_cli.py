@@ -69,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     generate = sub.add_parser("generate-page", help="generate and lightly review one body")
     generate.add_argument("--project", type=Path, required=True)
     generate.add_argument("--page", type=int, required=True)
-    generate.add_argument("--max-candidates", type=int, default=3)
+    generate.add_argument("--max-candidates", type=int, choices=(1, 2), default=2)
     request = sub.add_parser("reconstruction-request", help="write one editable reconstruction request")
     request.add_argument("--project", type=Path, required=True)
     request.add_argument("--page", type=int, required=True)

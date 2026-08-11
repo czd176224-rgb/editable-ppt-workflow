@@ -25,6 +25,13 @@ IMAGE_CLI = (
 )
 QA_TIMEOUT_SECONDS = 180
 _PROMPT_LIMIT = 32_000
+_MAX_CANDIDATES = 2
+_SMALL_TEXT_RISK_CHARS = 1_000
+_HIGH_DETAIL_TERMS = re.compile(
+    r"(?:logo|logotype|screenshot|screen\s*shot|high[-_ ]?detail|fine[-_ ]?detail|"
+    r"small[-_ ]?text|dense[-_ ]?data|徽标|标志|截图|高细节|小字|密集数据)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,47 @@ class ImageRequest:
     input_images: tuple[Path, ...]
     image_roles: tuple[str, ...]
     input_sha256s: tuple[str, ...] = ()
+
+
+def _material_role_text(page: Mapping[str, Any]) -> str:
+    values: list[str] = []
+    for field in ("reference_images", "image_requirements"):
+        for item in page.get(field, []):
+            if not isinstance(item, Mapping):
+                continue
+            for key in ("kind", "purpose", "role"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    values.append(value)
+    return " ".join(values)
+
+
+def initial_quality(page: Mapping[str, Any]) -> Literal["medium", "high"]:
+    """Classify only the material package frozen by the single confirmation UI."""
+    body = str(page.get("effective_body", ""))
+    charts = page.get("chart_facts", [])
+    attachment_types = {
+        str(item.get("kind", item.get("type", ""))).strip().casefold()
+        for item in page.get("attachment_extracts", [])
+        if isinstance(item, Mapping)
+    }
+    dense_data = (
+        isinstance(charts, list) and bool(charts)
+        or bool(attachment_types & {"table", "chart", "spreadsheet", "data_table"})
+    )
+    return "high" if (
+        len(body) >= _SMALL_TEXT_RISK_CHARS
+        or dense_data
+        or bool(_HIGH_DETAIL_TERMS.search(_material_role_text(page)))
+    ) else "medium"
+
+
+def _actionable_qa_feedback(qa: Mapping[str, Any]) -> list[str]:
+    issues = [str(item).strip() for item in qa.get("issues", []) if str(item).strip()]
+    normalized = [re.sub(r"\s+", " ", item).casefold() for item in issues]
+    if not issues or len(set(normalized)) != len(normalized):
+        return []
+    return issues
 
 
 _MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
@@ -305,7 +353,7 @@ def build_image_request(
     )
     return ImageRequest(
         operation="edit" if images else "generate",
-        quality="medium",
+        quality=initial_quality(resolved_page),
         prompt=prompt,
         input_images=images,
         image_roles=roles,
@@ -469,12 +517,13 @@ def generate_page_body(
     *,
     page_number: int,
     timeout: int = 900,
-    max_candidates: int = 3,
+    max_candidates: int = 2,
     runner: Callable[[list[str], int], None] = _run,
     reviewer: Callable[..., dict[str, Any]] = review_candidate,
 ) -> dict[str, Any]:
     if max_candidates < 1:
         raise ValueError("max_candidates must be positive")
+    max_candidates = min(max_candidates, _MAX_CANDIDATES)
     root = Path(project).resolve()
     state = load(root)
     if state["style_confirmation"]["status"] != "confirmed":
@@ -550,7 +599,11 @@ def generate_page_body(
         trace = directory / f"page_{page_number:03d}.candidate_{attempt}.trace.json"
         request = ImageRequest(
             operation=initial_request.operation,
-            quality=initial_request.quality,
+            quality=(
+                "high"
+                if attempt == 2 and initial_request.quality == "medium"
+                else initial_request.quality
+            ),
             prompt=build_prompt(
                 global_visual_contract=global_contract,
                 confirmed_page=resolved_request_page,
@@ -605,7 +658,10 @@ def generate_page_body(
         if attempt > 1 and first_qa is not None and not improved(first_qa, qa):
             degraded_reason = "qa_no_effective_improvement"
             break
-        feedback = [str(item) for item in qa.get("issues", [])]
+        feedback = _actionable_qa_feedback(qa)
+        if not feedback:
+            degraded_reason = "qa_feedback_not_actionable"
+            break
         if attempt < max_candidates and len(build_prompt(
             global_visual_contract=global_contract,
             confirmed_page=resolved_request_page,

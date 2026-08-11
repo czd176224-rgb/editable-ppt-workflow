@@ -16,9 +16,9 @@
   var resetDisclosureOpen = false;
 
   var productionProfiles = [
-    {id: "quality", name: "质量优先", note: "适合重要汇报和复杂页面", quality: "高", concurrency: 3, repair: 2, detail: "高质量生图 · 最多并发3页 · 每页最多自动修复2次"},
-    {id: "balanced", name: "均衡", note: "质量、速度和稳定性平衡", quality: "高", concurrency: 5, repair: 1, detail: "高质量生图 · 最多并发5页 · 每页最多自动修复1次"},
-    {id: "speed", name: "速度优先", note: "适合页数较多、时间紧的材料", quality: "中", concurrency: 8, repair: 1, detail: "中等质量生图 · 最多并发8页 · 每页最多自动修复1次"}
+    {id: "quality", name: "质量优先", note: "适合重要汇报和复杂页面", quality: "高", concurrency: 2, repair: 2, detail: "高质量生图 · 最多并发2页 · 每页最多自动修复2次"},
+    {id: "balanced", name: "均衡", note: "质量、速度和稳定性平衡", quality: "高", concurrency: 2, repair: 1, detail: "高质量生图 · 最多并发2页 · 每页最多自动修复1次"},
+    {id: "speed", name: "速度优先", note: "适合页数较多、时间紧的材料", quality: "中", concurrency: 3, repair: 1, detail: "中等质量生图 · 最多并发3页 · 每页最多自动修复1次"}
   ];
   var fieldLabels = {
     background_system: "页面背景体系", composition_tendency: "页面构图倾向", evidence_strength: "证据表达强度",

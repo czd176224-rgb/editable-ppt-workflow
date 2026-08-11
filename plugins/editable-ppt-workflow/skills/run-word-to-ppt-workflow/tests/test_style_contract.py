@@ -88,7 +88,7 @@ def confirmed_result() -> dict:
         "generation_mode": "continuous",
         "refine_spec": False,
         "image_quality": "high",
-        "max_concurrency": 4,
+        "max_concurrency": 2,
         "automatic_repair_budget": 2,
         "editable_output": True,
         "start_generation": True,
@@ -334,8 +334,8 @@ def test_freeze_writes_canonical_artifacts_validates_schemas_and_advances_workfl
         "ui_preview_audit_sha256": visual_hash_path.read_text(encoding="ascii").strip(),
     }
     assert state["scheduler"] == {
-        "concurrency": 4,
-        "configured_max": 4,
+        "concurrency": 2,
+        "configured_max": 2,
         "last_trigger": "style_confirmation",
     }
     assert state["runtime"] == {

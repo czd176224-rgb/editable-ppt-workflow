@@ -2,8 +2,34 @@
 
 from __future__ import annotations
 
+import random
+import time
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
+
+
+PROFILE_CONCURRENCY = {"balanced": 2, "quality": 2, "speed": 3}
+
+
+def _status_code(error: BaseException) -> int | None:
+    value = getattr(error, "status_code", getattr(error, "code", None))
+    return value if type(value) is int else None
+
+
+def should_retry(error: BaseException) -> bool:
+    status = _status_code(error)
+    return status == 429 or (status is not None and 500 <= status <= 599) or isinstance(
+        error, (ConnectionError, TimeoutError)
+    )
+
+
+def jittered_retry_delay(attempt: int, *, jitter: float) -> float:
+    if type(attempt) is not int or attempt < 0:
+        raise ValueError("attempt must be a non-negative integer")
+    if not isinstance(jitter, (int, float)) or not 0.0 <= float(jitter) <= 1.0:
+        raise ValueError("jitter must be between 0 and 1")
+    base = min(30.0, float(2 ** attempt))
+    return base * (0.75 + 0.5 * float(jitter))
 
 
 ReadyState = Literal["queued", "repair", "accepted"]
@@ -67,6 +93,68 @@ class AdaptiveScheduler:
         self._active_weight = 0
         self._depths = {"queued": 0, "repair": 0, "accepted": 0}
         self.last_trigger_code = "initial"
+        self.completed_receipts: dict[int, dict[str, Any]] = {}
+
+    @classmethod
+    def for_profile(cls, profile: str, *, page_count: int = 1) -> "AdaptiveScheduler":
+        try:
+            concurrency = PROFILE_CONCURRENCY[profile]
+        except KeyError as exc:
+            raise ValueError("profile must be quality, balanced, or speed") from exc
+        return cls(
+            page_count=page_count,
+            initial_concurrency=concurrency,
+            maximum_concurrency=concurrency,
+        )
+
+    @property
+    def active_concurrency(self) -> int:
+        return self._concurrency
+
+    def note_failure(self, error: BaseException) -> bool:
+        if not should_retry(error):
+            return False
+        if _status_code(error) == 429:
+            self._concurrency = 1
+            self._launch_capacity = 1
+            self.last_trigger_code = "rate_limit"
+        return True
+
+    def mark_completed(self, page_number: int, receipt: Mapping[str, Any]) -> None:
+        if type(page_number) is not int or page_number < 1:
+            raise ValueError("page_number must be positive")
+        self.completed_receipts[page_number] = dict(receipt)
+
+    def pending_pages(self, page_numbers: Sequence[int]) -> list[int]:
+        return [number for number in page_numbers if number not in self.completed_receipts]
+
+    def run_page(
+        self,
+        page_number: int,
+        action: Callable[[], Mapping[str, Any]],
+        *,
+        max_attempts: int = 3,
+        sleep: Callable[[float], None] | None = None,
+        jitter: Callable[[], float] | None = None,
+    ) -> dict[str, Any]:
+        """Run one not-yet-completed page with narrowly classified retries."""
+        if page_number in self.completed_receipts:
+            return dict(self.completed_receipts[page_number])
+        if type(max_attempts) is not int or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer")
+        sleeper = sleep if sleep is not None else time.sleep
+        jitter_source = jitter if jitter is not None else random.random
+        for attempt in range(max_attempts):
+            try:
+                receipt = dict(action())
+            except Exception as exc:
+                if attempt + 1 >= max_attempts or not self.note_failure(exc):
+                    raise
+                sleeper(jittered_retry_delay(attempt, jitter=float(jitter_source())))
+                continue
+            self.mark_completed(page_number, receipt)
+            return receipt
+        raise RuntimeError("unreachable retry state")
 
     @property
     def window_size(self) -> int:
@@ -157,7 +245,7 @@ class AdaptiveScheduler:
         if any(type(value) is not int or value < 0 for value in values):
             raise ValueError("round outcome counts must be non-negative integers")
         if outcome.rate_limits:
-            self._concurrency = max(self.minimum_concurrency, self._concurrency // 2)
+            self._concurrency = self.minimum_concurrency
             self.last_trigger_code = "rate_limit"
         elif outcome.timeouts:
             self._concurrency = max(self.minimum_concurrency, self._concurrency // 2)

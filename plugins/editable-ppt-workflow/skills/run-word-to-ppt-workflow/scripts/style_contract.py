@@ -18,6 +18,7 @@ from fixed_region_contract import SLIDE_SIZE_IN, fixed_frame_execution
 from body_image_profile import body_image_profile
 from current_ui_adapter import adapt_current_ui_payload
 from page_complexity import classify_page
+from adaptive_scheduler import PROFILE_CONCURRENCY
 
 
 EDITPPT_CLI = Path(__file__).resolve().parents[2] / "reconstruct-editable-slide" / "cli"
@@ -490,8 +491,8 @@ def freeze_style_contract(project: Path) -> dict[str, Any]:
             _atomic_write(path, contents)
         state["style_confirmation"] = expected_gate
         state["scheduler"] = {
-            "concurrency": confirmed["max_concurrency"],
-            "configured_max": confirmed["max_concurrency"],
+            "concurrency": PROFILE_CONCURRENCY[confirmed["production_profile"]],
+            "configured_max": PROFILE_CONCURRENCY[confirmed["production_profile"]],
             "last_trigger": "style_confirmation",
         }
         state["runtime"] = {

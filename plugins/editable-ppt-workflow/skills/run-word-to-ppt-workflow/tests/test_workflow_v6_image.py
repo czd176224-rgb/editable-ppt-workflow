@@ -23,8 +23,10 @@ from workflow_v6_image import (  # noqa: E402
     build_image_request,
     build_prompt,
     generate_page_body,
+    initial_quality,
 )
 from workflow_v6_state import create, load, save  # noqa: E402
+from workflow_v6_cli import _parser  # noqa: E402
 
 
 def _project(tmp_path: Path) -> Path:
@@ -80,6 +82,31 @@ def _confirmed_reference(path: Path, *, status: str = "available", digest: str |
             "model_input_sha256": digest if digest is not None else hashlib.sha256(path.read_bytes()).hexdigest(),
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [
+        ({"effective_body": "Short approved copy", "reference_images": [{"purpose": "ordinary photo"}]}, "medium"),
+        ({"effective_body": "Short", "reference_images": [{"purpose": "company logo"}]}, "high"),
+        ({"effective_body": "Short", "reference_images": [{"purpose": "product screenshot"}]}, "high"),
+        ({"effective_body": "Short", "chart_facts": [{"series": [1, 2, 3]}]}, "high"),
+        ({"effective_body": "Short", "attachment_extracts": [{"kind": "table", "rows": 12}]}, "high"),
+        ({"effective_body": "x" * 1200}, "high"),
+        ({"effective_body": "Short", "image_requirements": [{"role": "high-detail evidence"}]}, "high"),
+    ],
+)
+def test_initial_quality_uses_only_frozen_material_risk(page: dict, expected: str):
+    assert initial_quality(page) == expected
+
+
+def test_cli_defaults_to_two_candidates_and_rejects_more():
+    args = _parser().parse_args(["generate-page", "--project", "p", "--page", "1"])
+    assert args.max_candidates == 2
+    with pytest.raises(SystemExit):
+        _parser().parse_args([
+            "generate-page", "--project", "p", "--page", "1", "--max-candidates", "3",
+        ])
 
 
 @pytest.mark.parametrize("count", [0, 1, 16])
@@ -666,3 +693,47 @@ def test_light_qa_timeout_is_bounded_independently_from_image_generation(tmp_pat
     generate_page_body(project, page_number=1, timeout=900, runner=runner, reviewer=reviewer)
 
     assert observed == [180]
+
+
+def test_non_actionable_qa_failure_does_not_spend_second_candidate(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, max_candidates=99, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": False, "score": 3, "issues": []},
+    )
+
+    assert len(calls) == 1
+    assert len(receipt["candidates"]) == 1
+    assert "qa_feedback_not_actionable" in receipt["degraded_reasons"]
+
+
+def test_actionable_retry_upgrades_medium_to_high_and_caps_at_two(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+    reviews = iter([
+        {"accepted": False, "score": 3, "issues": ["Increase contrast"]},
+        {"accepted": False, "score": 3, "issues": ["Still low contrast"]},
+    ])
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, max_candidates=99, runner=runner,
+        reviewer=lambda *_args, **_kwargs: next(reviews),
+    )
+
+    assert len(calls) == 2
+    assert [command[command.index("--quality") + 1] for command in calls] == ["medium", "high"]
+    assert len(receipt["candidates"]) == 2

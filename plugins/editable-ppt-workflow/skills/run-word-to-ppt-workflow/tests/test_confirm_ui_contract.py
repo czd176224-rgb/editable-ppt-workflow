@@ -890,7 +890,7 @@ def test_one_screen_submission_confirms_locked_project_in_one_request(project: P
     assert result["layout_preferences"] == ["auto", "editorial", "matrix"]
     assert result["production_profile"] == "balanced"
     assert result["image_quality"] == "high"
-    assert result["max_concurrency"] == 5
+    assert result["max_concurrency"] == 2
     assert result["automatic_repair_budget"] == 1
     assert result["formula_policy"] == "mixed"
     assert result["generation_mode"] == "continuous"
@@ -1489,9 +1489,9 @@ def test_one_screen_rejects_missing_layout_preferences(project: Path):
 @pytest.mark.parametrize(
     ("profile", "quality", "concurrency", "repair_budget"),
     [
-        ("quality", "high", 3, 2),
-        ("balanced", "high", 5, 1),
-        ("speed", "medium", 8, 1),
+        ("quality", "high", 2, 2),
+        ("balanced", "high", 2, 1),
+        ("speed", "medium", 3, 1),
     ],
 )
 def test_one_screen_maps_nontechnical_production_profile_to_execution_settings(

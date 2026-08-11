@@ -126,9 +126,9 @@ ONE_SCREEN_FIELDS = (
     "additional_requirements",
 )
 PRODUCTION_PROFILES = {
-    "quality": {"image_quality": "high", "max_concurrency": 3, "automatic_repair_budget": 2},
-    "balanced": {"image_quality": "high", "max_concurrency": 5, "automatic_repair_budget": 1},
-    "speed": {"image_quality": "medium", "max_concurrency": 8, "automatic_repair_budget": 1},
+    "quality": {"image_quality": "high", "max_concurrency": 2, "automatic_repair_budget": 2},
+    "balanced": {"image_quality": "high", "max_concurrency": 2, "automatic_repair_budget": 1},
+    "speed": {"image_quality": "medium", "max_concurrency": 3, "automatic_repair_budget": 1},
 }
 ONE_SCREEN_PRODUCTION_BASE = {
     "formula_policy": "mixed", "generation_mode": "continuous", "refine_spec": False,

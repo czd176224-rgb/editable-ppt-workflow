@@ -4,6 +4,8 @@ import copy
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -11,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_state import create, load, update_page
 import workflow_v6_state
+from adaptive_scheduler import AdaptiveScheduler, RoundOutcome, jittered_retry_delay, should_retry
 
 
 def test_page_updates_merge_against_latest_project_state(tmp_path: Path):
@@ -54,3 +57,87 @@ def test_state_save_retries_transient_windows_replace_denials(tmp_path: Path, mo
 
     assert calls == 4
     assert load(tmp_path)["pages"][0]["title"] == "one"
+
+
+def test_profile_concurrency_is_conservative_and_429_reduces_to_one():
+    assert AdaptiveScheduler.for_profile("balanced").active_concurrency == 2
+    assert AdaptiveScheduler.for_profile("quality").active_concurrency == 2
+    scheduler = AdaptiveScheduler.for_profile("speed")
+    assert scheduler.active_concurrency == 3
+
+    class TooManyRequests(Exception):
+        status_code = 429
+
+    assert scheduler.note_failure(TooManyRequests()) is True
+    assert scheduler.active_concurrency == 1
+
+    legacy_wide_scheduler = AdaptiveScheduler(20, initial_concurrency=8, maximum_concurrency=8)
+    assert legacy_wide_scheduler.record_round(RoundOutcome(rate_limits=1)).concurrency == 1
+
+
+def test_jittered_exponential_delay_has_deterministic_bounds():
+    assert jittered_retry_delay(0, jitter=0.0) == 0.75
+    assert jittered_retry_delay(0, jitter=1.0) == 1.25
+    assert jittered_retry_delay(3, jitter=0.0) == 6.0
+    assert jittered_retry_delay(3, jitter=1.0) == 10.0
+
+
+def test_retry_classification_excludes_ordinary_4xx_and_validation():
+    class HttpFailure(Exception):
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    assert should_retry(HttpFailure(429))
+    assert should_retry(HttpFailure(500))
+    assert should_retry(HttpFailure(503))
+    assert should_retry(ConnectionError("network interrupted"))
+    assert should_retry(TimeoutError("network timed out"))
+    assert not should_retry(HttpFailure(400))
+    assert not should_retry(HttpFailure(404))
+    assert not should_retry(ValueError("invalid request"))
+
+
+def test_throttle_keeps_completed_receipts_out_of_remaining_work():
+    scheduler = AdaptiveScheduler.for_profile("speed")
+    scheduler.mark_completed(1, {"selected": {"attempt": 1}})
+
+    class TooManyRequests(Exception):
+        status_code = 429
+
+    scheduler.note_failure(TooManyRequests())
+
+    assert scheduler.pending_pages([1, 2, 3]) == [2, 3]
+    assert scheduler.completed_receipts[1] == {"selected": {"attempt": 1}}
+
+
+def test_page_retry_reuses_completed_receipt_and_retries_only_transient_failure():
+    scheduler = AdaptiveScheduler.for_profile("speed")
+    calls = 0
+    delays = []
+
+    class TooManyRequests(Exception):
+        status_code = 429
+
+    def transient_action():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TooManyRequests()
+        return {"page_number": 2, "selected": {"attempt": 1}}
+
+    receipt = scheduler.run_page(
+        2, transient_action, sleep=delays.append, jitter=lambda: 0.5,
+    )
+    assert receipt["page_number"] == 2
+    assert calls == 2
+    assert delays == [1.0]
+    assert scheduler.active_concurrency == 1
+
+    reused = scheduler.run_page(
+        2, lambda: pytest.fail("completed page must not run again"),
+        sleep=delays.append, jitter=lambda: 0.5,
+    )
+    assert reused == receipt
+
+    with pytest.raises(ValueError, match="invalid"):
+        scheduler.run_page(3, lambda: (_ for _ in ()).throw(ValueError("invalid")))

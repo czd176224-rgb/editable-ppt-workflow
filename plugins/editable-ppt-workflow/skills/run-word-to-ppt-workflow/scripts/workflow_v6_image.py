@@ -697,7 +697,7 @@ def _receipt_candidates_are_valid(
     if (
         len(attempts) != len(candidates)
         or any(type(attempt) is not int or attempt not in {1, 2} for attempt in attempts)
-        or len(set(attempts)) != len(attempts)
+        or attempts not in ([1], [2], [1, 2])
         or sum(candidate == selected for candidate in candidates) != 1
     ):
         return False
@@ -737,7 +737,7 @@ def _candidate_receipt_integrity(
         return None
     if attempt == 1 and prompt_text != request.prompt:
         return None
-    quality = "high" if attempt == 2 and request.quality == "medium" else request.quality
+    quality = _candidate_quality(request, attempt)
     prompt_sha256 = hashlib.sha256(prompt_data).hexdigest()
     return {
         "quality": quality,
@@ -838,6 +838,8 @@ def _candidate_artifact_is_valid(
         or not isinstance(trace_value, Mapping)
         or trace_value.get("operation") != request.operation
         or trace_value.get("model") != "gpt-image-2"
+        or trace_value.get("quality") != _candidate_quality(request, candidate["attempt"])
+        or trace_value.get("size") != "1904x896"
         or trace_value.get("input_images") != _request_input_records(request)
         or not isinstance(trace_value.get("outputs"), list)
     ):
@@ -855,6 +857,10 @@ def _candidate_artifact_is_valid(
     return False
 
 
+def _candidate_quality(request: ImageRequest, attempt: int) -> str:
+    return "high" if attempt == 2 and request.quality == "medium" else request.quality
+
+
 def _adaptive_receipt(
     *,
     page_number: int,
@@ -867,7 +873,10 @@ def _adaptive_receipt(
     degraded_reasons: Sequence[str],
 ) -> dict[str, Any]:
     prompt_sha256 = hashlib.sha256(request.prompt.encode("utf-8")).hexdigest()
-    candidate_values = [copy.deepcopy(dict(candidate)) for candidate in candidates]
+    candidate_values = sorted(
+        (copy.deepcopy(dict(candidate)) for candidate in candidates),
+        key=lambda candidate: candidate["attempt"],
+    )
     selected_value = copy.deepcopy(dict(selected))
     return {
         "artifact_version": "image2-adaptive-v6",
@@ -918,8 +927,13 @@ def _receipt_from_accepted_page(
     same_artifact = isinstance(first, Mapping) and all(
         first.get(field) == selected.get(field) for field in ("attempt", "path", "operation")
     )
-    if not same_artifact and _candidate_artifact_is_valid(
-        root, first, page_number=page_number, request=request,
+    if (
+        isinstance(first, Mapping)
+        and first.get("attempt") == 1
+        and not same_artifact
+        and _candidate_artifact_is_valid(
+            root, first, page_number=page_number, request=request,
+        )
     ):
         first_enriched = _enrich_candidate_receipt(
             root, first, request=request, revision_digest=confirmed_digest,
@@ -966,7 +980,11 @@ def _advance_page_to_accepted_receipt(
         updated = transition_page(updated, "qa_review")
     if updated["state"] != "qa_review":
         raise ValueError("V6 page cannot resume an accepted receipt from its current state")
-    updated["first_candidate"] = copy.deepcopy(receipt["candidates"][0])
+    first_candidate = next(
+        (candidate for candidate in receipt["candidates"] if candidate.get("attempt") == 1),
+        None,
+    )
+    updated["first_candidate"] = copy.deepcopy(first_candidate)
     updated["selected_candidate"] = copy.deepcopy(receipt["selected"])
     updated["degraded_reasons"] = list(receipt["degraded_reasons"])
     return transition_page(updated, target)
@@ -1295,7 +1313,11 @@ def _generate_page_body_owned(
     )
     if selected_candidate is None:
         raise RuntimeError("V6 selected candidate is absent from the bounded candidate list")
-    page["first_candidate"] = copy.deepcopy(enriched_candidates[0])
+    first_candidate = next(
+        (candidate for candidate in enriched_candidates if candidate.get("attempt") == 1),
+        None,
+    )
+    page["first_candidate"] = copy.deepcopy(first_candidate)
     page["selected_candidate"] = copy.deepcopy(selected_candidate)
     receipt = _adaptive_receipt(
         page_number=page_number,

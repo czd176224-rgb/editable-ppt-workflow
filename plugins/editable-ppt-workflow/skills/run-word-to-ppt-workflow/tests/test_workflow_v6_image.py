@@ -29,6 +29,7 @@ from workflow_v6_image import (  # noqa: E402
     build_prompt,
     generate_page_body,
     initial_quality,
+    _advance_page_to_accepted_receipt,
 )
 from workflow_v6_state import create, load, save  # noqa: E402
 from workflow_v6_cli import _parser  # noqa: E402
@@ -125,6 +126,8 @@ def _write_mock_trace(command: list[str]) -> None:
     trace.write_text(json.dumps({
         "operation": command[2],
         "model": "gpt-image-2",
+        "quality": command[command.index("--quality") + 1],
+        "size": command[command.index("--size") + 1],
         "input_images": [
             {"role": role, "path": str(Path(path)), "sha256": digest}
             for role, path, digest in zip(roles, images, digests)
@@ -1643,6 +1646,116 @@ def test_candidate_two_only_recovery_is_a_valid_bounded_receipt(tmp_path: Path):
 
     assert recovered["candidates"] == [original["selected"]]
     assert recovered["selected"] == original["selected"]
+
+
+def test_candidate_two_only_receipt_does_not_fabricate_first_candidate_provenance() -> None:
+    page = new_page(1, title="Page")
+    candidate_two = {"attempt": 2, "path": "04_v6/images/page_001.candidate_2.png", "operation": "generate"}
+    receipt = {
+        "candidates": [candidate_two],
+        "selected": candidate_two,
+        "state": "accepted",
+        "degraded_reasons": [],
+    }
+
+    advanced = _advance_page_to_accepted_receipt(page, receipt)
+
+    assert advanced["first_candidate"] is None
+    assert advanced["selected_candidate"]["attempt"] == 2
+
+
+def test_reversed_candidate_attempt_order_is_rejected_and_rebuilt_canonically(tmp_path: Path):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+
+    reviews = iter([
+        {"accepted": False, "score": 4, "issues": ["increase contrast"]},
+        {"accepted": True, "score": 6, "issues": []},
+    ])
+    original = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: next(reviews),
+    )
+    receipt_path = project / "04_v6/images/page_001.json"
+    forged = json.loads(json.dumps(original))
+    forged["candidates"].reverse()
+    forged["candidates_sha256"] = canonical_sha256(forged["candidates"])
+    receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid page artifacts should rebuild"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("rebuild must skip QA"),
+    )
+
+    assert [item["attempt"] for item in recovered["candidates"]] == [1, 2]
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == recovered
+
+
+@pytest.mark.parametrize("with_reference", [False, True], ids=["generate", "edit"])
+@pytest.mark.parametrize("initial", ["medium", "high"])
+@pytest.mark.parametrize("damage", ["missing_quality", "wrong_quality", "missing_size", "wrong_size"])
+def test_trace_must_bind_candidate_one_quality_and_requested_size_before_finalization(
+    tmp_path: Path, with_reference: bool, initial: str, damage: str, monkeypatch,
+):
+    project = _project_with_confirmed_reference(tmp_path) if with_reference else _project(tmp_path)
+    monkeypatch.setattr(workflow_v6_image, "initial_quality", lambda _page: initial)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+        trace_path = Path(command[command.index("--trace-out") + 1])
+        trace = json.loads(trace_path.read_text(encoding="utf-8"))
+        field = "quality" if "quality" in damage else "size"
+        if damage.startswith("missing"):
+            trace.pop(field)
+        else:
+            trace[field] = "medium" if field == "quality" and initial == "high" else (
+                "high" if field == "quality" else "1024x1024"
+            )
+        trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="candidate artifact failed validation"):
+        generate_page_body(
+            project, page_number=1, runner=runner,
+            reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+        )
+
+
+@pytest.mark.parametrize("damage", ["missing_quality", "wrong_quality", "missing_size", "wrong_size"])
+def test_candidate_two_trace_requires_medium_to_high_upgrade_semantics(
+    tmp_path: Path, damage: str,
+):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+        if output.name.endswith("candidate_2.png"):
+            trace_path = Path(command[command.index("--trace-out") + 1])
+            trace = json.loads(trace_path.read_text(encoding="utf-8"))
+            field = "quality" if "quality" in damage else "size"
+            if damage.startswith("missing"):
+                trace.pop(field)
+            else:
+                trace[field] = "medium" if field == "quality" else "1024x1024"
+            trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    reviews = iter([
+        {"accepted": False, "score": 4, "issues": ["increase contrast"]},
+        {"accepted": True, "score": 6, "issues": []},
+    ])
+    with pytest.raises(RuntimeError, match="candidate artifact failed validation"):
+        generate_page_body(
+            project, page_number=1, runner=runner,
+            reviewer=lambda *_args, **_kwargs: next(reviews),
+        )
 
 
 def test_existing_receipt_requires_selected_to_equal_one_full_candidate(tmp_path: Path):

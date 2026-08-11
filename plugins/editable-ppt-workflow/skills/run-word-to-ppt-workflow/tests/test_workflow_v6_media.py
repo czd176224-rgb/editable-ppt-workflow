@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import http.server
 import struct
 import sys
@@ -166,6 +167,52 @@ def test_static_svg_allowlist_rejects_animation_and_inline_css_imports(tmp_path:
             media.normalize_reference(tmp_path / "project", source, reference_id=reference_id, kind="logo")
 
 
+def test_svg_css_escape_is_rejected_before_renderer_can_contact_network(tmp_path: Path):
+    media = load_media()
+    requests: list[str] = []
+
+    class Probe(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    probe = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Probe)
+    thread = threading.Thread(target=probe.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source = tmp_path / "escaped-paint.svg"
+        source.write_text(
+            rf'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="u\72l(http://127.0.0.1:{probe.server_port}/pixel)"/></svg>',
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="paint|unsafe|external|SVG"):
+            media.normalize_reference(tmp_path / "project", source, reference_id="escaped-paint", kind="logo")
+    finally:
+        probe.shutdown()
+        thread.join(timeout=2)
+    assert requests == []
+
+
+def test_svg_rejects_foreign_or_unknown_namespaces_and_attributes(tmp_path: Path):
+    media = load_media()
+    examples = {
+        "foreign-element": '<svg xmlns="http://www.w3.org/2000/svg" xmlns:evil="urn:evil" width="2" height="2"><evil:rect width="2" height="2"/></svg>',
+        "foreign-root": '<svg xmlns="urn:evil" width="2" height="2"><rect width="2" height="2"/></svg>',
+        "unused-foreign-namespace": '<svg xmlns="http://www.w3.org/2000/svg" xmlns:evil="urn:evil" width="2" height="2"><rect width="2" height="2"/></svg>',
+        "xlink": '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2" height="2"><path d="M0 0" xlink:href="#anything"/></svg>',
+        "unknown-attribute": '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" unexpected="value"/></svg>',
+    }
+    for reference_id, body in examples.items():
+        source = tmp_path / f"{reference_id}.svg"
+        source.write_text(body, encoding="utf-8")
+        with pytest.raises(ValueError, match="namespace|attribute|unsafe|SVG"):
+            media.normalize_reference(tmp_path / "project", source, reference_id=reference_id, kind="logo")
+
+
 def test_white_logo_is_valid_and_renderer_temp_failure_leaves_a_retryable_project(tmp_path: Path, monkeypatch):
     media = load_media()
     source = tmp_path / "white.svg"
@@ -174,6 +221,7 @@ def test_white_logo_is_valid_and_renderer_temp_failure_leaves_a_retryable_projec
     monkeypatch.setattr(media.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("renderer failed")))
     with pytest.raises(ValueError, match="rasterized"):
         media.normalize_reference(project, source, reference_id="white", kind="logo")
+    assert not (project / "02_v6" / "reference_media" / "white" / "original.svg").exists()
     monkeypatch.undo()
 
     result = media.normalize_reference(project, source, reference_id="white", kind="logo")
@@ -208,11 +256,51 @@ def test_handle_final_path_verification_rejects_parent_race_before_payload_write
     destination = project / "02_v6" / "reference_media" / "race"
     destination.mkdir(parents=True)
     target = destination / "original.png"
-    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: tmp_path / "outside" / "original.png")
+    final_paths = iter((project, tmp_path / "outside" / "original.png"))
+    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: next(final_paths))
 
     with pytest.raises(ValueError, match="escapes|unsafe"):
         media._write_new(project, target, b"payload")
-    assert not target.exists()
+    assert not target.exists() or target.read_bytes() != b"payload"
+
+
+def test_handle_final_path_verification_rejects_project_root_swap_before_payload_write(tmp_path: Path, monkeypatch):
+    media = load_media()
+    project = tmp_path / "project"
+    target = project / "02_v6" / "reference_media" / "race" / "original.png"
+    target.parent.mkdir(parents=True)
+    final_paths = iter((tmp_path / "outside", target))
+    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: next(final_paths))
+
+    with pytest.raises(ValueError, match="escapes|unsafe"):
+        media._write_new(project, target, b"payload")
+
+    assert not target.exists() or target.read_bytes() != b"payload"
+
+
+def test_handle_final_path_verification_rejects_ancestor_swap_before_payload_read(tmp_path: Path, monkeypatch):
+    media = load_media()
+    project = tmp_path / "project"
+    target = project / "02_v6" / "reference_media" / "race" / "thumbnail.png"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"outside payload must not be returned")
+    final_paths = iter((project, tmp_path / "outside" / "thumbnail.png"))
+    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: next(final_paths))
+
+    with pytest.raises(ValueError, match="escapes|unsafe"):
+        media._read_file_limited(project, target)
+
+
+def test_normalize_returns_hashes_computed_from_output_payloads_not_path_rereads(tmp_path: Path, monkeypatch):
+    media = load_media()
+    source = tmp_path / "source.png"
+    Image.new("RGB", (8, 4), "#336699").save(source, format="PNG")
+    monkeypatch.setattr(media, "_sha256", lambda _path: pytest.fail("normalization must not hash by reopening a pathname"), raising=False)
+
+    result = media.normalize_reference(tmp_path / "project", source, reference_id="hashes", kind="screenshot")
+
+    assert result.original_sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert result.model_input_sha256 == hashlib.sha256((tmp_path / "project" / result.model_input_path).read_bytes()).hexdigest()
 
 
 def test_svg_logo_uses_capable_renderer_for_viewbox_paths_transforms_and_gradients(tmp_path: Path):
@@ -279,6 +367,23 @@ def test_project_media_resolution_accepts_jpeg_photo_model_input(tmp_path: Path)
     assert media.resolve_project_media(project, "02_v6/reference_media/photo/model-input.jpg", variant="model-input") == model.resolve()
 
 
+def test_endpoint_reader_uses_handle_verified_candidate_without_pathname_resolution(tmp_path: Path, monkeypatch):
+    media = load_media()
+    project = tmp_path / "project"
+    target = project / "02_v6" / "reference_media" / "ref" / "thumbnail.png"
+    target.parent.mkdir(parents=True)
+    Image.new("RGB", (2, 2), "#336699").save(target, format="PNG")
+    monkeypatch.setattr(media, "resolve_project_media", lambda *_args, **_kwargs: pytest.fail("endpoint must not resolve or reopen an untrusted pathname"))
+
+    data, mime_type, returned = media.read_validated_project_media(
+        project, "02_v6/reference_media/ref/thumbnail.png", variant="thumbnail",
+    )
+
+    assert data == target.read_bytes()
+    assert mime_type == "image/png"
+    assert returned == target
+
+
 def test_reference_import_keeps_acquisition_lifecycle_and_records_normalized_local_media(tmp_path: Path, monkeypatch):
     from workflow_v6_contract import new_page, new_project
     from workflow_v6_materials import new_page_materials
@@ -300,6 +405,7 @@ def test_reference_import_keeps_acquisition_lifecycle_and_records_normalized_loc
     image = tmp_path / "candidate.png"
     Image.new("RGB", (20, 10), "#cc8844").save(image, format="PNG")
     monkeypatch.setattr("socket.create_connection", lambda *_args, **_kwargs: pytest.fail("source URL was fetched"))
+    monkeypatch.setattr("workflow_v6_source._sha256", lambda _path: pytest.fail("reference import must use the thumbnail digest returned by the secure writer"))
 
     result = import_reference(project, page_number=1, request_id="request-1", image=image, source_url="https://example.test/candidate.png")
 

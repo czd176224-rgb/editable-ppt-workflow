@@ -162,7 +162,8 @@ def test_media_endpoint_rejects_handle_path_escape_before_reading_payload(tmp_pa
     Image.new("RGB", (2, 2), "#336699").save(media_dir / "thumbnail.png", format="PNG")
     owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
     import workflow_v6_media
-    monkeypatch.setattr(workflow_v6_media, "_final_path_for_handle", lambda _handle: tmp_path / "outside.png")
+    final_paths = iter((project.resolve(), tmp_path / "outside.png"))
+    monkeypatch.setattr(workflow_v6_media, "_final_path_for_handle", lambda _handle: next(final_paths))
     client = server.create_app(str(project), lock_owner=owner).test_client()
 
     response = client.get(

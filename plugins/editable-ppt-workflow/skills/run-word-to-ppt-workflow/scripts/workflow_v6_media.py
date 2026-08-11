@@ -33,15 +33,37 @@ _SAFE_VARIANTS: Final = {
 }
 _REFERENCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
+_SVG_NAMESPACE: Final = "http://www.w3.org/2000/svg"
 _SAFE_SVG_TAGS = frozenset({
     "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
     "text", "tspan", "defs", "lineargradient", "radialgradient", "stop", "clippath", "mask",
     "title", "desc",
 })
-_UNSAFE_SVG_ATTRIBUTES = frozenset({
-    "style", "attributename", "begin", "dur", "end", "repeatcount", "repeatdur", "from", "to",
-    "values", "keytimes", "keysplines", "calcmode", "additive", "accumulate",
+_SVG_GLOBAL_ATTRIBUTES: Final = frozenset({
+    "id", "transform", "opacity", "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity",
+    "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "clip-path", "clip-rule",
+    "mask", "display", "visibility", "color", "font-family", "font-size", "font-weight", "text-anchor",
+    "letter-spacing",
 })
+_SVG_ATTRIBUTES: Final = {
+    "svg": frozenset({"width", "height", "viewBox", "preserveAspectRatio"}),
+    "g": frozenset(), "path": frozenset({"d"}),
+    "rect": frozenset({"x", "y", "width", "height", "rx", "ry"}),
+    "circle": frozenset({"cx", "cy", "r"}), "ellipse": frozenset({"cx", "cy", "rx", "ry"}),
+    "line": frozenset({"x1", "y1", "x2", "y2"}), "polyline": frozenset({"points"}),
+    "polygon": frozenset({"points"}), "text": frozenset({"x", "y", "dx", "dy"}),
+    "tspan": frozenset({"x", "y", "dx", "dy"}), "defs": frozenset(),
+    "lineargradient": frozenset({"x1", "y1", "x2", "y2", "gradientUnits", "gradientTransform", "spreadMethod"}),
+    "radialgradient": frozenset({"cx", "cy", "r", "fx", "fy", "gradientUnits", "gradientTransform", "spreadMethod"}),
+    "stop": frozenset({"offset", "stop-color", "stop-opacity"}),
+    "clippath": frozenset({"clipPathUnits"}),
+    "mask": frozenset({"x", "y", "width", "height", "maskUnits", "maskContentUnits"}),
+    "title": frozenset(), "desc": frozenset(),
+}
+_PAINT_ATTRIBUTES: Final = frozenset({"fill", "stroke", "color", "stop-color"})
+_LOCAL_REFERENCE_ATTRIBUTES: Final = frozenset({"clip-path", "mask"})
+_SAFE_PAINT_LITERAL = re.compile(r"(?:none|transparent|currentcolor|inherit|#[0-9a-fA-F]{3,8}|[A-Za-z]+)\Z", re.IGNORECASE)
+_LOCAL_FRAGMENT = re.compile(r"url\(#([A-Za-z_][A-Za-z0-9_.-]*)\)\Z")
 _BROWSER_PATHS = (
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
@@ -57,14 +79,11 @@ class NormalizedReference:
     thumbnail_path: str
     model_input_path: str
     original_sha256: str
+    thumbnail_sha256: str
     model_input_sha256: str
     mime_type: str
     width: int
     height: int
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _is_link_or_reparse(path: Path) -> bool:
@@ -108,32 +127,59 @@ def _final_path_for_handle(handle: int) -> Path:
     return Path(os.readlink(f"/proc/self/fd/{handle}"))
 
 
-def _verify_handle_within(project: Path, handle: int) -> None:
-    root = Path(project).resolve()
-    final_path = _final_path_for_handle(handle).resolve()
-    try:
-        final_path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError("media handle escapes the project or is unsafe") from exc
+def _open_project_root_handle(project: Path) -> int:
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        create_file = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+        create_file.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        create_file.restype = wintypes.HANDLE
+        handle = create_file(str(project), 0, 0x7, None, 3, 0x02000000, None)
+        if handle == wintypes.HANDLE(-1).value:
+            raise OSError(ctypes.get_last_error(), "CreateFileW failed for project root")
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_RDONLY)
+        except OSError:
+            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
+            raise
+    flags = os.O_RDONLY
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    return os.open(project, flags)
 
 
-def _write_new(project: Path, path: Path, data: bytes) -> None:
+def _normalized_final_path(handle: int) -> str:
+    return os.path.normcase(os.path.normpath(str(_final_path_for_handle(handle))))
+
+
+def _verify_handle_within(root_handle: int, file_handle: int) -> None:
+    """Compare canonical final names of two still-open handles without path reopening."""
+    root = _normalized_final_path(root_handle)
+    final_path = _normalized_final_path(file_handle)
+    prefix = root if root.endswith(os.sep) else root + os.sep
+    if final_path != root and not final_path.startswith(prefix):
+        raise ValueError("media handle escapes the project or is unsafe")
+
+
+def _write_new(project: Path, path: Path, data: bytes) -> str:
     if _is_link_or_reparse(path) or path.exists():
         raise ValueError("reference media output already exists or is unsafe")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_BINARY"):
         flags |= os.O_BINARY
-    descriptor = os.open(path, flags, 0o600)
+    root_descriptor = _open_project_root_handle(project)
     try:
+        descriptor = os.open(path, flags, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
-            _verify_handle_within(project, handle.fileno())
+            _verify_handle_within(root_descriptor, handle.fileno())
             handle.write(data)
-    except Exception:
-        try:
-            if _contained(Path(project), path):
-                path.unlink(missing_ok=True)
-        finally:
-            raise
+            return hashlib.sha256(data).hexdigest()
+    finally:
+        os.close(root_descriptor)
 
 
 def _image_bytes(image: Image.Image, *, image_format: str, **options: object) -> bytes:
@@ -242,28 +288,38 @@ def _safe_svg_root(data: bytes) -> tuple[ElementTree.Element, int, int]:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("SVG must be UTF-8") from exc
-    if re.search(r"<!DOCTYPE|<!ENTITY|<\s*script\b|\bon[a-z]+\s*=", text, re.IGNORECASE):
+    if re.search(r"<!DOCTYPE|<!ENTITY|<\s*(?:script|style)\b|\bon[a-z]+\s*=", text, re.IGNORECASE):
         raise ValueError("SVG script or external resource is not allowed")
+    for namespace in re.finditer(r"\sxmlns(?::[A-Za-z_][A-Za-z0-9_.-]*)?\s*=\s*(['\"])(.*?)\1", text, re.IGNORECASE | re.DOTALL):
+        if namespace.group(2) != _SVG_NAMESPACE:
+            raise ValueError("SVG contains an unsafe namespace")
     try:
         root = ElementTree.fromstring(text)
     except ElementTree.ParseError as exc:
         raise ValueError("SVG is malformed") from exc
-    if root.tag.rsplit("}", 1)[-1].lower() != "svg":
+    if root.tag != f"{{{_SVG_NAMESPACE}}}svg":
         raise ValueError("SVG root is required")
     for element in root.iter():
-        tag = element.tag.rsplit("}", 1)[-1].lower()
+        if not isinstance(element.tag, str) or not element.tag.startswith(f"{{{_SVG_NAMESPACE}}}"):
+            raise ValueError("SVG contains an unsafe namespace")
+        tag = element.tag.removeprefix(f"{{{_SVG_NAMESPACE}}}").lower()
         if tag not in _SAFE_SVG_TAGS:
             raise ValueError("SVG contains an unsafe, dynamic, or unsupported element")
         for attribute, value in element.attrib.items():
-            local_name = attribute.rsplit("}", 1)[-1].lower()
-            normalized = value.strip().lower()
-            if local_name in _UNSAFE_SVG_ATTRIBUTES:
-                raise ValueError("SVG contains an unsafe or dynamic attribute")
-            if local_name in {"href", "src"} and not normalized.startswith("#"):
+            if "}" in attribute or attribute not in _SVG_GLOBAL_ATTRIBUTES | _SVG_ATTRIBUTES[tag]:
+                raise ValueError("SVG contains an unsafe or unknown attribute")
+            if "\\" in value:
+                raise ValueError("SVG contains an unsafe CSS escape")
+            normalized = value.strip()
+            if attribute in _PAINT_ATTRIBUTES:
+                if not (_SAFE_PAINT_LITERAL.fullmatch(normalized) or _LOCAL_FRAGMENT.fullmatch(normalized)):
+                    if "url(" in normalized.lower():
+                        raise ValueError("SVG external resource is not allowed")
+                    raise ValueError("SVG contains an unsafe paint value")
+            elif attribute in _LOCAL_REFERENCE_ATTRIBUTES and not _LOCAL_FRAGMENT.fullmatch(normalized):
+                raise ValueError("SVG contains an unsafe local reference")
+            elif "url(" in normalized.lower() or "href" in attribute.lower() or "src" in attribute.lower():
                 raise ValueError("SVG external resource is not allowed")
-            for target in re.findall(r"url\(\s*['\"]?([^'\")\s]+)['\"]?\s*\)", normalized):
-                if not target.startswith("#"):
-                    raise ValueError("SVG external resource is not allowed")
     width, height = _svg_canvas_size(root)
     return root, width, height
 
@@ -333,33 +389,34 @@ def normalize_reference(project: Path, source: Path, *, reference_id: str, kind:
         image, mime_type = _open_raster(data)
         original_suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/bmp": ".bmp"}[mime_type]
     original = destination / f"original{original_suffix}"
-    _write_new(project, original, data)
+    original_sha256 = _write_new(project, original, data)
     if kind == "photo":
         image = ImageOps.exif_transpose(image)
         model = _resized(_rgb(image), MODEL_MAX_EDGE)
         model_path = destination / "model-input.jpg"
-        _write_new(project, model_path, _image_bytes(model, image_format="JPEG", quality=90, optimize=True))
+        model_sha256 = _write_new(project, model_path, _image_bytes(model, image_format="JPEG", quality=90, optimize=True))
     else:
         model = _resized(image, MODEL_MAX_EDGE)
         model_path = destination / "model-input.png"
-        _write_new(project, model_path, _image_bytes(model, image_format="PNG", optimize=False, compress_level=9))
+        model_sha256 = _write_new(project, model_path, _image_bytes(model, image_format="PNG", optimize=False, compress_level=9))
     thumbnail = _resized(model, THUMBNAIL_MAX_EDGE)
     thumbnail_path = destination / "thumbnail.png"
-    _write_new(project, thumbnail_path, _image_bytes(thumbnail, image_format="PNG", optimize=False, compress_level=9))
+    thumbnail_sha256 = _write_new(project, thumbnail_path, _image_bytes(thumbnail, image_format="PNG", optimize=False, compress_level=9))
     return NormalizedReference(
         original_path=_relative(project, original),
         thumbnail_path=_relative(project, thumbnail_path),
         model_input_path=_relative(project, model_path),
-        original_sha256=_sha256(original),
-        model_input_sha256=_sha256(model_path),
+        original_sha256=original_sha256,
+        thumbnail_sha256=thumbnail_sha256,
+        model_input_sha256=model_sha256,
         mime_type=mime_type,
         width=model.width,
         height=model.height,
     )
 
 
-def resolve_project_media(project: Path, relative_path: str, *, variant: str) -> Path:
-    """Resolve only a declared V6 media derivative under the project root."""
+def _media_candidate(project: Path, relative_path: str, *, variant: str) -> Path:
+    """Construct a syntactically constrained candidate; handle verification owns containment."""
     if variant not in _SAFE_VARIANTS or not isinstance(relative_path, str):
         raise ValueError("media variant or path is invalid")
     raw = PurePosixPath(relative_path.replace("\\", "/"))
@@ -372,7 +429,12 @@ def resolve_project_media(project: Path, relative_path: str, *, variant: str) ->
         raise ValueError("media variant does not match path")
     if variant == "thumbnail" and raw.name != expected:
         raise ValueError("media variant does not match path")
-    return _contained(Path(project), Path(project).resolve().joinpath(*raw.parts))
+    return Path(project).joinpath(*raw.parts)
+
+
+def resolve_project_media(project: Path, relative_path: str, *, variant: str) -> Path:
+    """Resolve only a declared V6 media derivative under the project root."""
+    return _contained(Path(project), _media_candidate(project, relative_path, variant=variant))
 
 
 def validated_media_mime(path: Path) -> str:
@@ -387,16 +449,17 @@ def _read_file_limited(project: Path, path: Path) -> bytes:
         flags |= os.O_BINARY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
+    root_descriptor = _open_project_root_handle(project)
     try:
+        descriptor = os.open(path, flags)
         with os.fdopen(descriptor, "rb") as handle:
             actual = os.fstat(handle.fileno())
             if not stat.S_ISREG(actual.st_mode):
                 raise ValueError("media file is unsafe")
-            _verify_handle_within(project, handle.fileno())
+            _verify_handle_within(root_descriptor, handle.fileno())
             data = handle.read(MAX_ENCODED_BYTES + 1)
-    except Exception:
-        raise
+    finally:
+        os.close(root_descriptor)
     if len(data) > MAX_ENCODED_BYTES:
         raise ValueError("image encoded size exceeds the limit")
     return data
@@ -404,7 +467,7 @@ def _read_file_limited(project: Path, path: Path) -> bytes:
 
 def read_validated_project_media(project: Path, relative_path: str, *, variant: str) -> tuple[bytes, str, Path]:
     """Read, validate, and return one immutable-in-memory media response buffer."""
-    path = resolve_project_media(project, relative_path, variant=variant)
+    path = _media_candidate(project, relative_path, variant=variant)
     data = _read_file_limited(Path(project), path)
     _image, mime_type = _open_raster(data)
     return data, mime_type, path

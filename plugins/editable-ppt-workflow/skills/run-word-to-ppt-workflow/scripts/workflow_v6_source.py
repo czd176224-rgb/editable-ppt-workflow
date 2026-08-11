@@ -258,14 +258,13 @@ def import_reference(
         normalized = normalize_reference(
             project, image, reference_id=f"page-{page_number:03d}-acquisition-{request_id}", kind=kind,
         )
-        thumbnail = project / normalized.thumbnail_path
         reference = reference_image_from_normalized(
             normalized,
             reference_id=f"page-{page_number:03d}-acquisition-{request_id}",
             source="external_url" if source_url else "attachment",
             purpose=purpose,
             source_url=source_url,
-            thumbnail_sha256=_sha256(thumbnail),
+            thumbnail_sha256=normalized.thumbnail_sha256,
         )
         digest = normalized.original_sha256
         relative = normalized.original_path

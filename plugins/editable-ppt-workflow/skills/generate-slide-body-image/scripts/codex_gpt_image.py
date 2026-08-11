@@ -473,7 +473,12 @@ def write_generation_trace(
             for role, raw in zip(roles, image_paths)
         ],
         "outputs": [
-            {"path": str(path.resolve()), "sha256": file_sha256(path)} for path in outputs
+            {
+                "path": str(path.resolve()),
+                "sha256": file_sha256(path),
+                "mime_type": "image/png",
+            }
+            for path in outputs
         ],
     }
     if warnings:

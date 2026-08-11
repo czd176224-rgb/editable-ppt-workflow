@@ -599,11 +599,10 @@ def _verified_existing_receipt(
         or receipt.get("request_operation") != request.operation
         or receipt.get("request_input_images") != expected_inputs
         or receipt.get("state") not in {"accepted", "accepted_fallback_first"}
-        or not isinstance(receipt.get("candidates"), list)
-        or not receipt["candidates"]
-        or selected not in receipt["candidates"]
         or not isinstance(receipt.get("degraded_reasons"), list)
-        or not _candidate_artifact_is_valid(root, selected, request=request)
+        or not _receipt_candidates_are_valid(
+            root, receipt.get("candidates"), selected=selected, request=request,
+        )
     ):
         return None
     return receipt
@@ -645,10 +644,51 @@ def _committed_receipt_matches(
         return False
     if committed != dict(expected):
         return False
-    for candidate in committed.get("candidates", []):
-        if not _candidate_artifact_is_valid(root, candidate, request=request):
-            return False
-    return True
+    return _receipt_candidates_are_valid(
+        root,
+        committed.get("candidates"),
+        selected=committed.get("selected"),
+        request=request,
+    )
+
+
+def _receipt_candidates_are_valid(
+    root: Path,
+    candidates: Any,
+    *,
+    selected: Any,
+    request: ImageRequest,
+) -> bool:
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 2:
+        return False
+    attempts = [
+        candidate.get("attempt")
+        for candidate in candidates
+        if isinstance(candidate, Mapping)
+    ]
+    selected_identity = (
+        tuple(selected.get(field) for field in ("attempt", "path", "operation"))
+        if isinstance(selected, Mapping)
+        else None
+    )
+    selected_matches = sum(
+        tuple(candidate.get(field) for field in ("attempt", "path", "operation"))
+        == selected_identity
+        for candidate in candidates
+        if isinstance(candidate, Mapping)
+    )
+    if (
+        len(attempts) != len(candidates)
+        or len(set(attempts)) != len(attempts)
+        or set(attempts) != set(range(1, len(candidates) + 1))
+        or selected_identity is None
+        or selected_matches != 1
+    ):
+        return False
+    return all(
+        _candidate_artifact_is_valid(root, candidate, request=request)
+        for candidate in candidates
+    )
 
 
 def _candidate_artifact_is_valid(
@@ -657,7 +697,7 @@ def _candidate_artifact_is_valid(
     if (
         not isinstance(candidate, Mapping)
         or type(candidate.get("attempt")) is not int
-        or candidate["attempt"] < 1
+        or candidate["attempt"] not in {1, 2}
         or candidate.get("operation") != request.operation
         or not isinstance(candidate.get("path"), str)
     ):
@@ -678,10 +718,13 @@ def _candidate_artifact_is_valid(
         trace_data = v6_media._read_file_limited(root, trace)
         trace_value = json.loads(trace_data.decode("utf-8"))
         canonical_image = image.resolve(strict=True)
+        canonical_relative = canonical_image.relative_to(root.resolve(strict=True)).as_posix()
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
     if (
         mime_type != "image/png"
+        or canonical_relative != candidate["path"]
+        or not canonical_relative.endswith(f".candidate_{candidate['attempt']}.png")
         or dimensions != (1904, 896)
         or trace_value.get("operation") != request.operation
         or trace_value.get("model") != "gpt-image-2"
@@ -695,9 +738,9 @@ def _candidate_artifact_is_valid(
             continue
         if output.get("sha256") != digest:
             return False
-        traced_mimes = [
-            output[key] for key in ("mime_type", "mime", "content_type") if key in output
-        ]
+        if output.get("mime_type") != "image/png":
+            return False
+        traced_mimes = [output[key] for key in ("mime", "content_type") if key in output]
         return all(value == "image/png" for value in traced_mimes)
     return False
 

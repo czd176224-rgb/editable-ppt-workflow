@@ -211,3 +211,27 @@ def test_authenticated_trace_preserves_codex_oauth_proof(tmp_path: Path) -> None
 
     payload = json.loads(trace.read_text(encoding="utf-8"))
     assert payload["auth"] == "codex_oauth"
+
+
+def test_production_trace_declares_png_output_mime(tmp_path: Path) -> None:
+    output = tmp_path / "output.png"
+    Image.new("RGB", (1904, 896), "white").save(output)
+    trace = tmp_path / "trace.json"
+    write_generation_trace(
+        argparse.Namespace(
+            trace_out=str(trace), image_role=[], size="1904x896", quality="medium",
+            allow_off_ratio_for_downstream_repair=False,
+        ),
+        "generate",
+        "gpt-image-2",
+        [],
+        [output],
+        authenticated=True,
+    )
+
+    payload = json.loads(trace.read_text(encoding="utf-8"))
+    assert payload["outputs"] == [{
+        "path": str(output.resolve()),
+        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        "mime_type": "image/png",
+    }]

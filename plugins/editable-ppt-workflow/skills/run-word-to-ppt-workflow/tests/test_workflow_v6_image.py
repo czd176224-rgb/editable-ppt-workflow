@@ -1320,3 +1320,108 @@ def test_accepted_recovery_accepts_valid_decoded_png_and_matching_output_trace(t
         reviewer=lambda *_args, **_kwargs: pytest.fail("valid recovery must not call QA"),
     )
     assert recovered["selected"] == original["selected"]
+
+
+def _generate_accepted_receipt(project: Path) -> dict:
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+
+    return generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+
+def test_existing_receipt_rejects_forged_unselected_outside_candidate(tmp_path: Path):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    receipt_path = project / "04_v6/images/page_001.json"
+    forged = json.loads(json.dumps(original))
+    forged["candidates"].append({
+        "attempt": 2,
+        "path": "../../outside.png",
+        "operation": forged["request_operation"],
+    })
+    receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid selected artifact should recover"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("receipt recovery must not call QA"),
+    )
+
+    assert recovered["candidates"] == [original["selected"]]
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == recovered
+
+
+@pytest.mark.parametrize(
+    "candidate_mutation",
+    [
+        "more_than_two",
+        "duplicate_attempt",
+        "attempt_zero",
+        "attempt_three",
+    ],
+)
+def test_existing_receipt_rejects_invalid_candidate_number_invariants(
+    tmp_path: Path, candidate_mutation: str,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    receipt_path = project / "04_v6/images/page_001.json"
+    forged = json.loads(json.dumps(original))
+    selected = json.loads(json.dumps(forged["selected"]))
+    if candidate_mutation == "more_than_two":
+        forged["candidates"] = [selected, selected, selected]
+    elif candidate_mutation == "duplicate_attempt":
+        forged["candidates"] = [selected, selected]
+    else:
+        forged_candidate = json.loads(json.dumps(selected))
+        forged_candidate["attempt"] = 0 if candidate_mutation == "attempt_zero" else 3
+        forged["candidates"].append(forged_candidate)
+    receipt_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid selected artifact should recover"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("receipt recovery must not call QA"),
+    )
+
+    assert recovered["candidates"] == [original["selected"]]
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == recovered
+
+
+@pytest.mark.parametrize("mime_damage", ["missing", "wrong"])
+def test_accepted_recovery_requires_explicit_png_trace_mime(
+    tmp_path: Path, mime_damage: str,
+):
+    project = _project(tmp_path)
+    original = _generate_accepted_receipt(project)
+    image_path = project / original["selected"]["path"]
+    trace_path = image_path.with_suffix(".trace.json")
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    if mime_damage == "missing":
+        trace["outputs"][0].pop("mime_type")
+    else:
+        trace["outputs"][0]["mime_type"] = "image/jpeg"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    calls = 0
+
+    def replacement_runner(command, timeout):
+        nonlocal calls
+        calls += 1
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "blue").save(output)
+        _write_mock_trace(command)
+
+    recovered = generate_page_body(
+        project, page_number=1, runner=replacement_runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+
+    assert calls == 1
+    assert recovered["state"] == "accepted"

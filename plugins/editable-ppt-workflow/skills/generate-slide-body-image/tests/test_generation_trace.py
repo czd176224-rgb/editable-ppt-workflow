@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from io import BytesIO
 import json
 import subprocess
 import sys
+from urllib import error
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "codex_gpt_image.py"
@@ -15,6 +18,38 @@ sys.path.insert(0, str(SCRIPT.parent))
 
 import codex_gpt_image as image_cli  # noqa: E402
 from codex_gpt_image import write_generation_trace  # noqa: E402
+
+
+def test_image_provider_http_status_remains_typed_for_parent_retry(monkeypatch) -> None:
+    failure = error.HTTPError(
+        "https://example.invalid", 429, "rate limit", {}, BytesIO(b"slow down"),
+    )
+    monkeypatch.setattr(image_cli.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(failure))
+
+    with pytest.raises(image_cli.CliError) as caught:
+        image_cli.post_image_json(
+            "https://example.invalid", image_cli.CodexAuth("token"), {}, 10,
+        )
+    assert caught.value.status_code == 429
+    assert caught.value.network is False
+
+
+def test_cli_emits_machine_readable_provider_failure_for_parent(monkeypatch, capsys) -> None:
+    class Parser:
+        @staticmethod
+        def parse_args(_argv):
+            def fail(_args):
+                raise image_cli.CliError("rate limited", status_code=429)
+            return argparse.Namespace(func=fail)
+
+    monkeypatch.setattr(image_cli, "build_parser", lambda: Parser())
+    with pytest.raises(SystemExit):
+        image_cli.main([])
+
+    stderr = capsys.readouterr().err
+    marker = next(line for line in stderr.splitlines() if line.startswith("CODEX_IMAGE_ERROR_JSON:"))
+    payload = json.loads(marker.split(":", 1)[1])
+    assert payload == {"status_code": 429, "network": False, "message": "rate limited"}
 
 
 def test_explicit_edit_subcommand_writes_edit_trace_with_named_reference_images(tmp_path: Path) -> None:

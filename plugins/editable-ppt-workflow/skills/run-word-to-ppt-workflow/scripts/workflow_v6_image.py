@@ -16,6 +16,7 @@ from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import compile_confirmed_page_prompt
+from adaptive_scheduler import AdaptiveScheduler
 import workflow_v6_media as v6_media
 
 
@@ -32,6 +33,30 @@ _HIGH_DETAIL_TERMS = re.compile(
     r"small[-_ ]?text|dense[-_ ]?data|徽标|标志|截图|高细节|小字|密集数据)",
     re.IGNORECASE,
 )
+_PROVIDER_ERROR_PREFIX = "CODEX_IMAGE_ERROR_JSON:"
+_ACTIONABLE_CHECK_CODES = frozenset({
+    "body_is_17_8",
+    "effective_page_content_followed",
+    "global_style_followed",
+    "fixed_layers_absent",
+    "basic_readability",
+    "content_is_relevant",
+})
+_VAGUE_QA_FEEDBACK = frozenset({
+    "bad", "poor", "wrong", "improve", "fix", "fix it", "not good",
+    "不好", "很差", "有问题", "改进", "修改",
+})
+_SPECIFIC_QA_SIGNAL = re.compile(
+    r"(?:overlap|clip|contrast|align|spacing|margin|overflow|unreadable|unrelated|"
+    r"title|logo|footer|page number|重叠|裁切|截断|对比|对齐|间距|边距|溢出|"
+    r"不可读|无关|标题|徽标|页脚|页码)",
+    re.IGNORECASE,
+)
+_ACTIONABLE_QA_INSTRUCTION = re.compile(
+    r"(?:increase|reduce|remove|add|align|separate|move|resize|correct|avoid|"
+    r"improve|use|make|提高|降低|删除|增加|对齐|分开|移动|调整|修正|避免|改进|使用)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -44,13 +69,22 @@ class ImageRequest:
     input_sha256s: tuple[str, ...] = ()
 
 
+class ProviderFailure(RuntimeError):
+    def __init__(
+        self, message: str, *, status_code: int | None = None, network: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.network = network
+
+
 def _material_role_text(page: Mapping[str, Any]) -> str:
     values: list[str] = []
     for field in ("reference_images", "image_requirements"):
         for item in page.get(field, []):
             if not isinstance(item, Mapping):
                 continue
-            for key in ("kind", "purpose", "role"):
+            for key in ("kind", "purpose", "role", "visual"):
                 value = item.get(key)
                 if isinstance(value, str):
                     values.append(value)
@@ -66,9 +100,17 @@ def initial_quality(page: Mapping[str, Any]) -> Literal["medium", "high"]:
         for item in page.get("attachment_extracts", [])
         if isinstance(item, Mapping)
     }
+    structured_attachment = any(
+        isinstance(item, Mapping)
+        and item.get("selector") in {"selected_rows", "selected_fields"}
+        and isinstance(item.get("content"), (list, dict))
+        and bool(item.get("content"))
+        for item in page.get("attachment_extracts", [])
+    )
     dense_data = (
         isinstance(charts, list) and bool(charts)
         or bool(attachment_types & {"table", "chart", "spreadsheet", "data_table"})
+        or structured_attachment
     )
     return "high" if (
         len(body) >= _SMALL_TEXT_RISK_CHARS
@@ -77,12 +119,43 @@ def initial_quality(page: Mapping[str, Any]) -> Literal["medium", "high"]:
     ) else "medium"
 
 
+def _specific_qa_feedback(value: Any, *, structured: bool = False) -> str | None:
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    normalized = text.casefold().rstrip(".!。！")
+    if normalized in _VAGUE_QA_FEEDBACK:
+        return None
+    if len(text) < 8 and not _SPECIFIC_QA_SIGNAL.search(text):
+        return None
+    if not structured and not (
+        _SPECIFIC_QA_SIGNAL.search(text) or _ACTIONABLE_QA_INSTRUCTION.search(text)
+    ):
+        return None
+    return text
+
+
 def _actionable_qa_feedback(qa: Mapping[str, Any]) -> list[str]:
-    issues = [str(item).strip() for item in qa.get("issues", []) if str(item).strip()]
-    normalized = [re.sub(r"\s+", " ", item).casefold() for item in issues]
-    if not issues or len(set(normalized)) != len(normalized):
-        return []
-    return issues
+    feedback: list[str] = []
+    checks = qa.get("checks")
+    if isinstance(checks, Mapping):
+        for code in sorted(_ACTIONABLE_CHECK_CODES):
+            check = checks.get(code)
+            if not isinstance(check, Mapping) or check.get("result") != "fail":
+                continue
+            detail = _specific_qa_feedback(check.get("detail", ""), structured=True)
+            if detail:
+                feedback.append(f"{code}: {detail}")
+    for issue in qa.get("issues", []):
+        actionable = _specific_qa_feedback(issue)
+        if actionable:
+            feedback.append(actionable)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in feedback:
+        identity = item.casefold()
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(item)
+    return unique
 
 
 _MEDIA_DIRECTIVE_TERMS = re.compile(r"(?:图片|照片|图像|新闻稿|新闻图|logo)", re.IGNORECASE)
@@ -424,11 +497,29 @@ def _request_input_records(request: ImageRequest) -> list[dict[str, str]]:
 
 
 def _run(command: list[str], timeout: int) -> None:
-    completed = subprocess.run(
-        command, capture_output=True, text=True, errors="replace", timeout=timeout, check=False
-    )
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, errors="replace", timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ProviderFailure("Image2 provider request timed out", network=True) from exc
     if completed.returncode != 0:
-        raise RuntimeError(completed.stderr or completed.stdout or "Image2 generation failed")
+        message = completed.stderr or completed.stdout or "Image2 generation failed"
+        for line in message.splitlines():
+            if not line.startswith(_PROVIDER_ERROR_PREFIX):
+                continue
+            try:
+                value = json.loads(line[len(_PROVIDER_ERROR_PREFIX):])
+            except json.JSONDecodeError:
+                break
+            if isinstance(value, Mapping):
+                status = value.get("status_code")
+                raise ProviderFailure(
+                    str(value.get("message") or "Image2 provider request failed"),
+                    status_code=status if type(status) is int else None,
+                    network=value.get("network") is True,
+                )
+        raise ProviderFailure(message)
 
 
 def _with_project_reference_paths(
@@ -520,6 +611,8 @@ def generate_page_body(
     max_candidates: int = 2,
     runner: Callable[[list[str], int], None] = _run,
     reviewer: Callable[..., dict[str, Any]] = review_candidate,
+    retry_sleep: Callable[[float], None] | None = None,
+    retry_jitter: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     if max_candidates < 1:
         raise ValueError("max_candidates must be positive")
@@ -560,6 +653,8 @@ def generate_page_body(
         confirmed_page=resolved_request_page,
         visual_contract=global_contract,
     )
+    profile = str(confirmed.get("production_profile") or "balanced")
+    provider_scheduler = AdaptiveScheduler.for_profile(profile)
     existing = _verified_existing_receipt(
         root,
         page_number,
@@ -567,6 +662,10 @@ def generate_page_body(
         confirmed_digest=str(state["confirmed_ui_digest"]),
         request=initial_request,
     )
+    if existing is not None and page["state"] in {
+        "accepted", "accepted_fallback_first", "reconstructing", "page_complete",
+    }:
+        return existing
     if existing is not None and page["state"] in {"prepared", "generating", "qa_review", "technical_failed"}:
         if page["state"] in {"prepared", "technical_failed"}:
             page = transition_page(page, "generating")
@@ -615,7 +714,15 @@ def generate_page_body(
         )
         prompt_file.write_text(request.prompt, encoding="utf-8")
         try:
-            runner(build_image_command(request, prompt_file=prompt_file, output=output, trace=trace), timeout)
+            command = build_image_command(
+                request, prompt_file=prompt_file, output=output, trace=trace,
+            )
+            provider_scheduler.run_transient(
+                lambda: runner(command, timeout),
+                max_attempts=3,
+                sleep=retry_sleep,
+                jitter=retry_jitter,
+            )
         except Exception:
             if attempt == 1:
                 page["technical_failure"] = {"stage": "image2_generate", "attempt": attempt}
@@ -625,7 +732,16 @@ def generate_page_body(
             degraded_reason = "later_generation_failed"
             break
         if not output.is_file():
-            raise RuntimeError("Image2 generate command produced no output")
+            if attempt == 1:
+                page["technical_failure"] = {
+                    "stage": "image2_generate", "attempt": attempt,
+                    "reason": "missing_output",
+                }
+                page = transition_page(page, "technical_failed")
+                update_page(root, page_number, page)
+                raise RuntimeError("Image2 generate command produced no output")
+            degraded_reason = "later_generation_missing_output"
+            break
         candidate = {
             "attempt": attempt,
             "path": output.relative_to(root).as_posix(),

@@ -20,7 +20,7 @@ def should_retry(error: BaseException) -> bool:
     status = _status_code(error)
     return status == 429 or (status is not None and 500 <= status <= 599) or isinstance(
         error, (ConnectionError, TimeoutError)
-    )
+    ) or getattr(error, "network", False) is True
 
 
 def jittered_retry_delay(attempt: int, *, jitter: float) -> float:
@@ -154,6 +154,28 @@ class AdaptiveScheduler:
                 continue
             self.mark_completed(page_number, receipt)
             return receipt
+        raise RuntimeError("unreachable retry state")
+
+    def run_transient(
+        self,
+        action: Callable[[], Any],
+        *,
+        max_attempts: int = 3,
+        sleep: Callable[[float], None] | None = None,
+        jitter: Callable[[], float] | None = None,
+    ) -> Any:
+        """Retry one provider operation without treating it as another candidate."""
+        if type(max_attempts) is not int or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer")
+        sleeper = sleep if sleep is not None else time.sleep
+        jitter_source = jitter if jitter is not None else random.random
+        for attempt in range(max_attempts):
+            try:
+                return action()
+            except Exception as exc:
+                if attempt + 1 >= max_attempts or not self.note_failure(exc):
+                    raise
+                sleeper(jittered_retry_delay(attempt, jitter=float(jitter_source())))
         raise RuntimeError("unreachable retry state")
 
     @property

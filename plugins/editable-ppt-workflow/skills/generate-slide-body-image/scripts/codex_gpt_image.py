@@ -67,7 +67,12 @@ GPT_IMAGE_2_MAX_RATIO = 3.0
 
 
 class CliError(RuntimeError):
-    pass
+    def __init__(
+        self, message: str, *, status_code: int | None = None, network: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.network = network
 
 
 @dataclass
@@ -170,9 +175,9 @@ def read_json_response(req: request.Request, timeout: int) -> dict[str, Any]:
             text = resp.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
     except error.HTTPError as exc:
         detail = exc.read(4096).decode("utf-8", errors="replace")
-        raise CliError(f"HTTP {exc.code}: {detail}") from exc
+        raise CliError(f"HTTP {exc.code}: {detail}", status_code=exc.code) from exc
     except error.URLError as exc:
-        raise CliError(f"Request failed: {exc.reason}") from exc
+        raise CliError(f"Request failed: {exc.reason}", network=True) from exc
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -718,9 +723,12 @@ def post_image_json(
             text = resp.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
     except error.HTTPError as exc:
         detail = exc.read(4096).decode("utf-8", errors="replace")
-        raise CliError(f"Codex Images request failed (HTTP {exc.code}): {detail}") from exc
+        raise CliError(
+            f"Codex Images request failed (HTTP {exc.code}): {detail}",
+            status_code=exc.code,
+        ) from exc
     except error.URLError as exc:
-        raise CliError(f"Codex Images request failed: {exc.reason}") from exc
+        raise CliError(f"Codex Images request failed: {exc.reason}", network=True) from exc
     try:
         response = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -965,6 +973,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except CliError as exc:
+        eprint("CODEX_IMAGE_ERROR_JSON:" + json.dumps({
+            "status_code": exc.status_code,
+            "network": exc.network,
+            "message": str(exc),
+        }, ensure_ascii=False, separators=(",", ":")))
         die(str(exc))
     return 0
 

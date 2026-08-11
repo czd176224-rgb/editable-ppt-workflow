@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -19,6 +20,8 @@ if str(SCRIPTS) not in sys.path:
 from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_image import (  # noqa: E402
     ImageRequest,
+    ProviderFailure,
+    _run,
     build_image_command,
     build_image_request,
     build_prompt,
@@ -90,10 +93,13 @@ def _confirmed_reference(path: Path, *, status: str = "available", digest: str |
         ({"effective_body": "Short approved copy", "reference_images": [{"purpose": "ordinary photo"}]}, "medium"),
         ({"effective_body": "Short", "reference_images": [{"purpose": "company logo"}]}, "high"),
         ({"effective_body": "Short", "reference_images": [{"purpose": "product screenshot"}]}, "high"),
-        ({"effective_body": "Short", "chart_facts": [{"series": [1, 2, 3]}]}, "high"),
+        ({"effective_body": "Short", "chart_facts": [{"title": "Revenue trend", "unit": "USD m", "series": [{"series": "Revenue", "time": "2025", "value": 20}]}]}, "high"),
         ({"effective_body": "Short", "attachment_extracts": [{"kind": "table", "rows": 12}]}, "high"),
+        ({"effective_body": "Short", "attachment_extracts": [{"selector": "selected_rows", "content": [{"Revenue": "20"}, {"Revenue": "40"}]}]}, "high"),
         ({"effective_body": "x" * 1200}, "high"),
         ({"effective_body": "Short", "image_requirements": [{"role": "high-detail evidence"}]}, "high"),
+        ({"effective_body": "Short", "image_requirements": [{"kind": "reference_acquisition", "visual": "logo"}]}, "high"),
+        ({"effective_body": "Short", "image_requirements": [{"kind": "reference_acquisition", "visual": "screenshot"}]}, "high"),
     ],
 )
 def test_initial_quality_uses_only_frozen_material_risk(page: dict, expected: str):
@@ -107,6 +113,20 @@ def test_cli_defaults_to_two_candidates_and_rejects_more():
         _parser().parse_args([
             "generate-page", "--project", "p", "--page", "1", "--max-candidates", "3",
         ])
+
+
+def test_subprocess_runner_preserves_typed_provider_status(monkeypatch):
+    class Completed:
+        returncode = 1
+        stdout = ""
+        stderr = 'CODEX_IMAGE_ERROR_JSON:{"status_code":429,"network":false,"message":"rate limited"}\n'
+
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    with pytest.raises(ProviderFailure) as failure:
+        _run(["image-cli"], 10)
+    assert failure.value.status_code == 429
+    assert failure.value.network is False
 
 
 @pytest.mark.parametrize("count", [0, 1, 16])
@@ -616,7 +636,7 @@ def test_qa_feedback_over_prompt_limit_uses_first_candidate_without_retry(tmp_pa
     state["confirmed_ui_digest"] = canonical_sha256(result)
     save(project, state)
     calls = []
-    feedback = "y" * 1_000
+    feedback = "Increase body contrast: " + "y" * 1_000
 
     initial_prompt = build_prompt(
         global_visual_contract=result["global_visual_contract"],
@@ -664,7 +684,7 @@ def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):
         Image.new("RGB", (1904, 896), "white").save(output)
 
     reviews = iter([
-        {"accepted": False, "score": 3, "issues": ["问题一", "问题二"]},
+        {"accepted": False, "score": 3, "issues": ["Increase body contrast", "Align the lower panel"]},
         {"accepted": True, "score": 6, "issues": []},
     ])
     receipt = generate_page_body(
@@ -715,6 +735,61 @@ def test_non_actionable_qa_failure_does_not_spend_second_candidate(tmp_path: Pat
     assert "qa_feedback_not_actionable" in receipt["degraded_reasons"]
 
 
+@pytest.mark.parametrize("vague_issue", ["bad", "Looks generally disappointing"])
+def test_vague_generic_qa_issue_does_not_spend_second_candidate(
+    tmp_path: Path, vague_issue: str,
+):
+    project = _project(tmp_path)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": False, "score": 3, "issues": [vague_issue]},
+    )
+
+    assert len(calls) == 1
+    assert "qa_feedback_not_actionable" in receipt["degraded_reasons"]
+
+
+def test_precise_failed_check_detail_allows_one_retry_without_issues(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+    reviews = iter([
+        {
+            "accepted": False, "score": 5, "issues": [],
+            "checks": {
+                "basic_readability": {
+                    "result": "fail",
+                    "detail": "Body text overlaps the chart labels in the lower-right panel.",
+                },
+            },
+        },
+        {"accepted": True, "score": 6, "issues": []},
+    ])
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: next(reviews),
+    )
+
+    assert len(calls) == 2
+    retry_prompt = Path(calls[1][calls[1].index("--prompt-file") + 1]).read_text(encoding="utf-8")
+    assert "basic_readability" in retry_prompt
+    assert receipt["selected"]["attempt"] == 2
+
+
 def test_actionable_retry_upgrades_medium_to_high_and_caps_at_two(tmp_path: Path):
     project = _project(tmp_path)
     calls = []
@@ -737,3 +812,103 @@ def test_actionable_retry_upgrades_medium_to_high_and_caps_at_two(tmp_path: Path
     assert len(calls) == 2
     assert [command[command.index("--quality") + 1] for command in calls] == ["medium", "high"]
     assert len(receipt["candidates"]) == 2
+
+
+def test_generate_page_retries_typed_429_on_same_candidate_only(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+    delays = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        if len(calls) == 1:
+            raise ProviderFailure("rate limited", status_code=429)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+        retry_sleep=delays.append, retry_jitter=lambda: 0.5,
+    )
+
+    assert len(calls) == 2
+    assert delays == [1.0]
+    assert {Path(command[command.index("--out") + 1]).name for command in calls} == {
+        "page_001.candidate_1.png"
+    }
+    assert len(receipt["candidates"]) == 1
+
+
+def test_completed_page_with_verified_receipt_is_never_regenerated(tmp_path: Path):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        trace = Path(command[command.index("--trace-out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        trace.write_text(json.dumps({
+            "operation": "generate", "model": "gpt-image-2", "input_images": [],
+        }), encoding="utf-8")
+
+    first = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    state_before = (project / "workflow_v6.json").read_bytes()
+    receipt_before = (project / "04_v6/images/page_001.json").read_bytes()
+
+    resumed = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("completed page must not be regenerated"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("completed page must not be reviewed"),
+    )
+
+    assert resumed == first
+    assert (project / "workflow_v6.json").read_bytes() == state_before
+    assert (project / "04_v6/images/page_001.json").read_bytes() == receipt_before
+
+
+def test_generate_page_does_not_retry_validation_provider_failure(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        raise ProviderFailure("bad request", status_code=400)
+
+    with pytest.raises(ProviderFailure, match="bad request"):
+        generate_page_body(
+            project, page_number=1, runner=runner,
+            reviewer=lambda *_args, **_kwargs: pytest.fail("QA must not run"),
+            retry_sleep=lambda _delay: pytest.fail("400 must not back off"),
+        )
+    assert len(calls) == 1
+
+
+def test_second_candidate_missing_output_falls_back_to_first_and_finalizes(tmp_path: Path):
+    project = _project(tmp_path)
+    calls = []
+    reviews = iter([
+        {"accepted": False, "score": 4, "issues": ["Increase contrast between body text and panels."]},
+    ])
+
+    def runner(command, timeout):
+        calls.append(command)
+        if len(calls) == 1:
+            output = Path(command[command.index("--out") + 1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (1904, 896), "white").save(output)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: next(reviews),
+    )
+
+    assert len(calls) == 2
+    assert receipt["selected"]["attempt"] == 1
+    assert receipt["state"] == "accepted_fallback_first"
+    assert "later_generation_missing_output" in receipt["degraded_reasons"]
+    assert load(project)["pages"][0]["state"] == "accepted_fallback_first"

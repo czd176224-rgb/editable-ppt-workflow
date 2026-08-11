@@ -55,13 +55,16 @@ _FACT_FROM_TO = re.compile(
     r"(?P<old>.+?)\s+(?:to|with)\s+(?P<new>.+)$",
     re.IGNORECASE,
 )
-_CHINESE_FROM_TO = re.compile(r"将(?P<old>.+?)(?:改为|替换为)(?P<new>.+)$")
+_CHINESE_FROM_TO = re.compile(r"将(?P<old>.+?)(?:改为|修改为|替换为)(?P<new>.+)$")
 _FINAL_BODY_REPLACEMENT = re.compile(
     r"(?:replace)\s+(?:the\s+)?final\s+body\s+paragraph\s+with\s+(?P<new>.+)$",
     re.IGNORECASE,
 )
 _CHINESE_FINAL_BODY_REPLACEMENT = re.compile(r"正文最后一段替换为(?P<new>.+)$")
-_BODY_REPLACEMENT = re.compile(r"(?:replace)\s+(?:the\s+)?body\s+with\s+(?P<new>.+)$", re.IGNORECASE)
+_BODY_REPLACEMENT = re.compile(
+    r"(?:change|replace)\s+(?:the\s+)?body\s+(?:to|with)\s+(?P<new>.+)$",
+    re.IGNORECASE,
+)
 _TABLE_REPLACEMENT = re.compile(r"(?:replace)\s+(?:the\s+)?table\s+with\s+(?P<new>.+)$", re.IGNORECASE | re.DOTALL)
 _CHINESE_TABLE_REPLACEMENT = re.compile(r"(?:将)?(?:表格).{0,24}(?:替换为|改为)(?P<new>.+)$", re.DOTALL)
 _PERSON_PHOTO = re.compile(
@@ -122,43 +125,45 @@ def _paragraphs(value: str) -> list[str]:
     return [paragraph for paragraph in re.split(r"\n\s*\n", value) if paragraph.strip()]
 
 
-def _replace_word_content(*, body: str, target: str, text: str) -> str | None:
-    """Apply a deterministic, localized Word change or return ``None`` if unclear."""
+def _replace_word_content(*, body: str, target: str, text: str) -> tuple[str | None, bool]:
+    """Apply a deterministic change and flag source-target ambiguity separately."""
     if target == "word.facts":
         replacement = _fact_replacement(text)
         if replacement is None:
-            return None
+            return None, False
         old, new = replacement
         if old:
-            if new[-1:] in ".。!?！？" and old + new[-1] in body:
-                return body.replace(old + new[-1], new, 1)
-            return body.replace(old, new, 1) if old in body else None
+            source_target = old + new[-1] if new[-1:] in ".。!?！？" and old + new[-1] in body else old
+            if body.count(source_target) != 1:
+                return None, True
+            return body.replace(source_target, new, 1), False
         paragraphs = _paragraphs(body)
-        return new if len(paragraphs) == 1 else None
+        return (new, False) if len(paragraphs) == 1 else (None, False)
     if target == "word.body_text":
         final = _FINAL_BODY_REPLACEMENT.search(text) or _CHINESE_FINAL_BODY_REPLACEMENT.search(text)
         if final:
             paragraphs = _paragraphs(body)
             replacement = final.group("new").strip()
             if not paragraphs or not replacement:
-                return None
+                return None, False
             paragraphs[-1] = replacement
-            return "\n\n".join(paragraphs)
+            return "\n\n".join(paragraphs), False
         whole = _BODY_REPLACEMENT.search(text)
-        return whole.group("new").strip() if whole and whole.group("new").strip() else None
+        return (
+            (whole.group("new").strip(), False)
+            if whole and whole.group("new").strip() else (None, False)
+        )
     if target == "word.tables":
         match = _TABLE_REPLACEMENT.search(text) or _CHINESE_TABLE_REPLACEMENT.search(text)
         if not match or not match.group("new").strip():
-            return None
+            return None, False
         paragraphs = _paragraphs(body)
-        table_index = next(
-            (index for index, paragraph in enumerate(paragraphs) if "|" in paragraph), None,
-        )
-        if table_index is None:
-            return None
-        paragraphs[table_index] = match.group("new").strip()
-        return "\n\n".join(paragraphs)
-    return None
+        table_indexes = [index for index, paragraph in enumerate(paragraphs) if "|" in paragraph]
+        if len(table_indexes) != 1:
+            return None, True
+        paragraphs[table_indexes[0]] = match.group("new").strip()
+        return "\n\n".join(paragraphs), False
+    return None, False
 
 
 def _available_attachments(
@@ -315,13 +320,16 @@ def resolve_page_comments(
             None,
         )
         if word_target:
-            replacement = _replace_word_content(
+            replacement, ambiguous = _replace_word_content(
                 body=effective_body, target=word_target, text=normalized,
             )
             if replacement:
                 effective_body = replacement
             else:
-                degradations.append({"code": "unsupported_word_modification", "comment_id": comment_id})
+                degradations.append({
+                    "code": "ambiguous_word_modification" if ambiguous else "unsupported_word_modification",
+                    "comment_id": comment_id,
+                })
             continue
         if directive.kind == "attachment_reference":
             requirement = _attachment_requirement(

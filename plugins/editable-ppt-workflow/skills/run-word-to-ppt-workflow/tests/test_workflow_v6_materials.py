@@ -226,6 +226,55 @@ def test_ambiguous_word_change_degrades_without_discarding_source_body():
     },)
 
 
+@pytest.mark.parametrize(
+    "word_original, comment, expected_body",
+    [
+        ("Title\n\nOriginal body.", "Change the body to Replaced.", "Replaced."),
+        (
+            "Title\n\n\u6536\u5165\u4e3a20%\u3002",
+            "\u5c06\u6536\u5165\u4e3a20%\u4fee\u6539\u4e3a\u6536\u5165\u4e3a30%\u3002",
+            "\u6536\u5165\u4e3a30%\u3002",
+        ),
+    ],
+)
+def test_resolver_recognized_edit_forms_reach_effective_body(
+    word_original: str, comment: str, expected_body: str,
+):
+    """A recognized resolver decision must not degrade solely because adapter parsing is narrower."""
+    result = resolve_page_comments(
+        word_original=word_original,
+        fixed_page_title="Title",
+        comments=[{"comment_id": "recognized", "text": comment}],
+    )
+
+    assert result.effective_body == expected_body
+    assert result.degradations == ()
+
+
+@pytest.mark.parametrize(
+    "word_original",
+    [
+        "Title\n\nRevenue was 20%.\n\nRevenue was 20%.",
+        "Title\n\nRevenue was 30%.",
+    ],
+)
+def test_zero_or_duplicate_fact_target_degrades_without_changing_body(word_original: str):
+    """Choosing the first matching fact would silently change the wrong repeated paragraph."""
+    result = resolve_page_comments(
+        word_original=word_original,
+        fixed_page_title="Title",
+        comments=[{
+            "comment_id": "fact",
+            "text": "Change the revenue fact Revenue was 20% to Revenue was 40%.",
+        }],
+    )
+
+    assert result.effective_body == word_original.removeprefix("Title\n\n")
+    assert result.degradations == ({
+        "code": "ambiguous_word_modification", "comment_id": "fact",
+    },)
+
+
 def test_selected_attachment_rows_become_extraction_requirement_without_comment_prose():
     """Passing the reviewer prose to Image2 would bypass attachment extraction."""
     result = resolve_page_comments(

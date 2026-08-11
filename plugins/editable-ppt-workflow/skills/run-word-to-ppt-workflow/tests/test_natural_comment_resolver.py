@@ -614,6 +614,21 @@ def test_word_change_classes_remain_deterministically_auditable(text: str, targe
     assert result.decisions[0]["target"] == target
 
 
+@pytest.mark.parametrize(
+    "text, target",
+    [
+        ("Change the body to Replaced.", "word.body_text"),
+        ("\u5c06\u6536\u5165\u4e3a20%\u4fee\u6539\u4e3a\u6536\u5165\u4e3a30%\u3002", "word.facts"),
+    ],
+)
+def test_additional_recognized_word_edit_forms_keep_closed_targets(text: str, target: str):
+    """The adapter may only handle patterns that the deterministic resolver identifies by target."""
+    result = resolve_comment_deterministically(text, page_context())
+
+    assert result is not None
+    assert result.decisions[0]["target"] == target
+
+
 def test_fact_change_exposes_the_replacement_text_to_pre_ui_compilation():
     """A fact decision without its replacement text could not produce a complete effective body."""
     result = resolve_comment_deterministically(

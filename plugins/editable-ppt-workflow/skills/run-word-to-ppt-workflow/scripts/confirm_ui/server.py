@@ -132,6 +132,7 @@ FORMULA_POLICIES = {"mixed", "editable", "rendered"}
 GENERATION_MODES = {"continuous", "split"}
 IMAGE_QUALITIES = {"auto", "low", "medium", "high"}
 INFORMATION_DENSITIES = {"low", "balanced", "high"}
+IMAGE_USAGE_POLICIES = {"content-driven", "visual-preference", "source-only"}
 LAYOUT_PREFERENCES = {
     "auto",
     "editorial",
@@ -542,6 +543,8 @@ def _one_screen_submission_error(payload: dict[str, Any], candidate_count: int) 
             return error
     if payload.get("information_density") not in INFORMATION_DENSITIES:
         return "information_density must be low, balanced, or high"
+    if payload.get("image_usage_policy", "content-driven") not in IMAGE_USAGE_POLICIES:
+        return "image_usage_policy must be content-driven, visual-preference, or source-only"
     layouts = payload.get("layout_preferences")
     if (
         not isinstance(layouts, list)
@@ -739,6 +742,7 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
         if submission_error:
             raise ValueError(submission_error)
         result = {field: _clean(payload[field]) for field in ONE_SCREEN_FIELDS}
+        result["image_usage_policy"] = _clean(payload.get("image_usage_policy", "content-driven"))
         result.update(_project_facts(project))
         result.update(ONE_SCREEN_PRODUCTION_BASE)
         result.update(PRODUCTION_PROFILES[result["production_profile"]])

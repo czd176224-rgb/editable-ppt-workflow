@@ -116,6 +116,27 @@ def _multi_page_project(tmp_path: Path, page_count: int = 3) -> Path:
     return project
 
 
+def _write_mock_trace(command: list[str]) -> None:
+    output = Path(command[command.index("--out") + 1])
+    trace = Path(command[command.index("--trace-out") + 1])
+    images = [command[index + 1] for index, value in enumerate(command) if value == "--image"]
+    roles = [command[index + 1] for index, value in enumerate(command) if value == "--image-role"]
+    digests = [command[index + 1] for index, value in enumerate(command) if value == "--image-sha256"]
+    trace.write_text(json.dumps({
+        "operation": command[2],
+        "model": "gpt-image-2",
+        "input_images": [
+            {"role": role, "path": str(Path(path)), "sha256": digest}
+            for role, path, digest in zip(roles, images, digests)
+        ],
+        "outputs": [{
+            "path": str(output.resolve()),
+            "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+            "mime_type": "image/png",
+        }],
+    }), encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("page", "expected"),
     [
@@ -230,6 +251,7 @@ def test_generation_prompt_and_qa_receive_only_resolved_usable_references(tmp_pa
         observed["command"] = command
         observed["prompt"] = Path(command[command.index("--prompt-file") + 1]).read_text(encoding="utf-8")
         Image.new("RGB", (1904, 896), "white").save(Path(command[command.index("--out") + 1]))
+        _write_mock_trace(command)
 
     def reviewer(*_args, **kwargs):
         observed["qa_page"] = kwargs["effective_page"]
@@ -367,7 +389,15 @@ def test_snapshot_writer_rejects_injected_final_handle_escape_before_payload_wri
     state = load(project); state["confirmed_ui_digest"] = canonical_sha256(result); save(project, state)
     outside = tmp_path / "outside" / "snapshot.img"
     final_paths = iter((project, outside))
-    monkeypatch.setattr(media, "_final_path_for_handle", lambda _handle: next(final_paths))
+    original_final_path = media._final_path_for_handle
+
+    def injected_then_real(handle):
+        try:
+            return next(final_paths)
+        except StopIteration:
+            return original_final_path(handle)
+
+    monkeypatch.setattr(media, "_final_path_for_handle", injected_then_real)
     calls = []
 
     def runner(command, timeout):
@@ -375,6 +405,7 @@ def test_snapshot_writer_rejects_injected_final_handle_escape_before_payload_wri
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     generate_page_body(
         project, page_number=1, runner=runner,
@@ -407,6 +438,7 @@ def _run_one_accepted_page(project: Path) -> list[list[str]]:
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     generate_page_body(
         project, page_number=1, runner=runner,
@@ -515,6 +547,7 @@ def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     reviews = iter([
         {"accepted": False, "score": 4, "issues": ["正文重叠"]},
@@ -574,6 +607,7 @@ def test_edit_retry_reuses_only_original_confirmed_inputs_never_candidate_one(tm
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     reviews = iter([
         {"accepted": False, "score": 3, "issues": ["improve composition"]},
@@ -646,6 +680,7 @@ def test_old_generate_only_receipt_is_not_reused_without_current_sealed_request_
         calls.append(command)
         output = Path(command[command.index("--out") + 1])
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     generate_page_body(
         project, page_number=1, runner=runner,
@@ -684,6 +719,7 @@ def test_qa_feedback_over_prompt_limit_uses_first_candidate_without_retry(tmp_pa
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project,
@@ -711,6 +747,7 @@ def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     reviews = iter([
         {"accepted": False, "score": 3, "issues": ["Increase body contrast", "Align the lower panel"]},
@@ -734,6 +771,7 @@ def test_light_qa_timeout_is_bounded_independently_from_image_generation(tmp_pat
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     def reviewer(*args, **kwargs):
         observed.append(kwargs["timeout"])
@@ -753,6 +791,7 @@ def test_non_actionable_qa_failure_does_not_spend_second_candidate(tmp_path: Pat
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, max_candidates=99, runner=runner,
@@ -776,6 +815,7 @@ def test_vague_generic_qa_issue_does_not_spend_second_candidate(
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, runner=runner,
@@ -807,6 +847,7 @@ def test_precise_failed_check_detail_allows_one_retry_without_issues(tmp_path: P
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, runner=runner,
@@ -832,6 +873,7 @@ def test_actionable_retry_upgrades_medium_to_high_and_caps_at_two(tmp_path: Path
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, max_candidates=99, runner=runner,
@@ -855,6 +897,7 @@ def test_generate_page_retries_typed_429_on_same_candidate_only(tmp_path: Path):
         output = Path(command[command.index("--out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, runner=runner,
@@ -878,9 +921,7 @@ def test_completed_page_with_verified_receipt_is_never_regenerated(tmp_path: Pat
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     first = generate_page_body(
         project, page_number=1, runner=runner,
@@ -930,6 +971,7 @@ def test_second_candidate_missing_output_falls_back_to_first_and_finalizes(tmp_p
             output = Path(command[command.index("--out") + 1])
             output.parent.mkdir(parents=True, exist_ok=True)
             Image.new("RGB", (1904, 896), "white").save(output)
+            _write_mock_trace(command)
 
     receipt = generate_page_body(
         project, page_number=1, runner=runner,
@@ -954,9 +996,7 @@ def test_project_429_throttle_limits_subsequent_page_launches_and_preserves_comp
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     def page1_runner(command, timeout):
         nonlocal page1_calls
@@ -1031,9 +1071,7 @@ def test_same_page_waiter_resumes_owner_result_without_duplicate_candidate_or_re
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     reviewer = lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []}
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -1071,9 +1109,7 @@ def test_crash_after_receipt_commit_before_accepted_state_resumes_without_provid
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     real_write = workflow_v6_image._atomic_write_json
 
@@ -1117,9 +1153,7 @@ def test_every_finalization_boundary_is_resumable_without_duplicate_work(
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     def reviewer(*_args, **_kwargs):
         calls["qa"] += 1
@@ -1155,9 +1189,7 @@ def test_legacy_accepted_state_recovers_selected_artifact_without_provider_or_qa
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     original = generate_page_body(
         project, page_number=1, runner=runner,
@@ -1193,9 +1225,7 @@ def test_unrecoverable_accepted_artifact_regenerates_without_accepted_to_accepte
         trace = Path(command[command.index("--trace-out") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), color).save(output)
-        trace.write_text(json.dumps({
-            "operation": "generate", "model": "gpt-image-2", "input_images": [],
-        }), encoding="utf-8")
+        _write_mock_trace(command)
 
     first = generate_page_body(
         project, page_number=1, runner=lambda command, _timeout: write_candidate(command, "white"),
@@ -1217,3 +1247,76 @@ def test_unrecoverable_accepted_artifact_regenerates_without_accepted_to_accepte
     assert calls == 1
     assert replacement["state"] == "accepted"
     assert load(project)["pages"][0]["state"] == "accepted"
+
+
+@pytest.mark.parametrize("damage", [
+    "corrupt_png",
+    "wrong_dimensions",
+    "output_path_mismatch",
+    "output_digest_mismatch",
+])
+def test_accepted_recovery_rejects_corrupt_or_mismatched_candidate_and_regenerates_once(
+    tmp_path: Path, damage: str,
+):
+    project = _project(tmp_path)
+
+    def write_candidate(command, color="white"):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), color).save(output)
+        _write_mock_trace(command)
+
+    first = generate_page_body(
+        project, page_number=1, runner=lambda command, _timeout: write_candidate(command),
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    image_path = project / first["selected"]["path"]
+    trace_path = image_path.with_name(image_path.name.replace(".png", ".trace.json"))
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    if damage == "corrupt_png":
+        image_path.write_bytes(b"not a png")
+        trace["outputs"][0]["sha256"] = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    elif damage == "wrong_dimensions":
+        Image.new("RGB", (100, 100), "red").save(image_path)
+        trace["outputs"][0]["sha256"] = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    elif damage == "output_path_mismatch":
+        trace["outputs"][0]["path"] = str((project / "04_v6/images/other.png").resolve())
+    else:
+        trace["outputs"][0]["sha256"] = "0" * 64
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    calls = 0
+
+    def replacement_runner(command, timeout):
+        nonlocal calls
+        calls += 1
+        write_candidate(command, "blue")
+
+    recovered = generate_page_body(
+        project, page_number=1, runner=replacement_runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    assert calls == 1
+    assert recovered["state"] == "accepted"
+    assert load(project)["pages"][0]["state"] == "accepted"
+
+
+def test_accepted_recovery_accepts_valid_decoded_png_and_matching_output_trace(tmp_path: Path):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+
+    original = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    (project / "04_v6/images/page_001.json").unlink()
+    recovered = generate_page_body(
+        project, page_number=1,
+        runner=lambda *_args, **_kwargs: pytest.fail("valid recovery must not call provider"),
+        reviewer=lambda *_args, **_kwargs: pytest.fail("valid recovery must not call QA"),
+    )
+    assert recovered["selected"] == original["selected"]

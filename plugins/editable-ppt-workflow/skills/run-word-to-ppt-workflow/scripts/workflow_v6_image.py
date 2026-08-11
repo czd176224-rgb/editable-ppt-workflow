@@ -585,9 +585,6 @@ def _verified_existing_receipt(
     try:
         receipt = _read_json(receipt_path)
         selected = receipt["selected"]
-        image = root / selected["path"]
-        trace = image.with_name(image.name.replace(".png", ".trace.json"))
-        trace_value = _read_json(trace)
     except (KeyError, OSError, ValueError):
         return None
     try:
@@ -606,11 +603,7 @@ def _verified_existing_receipt(
         or not receipt["candidates"]
         or selected not in receipt["candidates"]
         or not isinstance(receipt.get("degraded_reasons"), list)
-        or selected.get("operation") != request.operation
-        or not image.is_file()
-        or trace_value.get("operation") != request.operation
-        or trace_value.get("model") != "gpt-image-2"
-        or trace_value.get("input_images") != expected_inputs
+        or not _candidate_artifact_is_valid(root, selected, request=request)
     ):
         return None
     return receipt
@@ -643,7 +636,7 @@ def _finalization_boundary(_stage: str) -> None:
 
 
 def _committed_receipt_matches(
-    root: Path, receipt_path: Path, expected: Mapping[str, Any],
+    root: Path, receipt_path: Path, expected: Mapping[str, Any], *, request: ImageRequest,
 ) -> bool:
     """Verify the atomic receipt bytes and all candidate outputs before state commit."""
     try:
@@ -653,10 +646,7 @@ def _committed_receipt_matches(
     if committed != dict(expected):
         return False
     for candidate in committed.get("candidates", []):
-        if not isinstance(candidate, Mapping) or not isinstance(candidate.get("path"), str):
-            return False
-        relative = Path(candidate["path"])
-        if relative.is_absolute() or ".." in relative.parts or not (root / relative).is_file():
+        if not _candidate_artifact_is_valid(root, candidate, request=request):
             return False
     return True
 
@@ -673,21 +663,43 @@ def _candidate_artifact_is_valid(
     ):
         return False
     relative = Path(candidate["path"])
-    if relative.is_absolute() or ".." in relative.parts:
+    if relative.is_absolute() or ".." in relative.parts or relative.suffix.casefold() != ".png":
         return False
     image = root / relative
-    trace = image.with_name(image.name.replace(".png", ".trace.json"))
+    trace = image.with_suffix(".trace.json")
     try:
-        trace_value = _read_json(trace)
+        data = v6_media._read_file_limited(root, image)
+        digest = hashlib.sha256(data).hexdigest()
+        decoded, mime_type = v6_media._open_raster(data)
+        try:
+            dimensions = decoded.size
+        finally:
+            decoded.close()
+        trace_data = v6_media._read_file_limited(root, trace)
+        trace_value = json.loads(trace_data.decode("utf-8"))
+        canonical_image = image.resolve(strict=True)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
-    expected_inputs = _request_input_records(request)
-    return (
-        image.is_file()
-        and trace_value.get("operation") == request.operation
-        and trace_value.get("model") == "gpt-image-2"
-        and trace_value.get("input_images") == expected_inputs
-    )
+    if (
+        mime_type != "image/png"
+        or dimensions != (1904, 896)
+        or trace_value.get("operation") != request.operation
+        or trace_value.get("model") != "gpt-image-2"
+        or trace_value.get("input_images") != _request_input_records(request)
+        or not isinstance(trace_value.get("outputs"), list)
+    ):
+        return False
+    canonical_text = str(canonical_image)
+    for output in trace_value["outputs"]:
+        if not isinstance(output, Mapping) or output.get("path") != canonical_text:
+            continue
+        if output.get("sha256") != digest:
+            return False
+        traced_mimes = [
+            output[key] for key in ("mime_type", "mime", "content_type") if key in output
+        ]
+        return all(value == "image/png" for value in traced_mimes)
+    return False
 
 
 def _receipt_from_accepted_page(
@@ -1045,6 +1057,17 @@ def _generate_page_body_owned(
     else:
         page["selected_candidate"] = copy.deepcopy(selected)
         page = transition_page(page, "accepted")
+    if not _candidate_artifact_is_valid(
+        root, page["selected_candidate"], request=initial_request,
+    ):
+        page["technical_failure"] = {
+            "stage": "candidate_artifact_validation",
+            "reason": "invalid_png_or_generation_trace",
+        }
+        page = transition_page(page, "technical_failed")
+        require_current_owner()
+        update_page(root, page_number, page)
+        raise RuntimeError("V6 selected Image2 candidate artifact failed validation")
     receipt = {
         "artifact_version": "image2-generate-v6",
         "page_number": page_number,
@@ -1063,7 +1086,7 @@ def _generate_page_body_owned(
     )
     _finalization_boundary("after_receipt_commit")
     require_current_owner()
-    if not _committed_receipt_matches(root, receipt_path, receipt):
+    if not _committed_receipt_matches(root, receipt_path, receipt, request=initial_request):
         raise RuntimeError("V6 Image2 receipt failed verification before accepted state")
     _finalization_boundary("after_receipt_verification")
     require_current_owner()

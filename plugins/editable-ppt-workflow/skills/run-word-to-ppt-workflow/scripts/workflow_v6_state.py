@@ -15,6 +15,8 @@ from workflow_v6_contract import validate_project
 
 STATE_FILE = "workflow_v6.json"
 LOCK_DIRECTORY = ".workflow_v6.lock"
+REPLACE_ATTEMPTS = 10
+REPLACE_RETRY_SECONDS = 0.05
 
 
 def state_path(project: Path) -> Path:
@@ -38,7 +40,14 @@ def save(project: Path, value: Mapping[str, Any]) -> Path:
     payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
     try:
         temporary.write_text(payload, encoding="utf-8", newline="\n")
-        os.replace(temporary, path)
+        for attempt in range(REPLACE_ATTEMPTS):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt + 1 >= REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(REPLACE_RETRY_SECONDS)
     finally:
         temporary.unlink(missing_ok=True)
     return path

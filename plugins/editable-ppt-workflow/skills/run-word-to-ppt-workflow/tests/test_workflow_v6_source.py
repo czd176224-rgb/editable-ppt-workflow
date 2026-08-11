@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from docx import Document
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,3 +102,36 @@ def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):
     assert len(state["pages"][0]["title"]) <= 28
     assert effective["body_render_content"] == paragraph
     assert effective["word_original"] == paragraph
+
+
+def test_initialize_v6_project_preserves_embedded_image_integrity_and_paths(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    image_path = tmp_path / "source.bmp"
+    Image.new("RGB", (8, 6), color=(20, 40, 60)).save(image_path)
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("图片页")
+    document.add_paragraph("正文")
+    document.add_picture(str(image_path))
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    initialize_v6_project(word, logo, project)
+
+    assets = json.loads((project / "02_v6" / "source_assets.json").read_text(encoding="utf-8"))
+    asset = next(item for item in assets["assets"] if item["media_type"] == "image/bmp")
+    material = json.loads(
+        (project / "02_v6" / "page_materials" / "page_001.json").read_text(encoding="utf-8")
+    )
+    reference = material["reference_images"][0]
+    generation_input = asset["generation_input"]
+
+    assert reference["original_path"] == f"01_source_assets/{asset['relative_path']}"
+    assert reference["model_input_path"] == f"01_source_assets/{generation_input['relative_path']}"
+    assert reference["original_path"] != reference["model_input_path"]
+    assert reference["integrity"]["original_sha256"] == asset["sha256"]
+    assert reference["integrity"]["model_input_sha256"] == generation_input["sha256"]
+    assert reference["thumbnail_path"] is None
+    assert reference["integrity"]["thumbnail_sha256"] is None

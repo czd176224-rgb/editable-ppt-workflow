@@ -19,6 +19,7 @@ if str(SCRIPTS) not in sys.path:
 from workflow_v6_materials import (  # noqa: E402
     confirmed_revision_digest,
     new_page_materials,
+    reference_image_from_source,
     validate_page_materials,
 )
 
@@ -128,3 +129,29 @@ def test_confirmed_revision_digest_is_canonical_for_equivalent_mappings():
     second = {"revision": 3, "selected_style": {"palette": "blue"}}
 
     assert confirmed_revision_digest(first) == confirmed_revision_digest(second)
+
+
+def test_reference_image_preserves_distinct_source_and_model_integrity():
+    reference = reference_image_from_source(
+        {
+            "asset_id": "word_asset_001",
+            "status": "available",
+            "purpose": "source chart",
+            "original_path": "01_source_assets/00_source/word_assets/original/word_asset_001.bmp",
+            "original_sha256": _sha256("original-bmp"),
+            "model_input_path": "01_source_assets/00_source/word_assets/derived/word_asset_001.png",
+            "model_input_sha256": _sha256("converted-png"),
+        },
+        page_number=1,
+        position=1,
+    )
+
+    assert reference["original_path"].endswith("word_asset_001.bmp")
+    assert reference["model_input_path"].endswith("word_asset_001.png")
+    assert reference["original_path"] != reference["model_input_path"]
+    assert reference["integrity"] == {
+        "original_sha256": _sha256("original-bmp"),
+        "model_input_sha256": _sha256("converted-png"),
+        "thumbnail_sha256": None,
+    }
+    assert reference["thumbnail_path"] is None

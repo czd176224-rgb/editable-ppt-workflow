@@ -88,3 +88,15 @@ def test_v6_requires_contiguous_word_page_order():
             logo_source={"path": "logo.svg"},
             pages=[new_page(2, title="第二页")],
         )
+
+
+def test_confirmed_v6_project_rejects_non_hex_ui_digest():
+    project = _project()
+    project.update({
+        "confirmed_ui_revision": 1,
+        "confirmed_ui_digest": "z" * 64,
+        "page_materials_status": "confirmed",
+    })
+
+    with pytest.raises(ValueError, match="UI digest"):
+        validate_project(project)

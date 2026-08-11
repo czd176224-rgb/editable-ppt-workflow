@@ -95,10 +95,23 @@ def _asset_references(
             "asset_id": asset.get("asset_id"),
             "media_type": asset.get("media_type"),
         }
+        original_relative = asset.get("relative_path")
+        if isinstance(original_relative, str):
+            reference["original_path"] = (
+                project / "01_source_assets" / original_relative
+            ).relative_to(project).as_posix()
+        if isinstance(asset.get("sha256"), str):
+            reference["original_sha256"] = asset["sha256"]
         if isinstance(generation_input, Mapping):
             relative = generation_input.get("relative_path")
             if isinstance(relative, str):
-                reference["path"] = (project / "01_source_assets" / relative).relative_to(project).as_posix()
+                model_input_path = (
+                    project / "01_source_assets" / relative
+                ).relative_to(project).as_posix()
+                reference["path"] = model_input_path
+                reference["model_input_path"] = model_input_path
+            if isinstance(generation_input.get("sha256"), str):
+                reference["model_input_sha256"] = generation_input["sha256"]
         references.append(reference)
     return references
 

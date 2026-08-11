@@ -133,9 +133,14 @@ def reference_image_from_source(
     source: Mapping[str, Any], *, page_number: int, position: int,
 ) -> dict[str, Any]:
     """Normalize an extracted Word image into a stable V6 reference record."""
-    relative_path = source.get("path")
-    available = source.get("status") == "available" and isinstance(relative_path, str)
-    sha256 = source.get("sha256") if isinstance(source.get("sha256"), str) else None
+    original_path = source.get("original_path")
+    model_input_path = source.get("model_input_path")
+    thumbnail_path = source.get("thumbnail_path")
+    available = (
+        source.get("status") == "available"
+        and isinstance(original_path, str)
+        and isinstance(model_input_path, str)
+    )
     return {
         "reference_id": str(source.get("asset_id") or f"page-{page_number:03d}-reference-{position:02d}"),
         "source": "word_embedded",
@@ -144,13 +149,13 @@ def reference_image_from_source(
         "allow_crop": True,
         "allow_restyle": False,
         "status": "available" if available else "unavailable",
-        "original_path": relative_path if available else None,
-        "model_input_path": relative_path if available else None,
-        "thumbnail_path": relative_path if available else None,
+        "original_path": original_path if isinstance(original_path, str) else None,
+        "model_input_path": model_input_path if isinstance(model_input_path, str) else None,
+        "thumbnail_path": thumbnail_path if isinstance(thumbnail_path, str) else None,
         "source_url": None,
         "integrity": {
-            "original_sha256": sha256,
-            "model_input_sha256": sha256,
-            "thumbnail_sha256": sha256,
+            "original_sha256": source.get("original_sha256") if isinstance(source.get("original_sha256"), str) else None,
+            "model_input_sha256": source.get("model_input_sha256") if isinstance(source.get("model_input_sha256"), str) else None,
+            "thumbnail_sha256": source.get("thumbnail_sha256") if isinstance(source.get("thumbnail_sha256"), str) else None,
         },
     }

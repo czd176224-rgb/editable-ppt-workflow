@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -15,6 +16,7 @@ WORKFLOW_VERSION = "word-ppt-workflow-v6"
 PROJECT_ARTIFACT_VERSION = "word-ppt-project-v6"
 PAGE_ARTIFACT_VERSION = "word-ppt-page-v6"
 IMAGE_POLICY = "gpt-image-2-generate-only"
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 PAGE_STATES = frozenset({
     "prepared",
@@ -203,7 +205,7 @@ def validate_project(project: Mapping[str, Any]) -> None:
     if materials_status == "confirmed":
         if type(revision) is not int or revision < 1:
             raise ValueError("confirmed V6 materials require a positive UI revision")
-        if not isinstance(digest, str) or len(digest) != 64:
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
             raise ValueError("confirmed V6 materials require a UI digest")
     pages = project["pages"]
     if not isinstance(pages, list) or not pages:

@@ -59,11 +59,10 @@
     {
       "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
       "then": {
-        "required": ["original_path", "model_input_path", "thumbnail_path"],
+        "required": ["original_path", "model_input_path"],
         "properties": {
           "original_path": {"type": "string"},
-          "model_input_path": {"type": "string"},
-          "thumbnail_path": {"type": "string"}
+          "model_input_path": {"type": "string"}
         }
       }
     }

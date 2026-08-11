@@ -9,11 +9,8 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
-
-from PIL import Image, UnidentifiedImageError
 
 from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
@@ -235,27 +232,26 @@ def build_prompt(
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _absolute_without_resolving(path: Path, *, base: Path | None = None) -> Path:
+    if path.is_absolute():
+        return path
+    return (base if base is not None else Path.cwd()) / path
 
 
-def _verified_image_bytes(path: Path, expected_sha256: str) -> bytes | None:
+def _verified_image_bytes(
+    path: Path, expected_sha256: str, *, project_root: Path | None = None,
+) -> bytes | None:
+    """Return one bounded, handle-contained, fully decoded image buffer."""
+    candidate = _absolute_without_resolving(path, base=project_root)
+    stable_root = project_root if project_root is not None else candidate.parent
     try:
-        if not path.is_file():
-            return None
-        data = path.read_bytes()
+        data = v6_media._read_file_limited(Path(stable_root), candidate)
         if hashlib.sha256(data).hexdigest() != expected_sha256:
             return None
-        with Image.open(BytesIO(data)) as image:
-            if image.format not in {"PNG", "JPEG", "WEBP"}:
-                return None
-            image.verify()
+        decoded, _mime_type = v6_media._open_raster(data)
+        decoded.close()
         return data
-    except (OSError, UnidentifiedImageError, ValueError, SyntaxError):
+    except (OSError, ValueError):
         return None
 
 
@@ -281,7 +277,7 @@ def _resolved_confirmed_page(
             or not role.strip()
         ):
             continue
-        path = Path(raw_path).resolve()
+        path = _absolute_without_resolving(Path(raw_path))
         if _verified_image_bytes(path, expected) is None:
             continue
         valid_references.append(copy.deepcopy(dict(reference)))
@@ -356,7 +352,7 @@ def build_image_command(
     ):
         if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
             raise ValueError("Image2 input digest is invalid")
-        if _sha256(path) != expected_digest:
+        if _verified_image_bytes(path, expected_digest) is None:
             raise ValueError(f"Image2 request input changed after confirmation: {path}")
         command.extend([
             "--image", str(path),
@@ -373,9 +369,9 @@ def _request_input_records(request: ImageRequest) -> list[dict[str, str]]:
     for path, role, expected in zip(
         request.input_images, request.image_roles, request.input_sha256s,
     ):
-        if _sha256(path) != expected:
+        if _verified_image_bytes(path, expected) is None:
             raise ValueError(f"Image2 request input changed after confirmation: {path}")
-        records.append({"role": role, "path": str(path.resolve()), "sha256": expected})
+        records.append({"role": role, "path": str(path), "sha256": expected})
     return records
 
 
@@ -399,28 +395,19 @@ def _with_project_reference_paths(
         raw = reference.get("model_input_path")
         if not isinstance(raw, str):
             continue
-        candidate = (root / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError:
-            reference["status"] = "unavailable"
-            continue
+        candidate = _absolute_without_resolving(Path(raw), base=root)
         integrity = reference.get("integrity")
         expected = integrity.get("model_input_sha256") if isinstance(integrity, Mapping) else None
         if not isinstance(expected, str):
             reference["status"] = "unavailable"
             continue
-        data = _verified_image_bytes(candidate, expected)
+        data = _verified_image_bytes(candidate, expected, project_root=root)
         if data is None:
             reference["status"] = "unavailable"
             continue
         snapshot = snapshot_dir / f"{index:02d}.{expected}.img"
         try:
             snapshot_dir.mkdir(parents=True, exist_ok=True)
-            snapshot_dir.resolve().relative_to(root)
-            if snapshot_dir.is_symlink() or snapshot.is_symlink():
-                reference["status"] = "unavailable"
-                continue
             if snapshot.exists():
                 if v6_media._read_file_limited(root, snapshot) != data:
                     reference["status"] = "unavailable"
@@ -430,11 +417,10 @@ def _with_project_reference_paths(
                 if written_digest != expected:
                     reference["status"] = "unavailable"
                     continue
-                snapshot.chmod(0o444)
         except (OSError, ValueError):
             reference["status"] = "unavailable"
             continue
-        reference["model_input_path"] = str(snapshot.resolve())
+        reference["model_input_path"] = str(snapshot)
     return resolved_page
 
 

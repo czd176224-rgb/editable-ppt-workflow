@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import struct
 import sys
+import zlib
 from pathlib import Path
 
 from PIL import Image
@@ -182,6 +184,46 @@ def test_digest_matching_non_image_or_corrupt_image_cannot_select_edit(tmp_path:
     assert request.input_images == ()
 
 
+def test_encoded_image_limit_uses_task4_bounded_reader_without_large_fixture(tmp_path: Path, monkeypatch):
+    import workflow_v6_media as media
+
+    image = tmp_path / "small.png"
+    Image.new("RGB", (8, 4), "blue").save(image)
+    monkeypatch.setattr(media, "MAX_ENCODED_BYTES", len(image.read_bytes()) - 1)
+    request = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": [_confirmed_reference(image)]},
+        visual_contract={"visual_style": "minimal"},
+    )
+    assert request.operation == "generate"
+
+
+def test_edge_limit_rejects_decodable_image_without_large_allocation(tmp_path: Path):
+    image = tmp_path / "wide.png"
+    Image.new("RGB", (16_385, 1), "blue").save(image)
+    request = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": [_confirmed_reference(image)]},
+        visual_contract={"visual_style": "minimal"},
+    )
+    assert request.operation == "generate"
+
+
+def test_pixel_limit_rejects_header_before_decoding_large_allocation(tmp_path: Path):
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+
+    image = tmp_path / "huge-header.png"
+    image.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 10_000, 9_000, 8, 2, 0, 0, 0))
+        + chunk(b"IEND", b"")
+    )
+    request = build_image_request(
+        confirmed_page={"page_number": 1, "effective_body": "Approved", "reference_images": [_confirmed_reference(image)]},
+        visual_contract={"visual_style": "minimal"},
+    )
+    assert request.operation == "generate"
+
+
 def test_image_command_uses_generate_without_image_inputs(tmp_path: Path):
     request = ImageRequest("generate", "medium", "approved prompt", (), ())
     command = build_image_command(
@@ -265,6 +307,62 @@ def test_snapshot_writer_rejects_injected_final_handle_escape_before_payload_wri
 
     assert calls[0][2] == "generate"
     assert not outside.exists() or outside.read_bytes() != model_input.read_bytes()
+
+
+def _project_with_confirmed_reference(tmp_path: Path) -> Path:
+    project = _project(tmp_path)
+    source = project / "02_v6" / "reference_media" / "approved" / "model-input.png"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 18), "navy").save(source)
+    result_path = project / "confirm_ui" / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["confirmed_pages"][0]["reference_images"] = [_confirmed_reference(source)]
+    result["confirmed_pages"][0]["reference_images"][0]["model_input_path"] = source.relative_to(project).as_posix()
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    state = load(project); state["confirmed_ui_digest"] = canonical_sha256(result); save(project, state)
+    return project
+
+
+def _run_one_accepted_page(project: Path) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def runner(command, timeout):
+        calls.append(command)
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
+    )
+    return calls
+
+
+def test_snapshot_writer_does_not_chmod_path_after_handle_verified_write(tmp_path: Path, monkeypatch):
+    project = _project_with_confirmed_reference(tmp_path)
+    original_chmod = Path.chmod
+
+    def reject_snapshot_chmod(path: Path, *args, **kwargs):
+        if path.suffix == ".img":
+            raise AssertionError("snapshot pathname chmod is forbidden")
+        return original_chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", reject_snapshot_chmod)
+    assert _run_one_accepted_page(project)[0][2] == "edit"
+
+
+def test_snapshot_writer_does_not_resolve_snapshot_path_after_safe_close(tmp_path: Path, monkeypatch):
+    project = _project_with_confirmed_reference(tmp_path)
+    original_resolve = Path.resolve
+
+    def reject_post_write_resolve(path: Path, *args, **kwargs):
+        if path.suffix == ".img" and path.exists():
+            raise AssertionError("snapshot pathname resolve after safe close is forbidden")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", reject_post_write_resolve)
+    assert _run_one_accepted_page(project)[0][2] == "edit"
 
 
 @pytest.mark.parametrize("image_request", [

@@ -5,12 +5,16 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
+
+from PIL import Image, UnidentifiedImageError
 
 from workflow_v6_contract import canonical_sha256, transition_page
 from workflow_v6_qa import improved, review_candidate
@@ -238,6 +242,53 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _verified_image_bytes(path: Path, expected_sha256: str) -> bytes | None:
+    try:
+        if not path.is_file():
+            return None
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected_sha256:
+            return None
+        with Image.open(BytesIO(data)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"}:
+                return None
+            image.verify()
+        return data
+    except (OSError, UnidentifiedImageError, ValueError, SyntaxError):
+        return None
+
+
+def _resolved_confirmed_page(
+    confirmed_page: Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[Path, ...], tuple[str, ...]]:
+    resolved_page = copy.deepcopy(dict(confirmed_page))
+    valid_references: list[dict[str, Any]] = []
+    images: list[Path] = []
+    roles: list[str] = []
+    for reference in resolved_page.get("reference_images", []):
+        if not isinstance(reference, Mapping) or reference.get("status") != "available":
+            continue
+        raw_path = reference.get("model_input_path")
+        integrity = reference.get("integrity")
+        expected = integrity.get("model_input_sha256") if isinstance(integrity, Mapping) else None
+        role = reference.get("purpose")
+        if (
+            not isinstance(raw_path, str)
+            or not isinstance(expected, str)
+            or not isinstance(role, str)
+            or not role.strip()
+        ):
+            continue
+        path = Path(raw_path).resolve()
+        if _verified_image_bytes(path, expected) is None:
+            continue
+        valid_references.append(copy.deepcopy(dict(reference)))
+        images.append(path)
+        roles.append(role.strip())
+    resolved_page["reference_images"] = valid_references
+    return resolved_page, tuple(images), tuple(roles)
+
+
 def build_image_request(
     *,
     confirmed_page: Mapping[str, Any],
@@ -245,40 +296,20 @@ def build_image_request(
     qa_feedback: Sequence[str] = (),
 ) -> ImageRequest:
     """Resolve usable frozen references, then select the only valid operation."""
-    images: list[Path] = []
-    roles: list[str] = []
-    for reference in confirmed_page.get("reference_images", []):
-        if not isinstance(reference, Mapping) or reference.get("status") != "available":
-            continue
-        raw_path = reference.get("model_input_path")
-        integrity = reference.get("integrity")
-        expected = integrity.get("model_input_sha256") if isinstance(integrity, Mapping) else None
-        if not isinstance(raw_path, str) or not isinstance(expected, str):
-            continue
-        path = Path(raw_path).resolve()
-        try:
-            if not path.is_file() or _sha256(path) != expected:
-                continue
-        except OSError:
-            continue
-        role = reference.get("purpose")
-        if not isinstance(role, str) or not role.strip():
-            continue
-        images.append(path)
-        roles.append(role.strip())
+    resolved_page, images, roles = _resolved_confirmed_page(confirmed_page)
     if len(images) > 16:
         raise ValueError("Image2 accepts at most 16 confirmed reference images")
     prompt = build_prompt(
         global_visual_contract=visual_contract,
-        confirmed_page=confirmed_page,
+        confirmed_page=resolved_page,
         qa_feedback=list(qa_feedback),
     )
     return ImageRequest(
         operation="edit" if images else "generate",
         quality="medium",
         prompt=prompt,
-        input_images=tuple(images),
-        image_roles=tuple(roles),
+        input_images=images,
+        image_roles=roles,
     )
 
 
@@ -315,8 +346,28 @@ def build_image_command(
         request.quality,
     ]
     for path, role in zip(request.input_images, request.image_roles):
-        command.extend(["--image", str(path), "--image-role", role])
+        expected_digest = _expected_input_digest(path)
+        command.extend([
+            "--image", str(path),
+            "--image-role", role,
+            "--image-sha256", expected_digest,
+        ])
     return command
+
+
+def _expected_input_digest(path: Path) -> str:
+    snapshot_match = re.search(r"\.([0-9a-f]{64})\.img$", path.name)
+    return snapshot_match.group(1) if snapshot_match else _sha256(path)
+
+
+def _request_input_records(request: ImageRequest) -> list[dict[str, str]]:
+    records = []
+    for path, role in zip(request.input_images, request.image_roles):
+        expected = _expected_input_digest(path)
+        if _sha256(path) != expected:
+            raise ValueError(f"Image2 request input changed after confirmation: {path}")
+        records.append({"role": role, "path": str(path.resolve()), "sha256": expected})
+    return records
 
 
 def _run(command: list[str], timeout: int) -> None:
@@ -327,10 +378,13 @@ def _run(command: list[str], timeout: int) -> None:
         raise RuntimeError(completed.stderr or completed.stdout or "Image2 generation failed")
 
 
-def _with_project_reference_paths(root: Path, page: Mapping[str, Any]) -> dict[str, Any]:
-    """Resolve frozen project-relative model inputs without changing prompt semantics."""
+def _with_project_reference_paths(
+    root: Path, page: Mapping[str, Any], *, sealed_digest: str, page_number: int,
+) -> dict[str, Any]:
+    """Resolve and snapshot frozen model inputs without changing prompt semantics."""
     resolved_page = copy.deepcopy(dict(page))
-    for reference in resolved_page.get("reference_images", []):
+    snapshot_dir = root / "04_v6" / "request_inputs" / sealed_digest / f"page_{page_number:03d}"
+    for index, reference in enumerate(resolved_page.get("reference_images", []), start=1):
         if not isinstance(reference, dict):
             continue
         raw = reference.get("model_input_path")
@@ -342,11 +396,47 @@ def _with_project_reference_paths(root: Path, page: Mapping[str, Any]) -> dict[s
         except ValueError:
             reference["status"] = "unavailable"
             continue
-        reference["model_input_path"] = str(candidate)
+        integrity = reference.get("integrity")
+        expected = integrity.get("model_input_sha256") if isinstance(integrity, Mapping) else None
+        if not isinstance(expected, str):
+            reference["status"] = "unavailable"
+            continue
+        data = _verified_image_bytes(candidate, expected)
+        if data is None:
+            reference["status"] = "unavailable"
+            continue
+        snapshot = snapshot_dir / f"{index:02d}.{expected}.img"
+        try:
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            snapshot_dir.resolve().relative_to(root)
+            if snapshot_dir.is_symlink() or snapshot.is_symlink():
+                reference["status"] = "unavailable"
+                continue
+            if snapshot.exists():
+                if not snapshot.is_file() or snapshot.read_bytes() != data:
+                    reference["status"] = "unavailable"
+                    continue
+            else:
+                with snapshot.open("xb") as destination:
+                    destination.write(data)
+                    destination.flush()
+                    os.fsync(destination.fileno())
+                snapshot.chmod(0o444)
+        except (OSError, ValueError):
+            reference["status"] = "unavailable"
+            continue
+        reference["model_input_path"] = str(snapshot.resolve())
     return resolved_page
 
 
-def _verified_existing_receipt(root: Path, page_number: int) -> dict[str, Any] | None:
+def _verified_existing_receipt(
+    root: Path,
+    page_number: int,
+    *,
+    confirmed_revision: int,
+    confirmed_digest: str,
+    request: ImageRequest,
+) -> dict[str, Any] | None:
     receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
     if not receipt_path.is_file():
         return None
@@ -358,14 +448,22 @@ def _verified_existing_receipt(root: Path, page_number: int) -> dict[str, Any] |
         trace_value = _read_json(trace)
     except (KeyError, OSError, ValueError):
         return None
+    try:
+        expected_inputs = _request_input_records(request)
+    except (OSError, ValueError):
+        return None
     if (
         receipt.get("artifact_version") != "image2-generate-v6"
         or receipt.get("page_number") != page_number
-        or selected.get("operation") != "generate"
+        or receipt.get("confirmed_ui_revision") != confirmed_revision
+        or receipt.get("confirmed_ui_digest") != confirmed_digest
+        or receipt.get("request_operation") != request.operation
+        or receipt.get("request_input_images") != expected_inputs
+        or selected.get("operation") != request.operation
         or not image.is_file()
-        or trace_value.get("operation") != "generate"
+        or trace_value.get("operation") != request.operation
         or trace_value.get("model") != "gpt-image-2"
-        or trace_value.get("input_images") != []
+        or trace_value.get("input_images") != expected_inputs
     ):
         return None
     return receipt
@@ -395,7 +493,36 @@ def generate_page_body(
         raise ValueError("V6 live confirmation revision does not match the sealed state")
     if canonical_sha256(confirmed) != state.get("confirmed_ui_digest"):
         raise ValueError("V6 live confirmation digest does not match the sealed identity")
-    existing = _verified_existing_receipt(root, page_number)
+    global_contract = confirmed.get("global_visual_contract")
+    frozen_page = next(
+        (item for item in confirmed.get("confirmed_pages", [])
+         if isinstance(item, Mapping) and item.get("page_number") == page_number),
+        None,
+    )
+    if (
+        confirmed.get("status") != "confirmed"
+        or not isinstance(global_contract, Mapping)
+        or not isinstance(frozen_page, Mapping)
+    ):
+        raise ValueError("V6 generation requires the authoritative frozen UI result page")
+    request_page = _with_project_reference_paths(
+        root,
+        frozen_page,
+        sealed_digest=str(state["confirmed_ui_digest"]),
+        page_number=page_number,
+    )
+    resolved_request_page, _, _ = _resolved_confirmed_page(request_page)
+    initial_request = build_image_request(
+        confirmed_page=resolved_request_page,
+        visual_contract=global_contract,
+    )
+    existing = _verified_existing_receipt(
+        root,
+        page_number,
+        confirmed_revision=int(confirmed["revision"]),
+        confirmed_digest=str(state["confirmed_ui_digest"]),
+        request=initial_request,
+    )
     if existing is not None and page["state"] in {"prepared", "generating", "qa_review", "technical_failed"}:
         if page["state"] in {"prepared", "technical_failed"}:
             page = transition_page(page, "generating")
@@ -409,26 +536,9 @@ def generate_page_body(
         page = transition_page(page, "accepted_fallback_first")
         update_page(root, page_number, page)
         return existing
-    global_contract = confirmed.get("global_visual_contract")
-    frozen_page = next(
-        (item for item in confirmed.get("confirmed_pages", [])
-         if isinstance(item, Mapping) and item.get("page_number") == page_number),
-        None,
-    )
-    if (
-        confirmed.get("status") != "confirmed"
-        or not isinstance(global_contract, Mapping)
-        or not isinstance(frozen_page, Mapping)
-    ):
-        raise ValueError("V6 generation requires the authoritative frozen UI result page")
     logo_name = Path(state["logo_source"]["path"]).stem
     directory = root / "04_v6" / "images"
     directory.mkdir(parents=True, exist_ok=True)
-    request_page = _with_project_reference_paths(root, frozen_page)
-    initial_request = build_image_request(
-        confirmed_page=request_page,
-        visual_contract=global_contract,
-    )
 
     if page["state"] in {"prepared", "technical_failed"}:
         page = transition_page(page, "generating")
@@ -448,7 +558,7 @@ def generate_page_body(
             quality=initial_request.quality,
             prompt=build_prompt(
                 global_visual_contract=global_contract,
-                confirmed_page=frozen_page,
+                confirmed_page=resolved_request_page,
                 qa_feedback=feedback,
             ),
             input_images=initial_request.input_images,
@@ -481,7 +591,7 @@ def generate_page_body(
             qa = reviewer(
                 root,
                 image=output,
-                effective_page=dict(frozen_page),
+                effective_page=copy.deepcopy(resolved_request_page),
                 style_contract=dict(global_contract),
                 fixed_logo_name=logo_name,
                 timeout=min(timeout, QA_TIMEOUT_SECONDS),
@@ -502,7 +612,7 @@ def generate_page_body(
         feedback = [str(item) for item in qa.get("issues", [])]
         if attempt < max_candidates and len(build_prompt(
             global_visual_contract=global_contract,
-            confirmed_page=frozen_page,
+            confirmed_page=resolved_request_page,
             qa_feedback=feedback,
         )) > _PROMPT_LIMIT:
             degraded_reason = "qa_feedback_exceeds_prompt_limit"
@@ -527,6 +637,10 @@ def generate_page_body(
     receipt = {
         "artifact_version": "image2-generate-v6",
         "page_number": page_number,
+        "confirmed_ui_revision": confirmed["revision"],
+        "confirmed_ui_digest": state["confirmed_ui_digest"],
+        "request_operation": initial_request.operation,
+        "request_input_images": _request_input_records(initial_request),
         "candidates": candidates,
         "selected": page["selected_candidate"],
         "state": page["state"],

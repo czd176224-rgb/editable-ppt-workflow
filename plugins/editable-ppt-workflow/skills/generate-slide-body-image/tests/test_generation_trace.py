@@ -13,6 +13,7 @@ from PIL import Image
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "codex_gpt_image.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
+import codex_gpt_image as image_cli  # noqa: E402
 from codex_gpt_image import write_generation_trace  # noqa: E402
 
 
@@ -117,6 +118,48 @@ def test_edit_subcommand_rejects_more_than_sixteen_images(tmp_path: Path) -> Non
 
     assert completed.returncode != 0
     assert "At most 16" in completed.stderr
+
+
+def test_expected_image_digest_rejects_file_changed_after_command_was_built(tmp_path: Path) -> None:
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (8, 4), "blue").save(image)
+    expected = hashlib.sha256(image.read_bytes()).hexdigest()
+    image.write_bytes(b"changed after verification")
+
+    completed = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), "edit", "--prompt", "test", "--dry-run",
+            "--image", str(image), "--image-sha256", expected,
+            "--out", str(tmp_path / "output.png"),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "digest" in completed.stderr.casefold()
+
+
+def test_trace_uses_the_same_single_read_bytes_as_the_submitted_body(tmp_path: Path, monkeypatch) -> None:
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (8, 4), "blue").save(image)
+    original_digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    trace = tmp_path / "trace.json"
+    args = image_cli.build_parser().parse_args([
+        "edit", "--prompt", "test", "--dry-run", "--image", str(image),
+        "--image-sha256", original_digest, "--trace-out", str(trace),
+    ])
+
+    def tampering_reopen(path: Path) -> str:
+        if Path(path).resolve() == image.resolve():
+            image.write_bytes(b"tampered during trace")
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    monkeypatch.setattr(image_cli, "file_sha256", tampering_reopen)
+    args.func(args)
+
+    payload = json.loads(trace.read_text(encoding="utf-8"))
+    assert payload["input_images"][0]["sha256"] == original_digest
+    assert image.read_bytes() != b"tampered during trace"
 
 
 def test_authenticated_trace_preserves_codex_oauth_proof(tmp_path: Path) -> None:

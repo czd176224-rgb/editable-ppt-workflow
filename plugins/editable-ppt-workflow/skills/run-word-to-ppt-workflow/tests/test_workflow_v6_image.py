@@ -83,10 +83,35 @@ def test_prompt_separates_fixed_title_facts_and_visual_only_style():
     assert '"render_in_body": false' in prompt
     assert '"renderable_body_content": "当前进展"' in prompt
     assert "must not invent any fact, category, capability" in prompt
+    assert "must be copied verbatim from renderable_body_content" in prompt
+    assert "the comment text itself is not visual evidence" in prompt
     assert "does not require any image on any page" in prompt
     assert "每页至少三张图片" not in prompt
     assert '"image_role"' not in prompt
     assert '"policy": "content-driven"' in prompt
+
+
+def test_single_paragraph_and_missing_search_reference_are_hard_prompt_boundaries():
+    prompt = build_prompt(
+        effective_page={
+            "word_original": "唯一一段原文。",
+            "fixed_page_title": "固定标题",
+            "body_render_content": "唯一一段原文。",
+            "comment_directives": [{"text": "添加新闻照片和人物照片"}],
+            "invalidated_requirements": [],
+            "search_requests": [{"page_number": 1, "purpose": "搜索新闻照片"}],
+        },
+        style_contract={"image_usage_policy": "content-driven"},
+        references={"references": []},
+    )
+
+    assert '"documentary_visuals_allowed": false' in prompt
+    assert '"unfulfilled_reference_request": true' in prompt
+    assert "ignore photo, person, meeting, company, product, and logo requests" in prompt
+    assert "add no heading, caption, category label" in prompt
+    assert "添加新闻照片和人物照片" not in prompt
+    assert '"invalidated_media_comment_ids": ["unknown"]' in prompt
+    assert "No documentary visual reference is available" in prompt
 
 
 def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path):
@@ -139,3 +164,21 @@ def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):
     )
     assert receipt["selected"]["attempt"] == 2
     assert receipt["state"] == "accepted"
+
+
+def test_light_qa_timeout_is_bounded_independently_from_image_generation(tmp_path: Path):
+    project = _project(tmp_path)
+    observed = []
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+
+    def reviewer(*args, **kwargs):
+        observed.append(kwargs["timeout"])
+        return {"accepted": True, "score": 6, "issues": []}
+
+    generate_page_body(project, page_number=1, timeout=900, runner=runner, reviewer=reviewer)
+
+    assert observed == [180]

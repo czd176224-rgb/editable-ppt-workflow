@@ -1,8 +1,8 @@
-# Editable PPT Workflow 2.0.2 快速开始
+# Editable PPT Workflow 2.0.3 快速开始
 
-下载不可变的 `v2.0.2` Windows Release ZIP：
+下载不可变的 `v2.0.3` Windows Release ZIP：
 
-`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.2/editable-ppt-workflow-2.0.2-windows.zip`
+`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.3/editable-ppt-workflow-2.0.3-windows.zip`
 
 同时下载 `SHA256SUMS.txt`，用 PowerShell `Get-FileHash` 核验后解压并运行 `install.ps1`，再重启 Codex。
 

@@ -755,8 +755,11 @@ def _validate_fixed_logo_bytes(pptx: Path, logo_sha256: str) -> None:
                 logos.append(picture)
         if len(logos) != 1:
             raise ValueError("fixed logo must exist exactly once in final OOXML")
-        svg_nodes = logos[0].findall(f".//{{http://schemas.microsoft.com/office/drawing/2016/SVG/main}}svgBlip")
-        svg_rel_ids = [node.get(f"{{{r}}}embed") for node in svg_nodes]
+        # The fixed frame intentionally embeds the SVG as the primary DrawingML
+        # blip, with no raster fallback or Office SVG extension node.  Validate
+        # that primary relationship instead of requiring an svgBlip extension.
+        blip_nodes = logos[0].findall(f".//{{{a}}}blip")
+        svg_rel_ids = [node.get(f"{{{r}}}embed") for node in blip_nodes]
         svg_targets = [(rid, targets.get(rid)) for rid in svg_rel_ids if rid]
         all_svg_relationships = [(rid, target) for rid, target in targets.items() if isinstance(target, str) and target.lower().endswith(".svg")]
         if len(svg_targets) != 1 or len(all_svg_relationships) != 1 or svg_targets[0] != all_svg_relationships[0]:
@@ -1106,7 +1109,7 @@ def verify_signed_reconstruction(project: Path, work_item: Path, bundle: Path) -
     _, style = _read(project, work["style_execution"]["path"])
     fixed = inspect_fixed_frame(final_path, expected_title=work["page_title"], expected_page_number=work["page_number"], style_execution=style, logo_svg=_project_file(project, work["logo_svg"]["path"]))
     if not fixed["passed"]:
-        raise ValueError("fixed layers changed after reconstruction")
+        raise ValueError("fixed logo or other fixed layers changed after reconstruction")
     _validate_fixed_logo_bytes(final_path, work["logo_svg"]["sha256"])
     body_path = _project_file(project, payload["body_pptx"]["path"])
     body_drawingml = _canonical_drawingml_body(body_path, exclude_fixed=False)

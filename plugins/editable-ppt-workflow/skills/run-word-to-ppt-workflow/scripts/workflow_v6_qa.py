@@ -43,9 +43,21 @@ _CHINESE_IMPERATIVES = (
     "提高", "增加", "降低", "减少", "改进", "改善", "对齐", "使用",
     "采用", "替换", "更换", "修正", "纠正",
 )
-_GENERIC_ENGLISH_TARGETS = frozenset({
-    "overall design", "the design", "visual quality", "composition quality",
-})
+_ENGLISH_CONTRACT_TARGET = re.compile(
+    r"(?:\b(?:confirmed|approved|fixed)\b|\b(?:reference|logo|logotype|screenshot|"
+    r"meeting[- ]photo|page number|footer|main title|body(?:[- ](?:text|region))?|"
+    r"image requirement|style contract|typography|palette|spacing|grid|chart|"
+    r"crop|aspect ratio|recognizable|identity|institution|event|product|"
+    r"abstract geometry)\b|\bcontrast\b.{0,80}\b(?:between|relative to|against)\b|"
+    r"\b(?:17:8|1904\s*x\s*896)\b)",
+    re.IGNORECASE,
+)
+_CHINESE_CONTRACT_TARGET = re.compile(
+    r"(?:已确认|确认参考|用户确认|固定(?:页面)?(?:主标题|徽标|页脚|页码)|"
+    r"(?:主标题|页脚|页码|徽标|截图|会议照片|参考图片|真实材料|正文(?:文字|区域)?|"
+    r"图表|说明文字|背景面板|字体|颜色|配色|间距|裁剪|比例|身份|机构|事件|产品|"
+    r"抽象图形|风格合同|生图要求|可识别|对比度|对齐)|17:8|1904\s*[xX×]\s*896)"
+)
 
 
 def _issue(code: str, detail: str) -> dict[str, str]:
@@ -270,17 +282,23 @@ def _correction(value: Any) -> str | None:
         return None
     if text.endswith(("?", "？")):
         return None
+    normalized = re.sub(r"\s+", " ", text).strip()
     english = _ENGLISH_IMPERATIVE.fullmatch(text)
+    if english is None:
+        english = _ENGLISH_IMPERATIVE.fullmatch(normalized)
     if english is not None:
         target = english.group("target").strip().rstrip(".!。！").strip()
         words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]*", target)
-        if len(words) < 2 or target.casefold() in _GENERIC_ENGLISH_TARGETS:
+        if len(words) < 2 or _ENGLISH_CONTRACT_TARGET.search(target) is None:
             return None
         return text
     for action in _CHINESE_IMPERATIVES:
-        if text.startswith(action):
-            target = text[len(action):].strip().rstrip("。！.! ").strip()
-            if len(re.sub(r"\s+", "", target)) < 4:
+        if normalized.startswith(action):
+            target = normalized[len(action):].strip().rstrip("。！.! ").strip()
+            if (
+                len(re.sub(r"\s+", "", target)) < 4
+                or _CHINESE_CONTRACT_TARGET.search(target) is None
+            ):
                 return None
             return text
     return None

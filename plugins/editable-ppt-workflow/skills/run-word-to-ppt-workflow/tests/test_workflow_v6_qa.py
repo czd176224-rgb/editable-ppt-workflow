@@ -346,3 +346,111 @@ def test_retry_feedback_rejects_status_nouns_short_commands_and_questions(correc
     }
 
     assert actionable_retry_feedback(current, None) == []
+
+
+@pytest.mark.parametrize(
+    ("correction", "expected"),
+    [
+        (
+            "  Preserve   the confirmed logo proportions and keep it recognizable.  ",
+            "Preserve   the confirmed logo proportions and keep it recognizable.",
+        ),
+        (
+            "Keep the confirmed meeting-photo recognizable in the left panel!",
+            "Keep the confirmed meeting-photo recognizable in the left panel!",
+        ),
+        (
+            "Ensure the fixed page number remains absent from the 17:8 body region。",
+            "Ensure the fixed page number remains absent from the 17:8 body region。",
+        ),
+        (
+            "Increase body-text contrast relative to the navy background panel.",
+            "Increase body-text contrast relative to the navy background panel.",
+        ),
+        (
+            "Use the approved typography and spacing from the confirmed style contract.",
+            "Use the approved typography and spacing from the confirmed style contract.",
+        ),
+        (
+            "Correct the crop of reference ref-company-screenshot according to its confirmed role.",
+            "Correct the crop of reference ref-company-screenshot according to its confirmed role.",
+        ),
+        (
+            "  保留 已确认徽标的原始比例，并确保身份清晰可识别。  ",
+            "保留 已确认徽标的原始比例，并确保身份清晰可识别。",
+        ),
+        (
+            "确保固定页脚和页码不进入 17:8 正文区域！",
+            "确保固定页脚和页码不进入 17:8 正文区域！",
+        ),
+        (
+            "提高正文文字相对于深蓝背景面板的对比度。",
+            "提高正文文字相对于深蓝背景面板的对比度。",
+        ),
+        (
+            "使用已确认风格合同中的字体、颜色和间距属性。",
+            "使用已确认风格合同中的字体、颜色和间距属性。",
+        ),
+        (
+            "修正确认参考 ref-company-screenshot 的裁剪，并保持其角色。",
+            "修正确认参考 ref-company-screenshot 的裁剪，并保持其角色。",
+        ),
+    ],
+)
+def test_retry_feedback_accepts_contract_bound_target_variants(
+    correction: str, expected: str,
+):
+    current = {
+        "checks": {
+            "confirmed_references_recognizable_and_fused": {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == [expected]
+
+
+@pytest.mark.parametrize(
+    "correction",
+    [
+        "Improve overall design.",
+        "Improve the overall design quality!",
+        "Improve   visual   quality.",
+        "Improve image quality。",
+        "Correct all visual problems.",
+        "Correct the image problems!",
+        "Ensure better visual effect.",
+        "Maintain a better result.",
+        "Use a better design.",
+        "Replace poor visuals with better visuals.",
+        "  Improve the overall visual quality.  ",
+        "改善整体设计。",
+        "改善 整体 设计 质量！",
+        "提高视觉质量。",
+        "提高图片质量！",
+        "修正所有视觉问题。",
+        "修正图片问题。",
+        "确保更好的效果。",
+        "保持更好的结果。",
+        "使用更好的设计。",
+        "替换较差的视觉效果。",
+        "  改善整体视觉质量。  ",
+    ],
+)
+def test_retry_feedback_rejects_generic_imperatives_across_variants(correction: str):
+    current = {
+        "checks": {
+            "global_style_followed": {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == []

@@ -598,7 +598,13 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             acquisitions.append({
                 "request_id": request_id,
                 "page_number": page_number,
-                "purpose": str(requirement.get("purpose") or requirement.get("visual") or "real reference"),
+                "purpose": str(
+                    requirement.get("visual")
+                    or requirement.get("subject")
+                    or requirement.get("search_query")
+                    or requirement.get("purpose")
+                    or "real reference"
+                ),
                 "identity_evidence_need": str(requirement.get("subject") or requirement.get("search_query") or "source-backed evidence"),
                 "status": "pending",
                 "history": ["pending"],

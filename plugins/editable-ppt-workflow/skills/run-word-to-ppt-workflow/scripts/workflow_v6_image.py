@@ -78,7 +78,7 @@ def _material_role_text(page: Mapping[str, Any]) -> str:
         for item in page.get(field, []):
             if not isinstance(item, Mapping):
                 continue
-            for key in ("kind", "purpose", "role", "visual"):
+            for key in ("kind", "purpose", "role", "visual", "subject", "search_query"):
                 value = item.get(key)
                 if isinstance(value, str):
                     values.append(value)

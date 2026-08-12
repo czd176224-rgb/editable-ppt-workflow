@@ -263,14 +263,17 @@ def test_three_page_mixed_sample_generates_every_uncached_v4_body_then_stops_clo
     assert sorted((item["page_number"], item["action"]) for item in scheduled["requests"]) == [
         (1, "generate"),
         (2, "generate"),
-        (3, "generate"),
     ]
+    assert scheduled["capacity"] == 2
     assert all("route" not in item for item in scheduled["requests"])
     assert all(
         "complete editable-PPT body design" in item["generation_request"]["prompt"]
         for item in scheduled["requests"]
     )
-    assert scheduled["requests"][2]["generation_request"]["image_roles"] == ["reference_only"]
+    page_three = workflow_state.page_request(
+        project, workflow_state.load(project), workflow_state.load(project)["jobs"][2], 1,
+    )
+    assert page_three["generation_request"]["image_roles"] == ["reference_only"]
 
     backend_calls: list[list[str]] = []
 
@@ -311,8 +314,10 @@ def test_three_page_mixed_sample_generates_every_uncached_v4_body_then_stops_clo
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(batch_generation.subprocess, "run", fake_backend)
-    batch = batch_generation.run_batch(project, timeout=10)
-    assert [item["status"] for item in batch["results"]] == ["qa", "qa", "qa"]
+    first_batch = batch_generation.run_batch(project, timeout=10)
+    second_batch = batch_generation.run_batch(project, timeout=10)
+    results = first_batch["results"] + second_batch["results"]
+    assert [item["status"] for item in results] == ["qa", "qa", "qa"]
     completed = workflow_state.next_action(project)
     assert completed["stage"] == "qa_backend_pending"
     assert completed["pending_pages"] == [1, 2, 3]

@@ -267,3 +267,82 @@ def test_review_candidate_honors_a_lower_caller_timeout(tmp_path: Path, monkeypa
     )
 
     assert observed["timeout"] == 7.5
+
+
+@pytest.mark.parametrize(
+    "correction",
+    [
+        "Preserve the confirmed logo proportions and keep it recognizable.",
+        "Keep the confirmed meeting photo recognizable in the left panel.",
+        "Maintain the approved navy and gold visual hierarchy.",
+        "Restore the confirmed screenshot content without severe distortion.",
+        "Remove the generated main title from the body region.",
+        "Avoid fabricating an unconfirmed institution or event identity.",
+        "Ensure the confirmed reference remains recognizable after fusion.",
+        "Increase contrast between the body text and background panels.",
+        "Reduce decorative clutter around the confirmed evidence image.",
+        "Improve alignment between the chart and its explanatory text.",
+        "Align the lower evidence panel with the approved grid.",
+        "Use the approved minimal editorial color palette.",
+        "Replace the fabricated product image with abstract geometry.",
+        "Correct the severe distortion in the confirmed screenshot.",
+        "保留已确认徽标的原始比例并确保清晰可识别。",
+        "保持已确认会议照片在左侧区域中清晰可识别。",
+        "恢复已确认截图内容并避免严重变形。",
+        "移除正文区域中生成的固定页面主标题。",
+        "避免虚构未经确认的机构、事件或产品身份。",
+        "确保已确认参考图片融合后仍然清晰可识别。",
+        "提高正文文字与背景面板之间的对比度。",
+        "减少已确认真实材料周围不必要的装饰元素。",
+        "改善图表与说明文字之间的对齐关系。",
+        "使用用户确认的简洁编辑风格配色。",
+        "替换未经确认的真实产品图片为抽象图形。",
+        "修正已确认截图中存在的严重变形。",
+    ],
+)
+def test_retry_feedback_accepts_deterministic_imperative_corrections(correction: str):
+    current = {
+        "checks": {
+            "confirmed_content_and_requirements": {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == [correction]
+
+
+@pytest.mark.parametrize(
+    "correction",
+    [
+        "The logo is still wrong.",
+        "logo",
+        "logo overlap contrast",
+        "Fix logo",
+        "Remove logo",
+        "Ensure logo?",
+        "Increase contrast?",
+        "Is the logo recognizable?",
+        "徽标仍然不正确。",
+        "徽标 重叠 对比度",
+        "修复徽标",
+        "移除徽标",
+        "确保徽标？",
+    ],
+)
+def test_retry_feedback_rejects_status_nouns_short_commands_and_questions(correction: str):
+    current = {
+        "checks": {
+            "confirmed_content_and_requirements": {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == []

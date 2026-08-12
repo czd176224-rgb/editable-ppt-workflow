@@ -33,14 +33,19 @@ _VAGUE = frozenset({
     "bad", "poor", "wrong", "improve", "fix", "fix it", "not good",
     "不好", "很差", "有问题", "改进", "修改",
 })
-_ACTIONABLE_SIGNAL = re.compile(
-    r"(?:increase|reduce|remove|add|align|separate|move|resize|correct|avoid|"
-    r"improve|use|make|overlap|clip|contrast|spacing|margin|overflow|unreadable|"
-    r"unrelated|title|logo|footer|page number|提高|降低|删除|增加|对齐|分开|"
-    r"移动|调整|修正|避免|改进|使用|重叠|裁切|截断|对比|间距|边距|溢出|"
-    r"不可读|无关|标题|徽标|页脚|页码)",
+_ENGLISH_IMPERATIVE = re.compile(
+    r"^(?:preserve|keep|maintain|restore|remove|avoid|ensure|increase|reduce|"
+    r"improve|align|use|replace|correct)\s+(?P<target>.+)$",
     re.IGNORECASE,
 )
+_CHINESE_IMPERATIVES = (
+    "保留", "保持", "维持", "恢复", "移除", "删除", "避免", "确保",
+    "提高", "增加", "降低", "减少", "改进", "改善", "对齐", "使用",
+    "采用", "替换", "更换", "修正", "纠正",
+)
+_GENERIC_ENGLISH_TARGETS = frozenset({
+    "overall design", "the design", "visual quality", "composition quality",
+})
 
 
 def _issue(code: str, detail: str) -> dict[str, str]:
@@ -263,9 +268,22 @@ def _correction(value: Any) -> str | None:
     text = candidate.strip()
     if not text or len(text) > 2_000 or text.casefold().rstrip(".!。！") in _VAGUE:
         return None
-    if not _ACTIONABLE_SIGNAL.search(text):
+    if text.endswith(("?", "？")):
         return None
-    return text
+    english = _ENGLISH_IMPERATIVE.fullmatch(text)
+    if english is not None:
+        target = english.group("target").strip().rstrip(".!。！").strip()
+        words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]*", target)
+        if len(words) < 2 or target.casefold() in _GENERIC_ENGLISH_TARGETS:
+            return None
+        return text
+    for action in _CHINESE_IMPERATIVES:
+        if text.startswith(action):
+            target = text[len(action):].strip().rstrip("。！.! ").strip()
+            if len(re.sub(r"\s+", "", target)) < 4:
+                return None
+            return text
+    return None
 
 
 def actionable_retry_feedback(

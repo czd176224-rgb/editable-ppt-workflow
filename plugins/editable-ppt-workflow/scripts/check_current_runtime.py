@@ -70,7 +70,7 @@ PROHIBITED_RUNTIME_PATTERNS = {
         re.IGNORECASE,
     ),
     "legacy deck-wide visual QA": re.compile(
-        r"global_qa|global[-_ ]visual|style_drift|cross[-_ ]page[-_ ]similarity",
+        r"global_qa|global[-_ ]visual[-_ ]qa|style_drift|cross[-_ ]page[-_ ]similarity",
         re.IGNORECASE,
     ),
     "legacy generated page category": re.compile(
@@ -92,6 +92,22 @@ REMOVED_V4_SEMANTICS = {
 }
 ALLOWED_COMMANDS = frozenset({"confirm-ui", "doctor", "v6"})
 REQUIRED_REQUIREMENTS = frozenset({"flask", "jsonschema", "pillow", "pypdf", "pypdfium2", "python-docx", "python-pptx"})
+REQUIRED_V6_MODULES = frozenset({
+    "workflow_v6_cli.py",
+    "workflow_v6_materials.py",
+    "workflow_v6_media.py",
+    "workflow_v6_prompt_contract.py",
+    "workflow_v6_image.py",
+    "workflow_v6_qa.py",
+    "workflow_v6_reconstruction.py",
+    "workflow_v6_source.py",
+    "workflow_v6_state.py",
+})
+REQUIRED_V6_SCHEMAS = frozenset({
+    "page_materials_v6.schema.json",
+    "reference_image_v6.schema.json",
+    "style_confirmation.schema.json",
+})
 
 
 def _display(path: Path, root: Path) -> str:
@@ -199,29 +215,51 @@ def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
         module = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     except SyntaxError as error:
         return [f"{_display(path, repo_root)}:{error.lineno}: cannot parse initial-generation builder"]
-    functions = {
-        node.name: node
-        for node in module.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    initial = functions.get("build_generate_command")
-    if initial is None:
-        return [f"{_display(path, repo_root)}: build_generate_command is missing"]
-    command_value = next(
-        (
-            node.value
-            for node in initial.body
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "command" for target in node.targets)
-        ),
-        None,
-    )
-    literals = _literal_strings(command_value) if command_value is not None else set()
+    literals = _literal_strings(module)
     findings: list[str] = []
-    if "generate" not in literals or "edit" in literals or "--image" in literals:
-        findings.append(
-            f"{_display(path, repo_root)}:{initial.lineno}: V6 generation must use generate only without image inputs"
-        )
+    for required in ("generate", "edit", "--image", "--image-role", "--image-sha256"):
+        if required not in literals:
+            findings.append(f"{_display(path, repo_root)}: adaptive Image2 request is missing {required!r}")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    if "edit requires at least one image input" not in text:
+        findings.append(f"{_display(path, repo_root)}: adaptive edit lacks an empty-input guard")
+    if "generate cannot carry image inputs" not in text:
+        findings.append(f"{_display(path, repo_root)}: adaptive generate lacks an image-input guard")
+    return findings
+
+
+def _scan_required_v6_files(skill_root: Path, repo_root: Path) -> list[str]:
+    findings: list[str] = []
+    for name in sorted(REQUIRED_V6_MODULES):
+        path = skill_root / "scripts" / name
+        if not path.is_file():
+            findings.append(f"{_display(path, repo_root)}: required adaptive V6 module is missing")
+    for name in sorted(REQUIRED_V6_SCHEMAS):
+        path = skill_root / "schemas" / name
+        if not path.is_file():
+            findings.append(f"{_display(path, repo_root)}: required adaptive V6 schema is missing")
+    return findings
+
+
+def _scan_image_cli(plugin_root: Path, repo_root: Path) -> list[str]:
+    path = plugin_root / "skills/generate-slide-body-image/scripts/codex_gpt_image.py"
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+        module = ast.parse(text, filename=str(path))
+    except (OSError, SyntaxError) as error:
+        return [f"{_display(path, repo_root)}: cannot inspect bundled Image2 CLI: {error}"]
+    literals = _literal_strings(module)
+    findings: list[str] = []
+    for operation in ("generate", "edit"):
+        if operation not in literals:
+            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks {operation!r}")
+    guards = (
+        "Reference images require the explicit edit subcommand.",
+        "The edit subcommand requires at least one --image input.",
+    )
+    for guard in guards:
+        if guard not in text:
+            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks guard: {guard}")
     return findings
 
 
@@ -284,6 +322,8 @@ def check(repo_root: Path) -> list[str]:
     findings.extend(_scan_v4_semantics(skill_root, repo_root))
     findings.extend(_scan_other_plugin_runtime(repo_root))
     findings.extend(_scan_initial_generation(skill_root, repo_root))
+    findings.extend(_scan_required_v6_files(skill_root, repo_root))
+    findings.extend(_scan_image_cli(repo_root / "plugins/editable-ppt-workflow", repo_root))
     findings.extend(_scan_commands(skill_root, repo_root))
     findings.extend(_scan_requirements(skill_root, repo_root))
     return findings

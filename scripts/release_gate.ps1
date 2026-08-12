@@ -11,8 +11,7 @@ function Get-Sha256([string]$Path) {
 }
 Push-Location $RepoRoot
 try {
-    & git -C $RepoRoot rev-parse --is-inside-work-tree 2>$null | Out-Null
-    $IsGitWorkTree = $LASTEXITCODE -eq 0
+    $IsGitWorkTree = Test-Path -LiteralPath (Join-Path $RepoRoot ".git")
     if (-not $PublicSnapshotOnly) {
         $wordTests = @(Get-ChildItem "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
         for ($offset = 0; $offset -lt $wordTests.Count; $offset += 12) {

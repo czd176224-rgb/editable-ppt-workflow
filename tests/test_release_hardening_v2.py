@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -300,3 +301,44 @@ def test_release_gate_excludes_ignored_development_workspace_from_json_validatio
     gate = (ROOT / "scripts/release_gate.ps1").read_text(encoding="utf-8")
     assert "\\.superpowers" in gate
     assert "-notmatch" in gate
+
+
+def test_release_gate_validates_export_from_clean_public_development_checkout(tmp_path: Path):
+    require_export_checkout()
+    checkout = tmp_path / "checkout"
+    archived = subprocess.run(
+        ["git", "archive", "--format=zip", "--output", str(tmp_path / "checkout.zip"), "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert archived.returncode == 0, archived.stdout + archived.stderr
+    with zipfile.ZipFile(tmp_path / "checkout.zip") as bundle:
+        bundle.extractall(checkout)
+    shutil.copy2(ROOT / "scripts/release_gate.ps1", checkout / "scripts/release_gate.ps1")
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "ci@example.invalid"],
+        ["config", "user.name", "CI"],
+        ["add", "-A"],
+        ["commit", "-m", "clean checkout"],
+    ):
+        subprocess.run(["git", *args], cwd=checkout, check=True, capture_output=True)
+    assert (checkout / "docs/superpowers/specs/2026-08-11-v6-adaptive-image-materials-design.md").is_file()
+    assert json.loads((checkout / "package-info.json").read_text(encoding="utf-8"))["repositoryVisibility"] == "public"
+
+    gated = subprocess.run(
+        [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(checkout / "scripts/release_gate.ps1"), "-PublicSnapshotOnly",
+        ],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
+    )
+    assert gated.returncode == 0, gated.stdout + gated.stderr
+    assert "Public release snapshot created:" in gated.stdout
+    assert '"passed": true' in gated.stdout

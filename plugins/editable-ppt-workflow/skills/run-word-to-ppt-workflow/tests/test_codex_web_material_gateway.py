@@ -865,6 +865,53 @@ def test_search_material_preserves_stable_id_and_binds_file_and_provenance(tmp_p
         )
 
 
+def test_search_material_gives_each_atomic_evidence_write_a_fresh_stage_budget(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Slow Windows child startup must not consume the next evidence write's watchdog."""
+    clock = [100.0]
+    granted: list[float] = []
+
+    def monotonic() -> float:
+        return clock[0]
+
+    def simulated_slow_child_start(
+        path: Path, payload: bytes, *, deadline: float, expected_dev: int, expected_ino: int,
+    ) -> None:
+        remaining = deadline - clock[0]
+        granted.append(remaining)
+        if remaining < 0.5:
+            raise SearchMaterialBlocked("evidence write timed out during simulated child startup")
+        opened = path.stat()
+        assert (opened.st_dev, opened.st_ino) == (expected_dev, expected_ino)
+        clock[0] += 0.6
+        path.write_bytes(payload)
+
+    monkeypatch.setattr(codex_web_material_gateway.time, "monotonic", monotonic)
+    monkeypatch.setattr(
+        codex_web_material_gateway, "_run_write_process", simulated_slow_child_start,
+    )
+    directive = _directive()
+    candidate = _candidate()
+
+    materials = search_visual_material(
+        tmp_path,
+        directive=directive,
+        page_context={"page_number": 7, "body_text": "Locked Word fact."},
+        timeout=1.0,
+        invoke=lambda *_args, **_kwargs: _result([candidate]),
+        transport=FakeTransport({
+            candidate["direct_image_url"]: DownloadResponse(
+                200, {"content-type": "image/png"}, _png(),
+            ),
+        }),
+    )
+
+    assert len(materials) == 1
+    assert len(granted) >= 7
+    assert all(remaining == pytest.approx(1.0) for remaining in granted)
+
+
 def test_plural_search_accepts_unordered_bijection_and_replays_each_signed_cache(tmp_path: Path) -> None:
     directives = [_batch_directive(1), _batch_directive(2)]
     payloads = [_png(31, 21), _png(32, 22)]

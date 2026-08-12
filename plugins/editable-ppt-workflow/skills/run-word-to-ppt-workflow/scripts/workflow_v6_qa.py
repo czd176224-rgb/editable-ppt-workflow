@@ -34,10 +34,12 @@ CORRECTION_ACTIONS = (
     "increase", "reduce", "improve", "align", "use", "replace", "correct",
 )
 CORRECTION_TARGETS = (
-    "confirmed_reference", "fixed_layer", "body_region", "confirmed_body",
-    "image_requirement", "style_property", "aspect_ratio", "legibility",
-    "crop", "recognizable_identity", "contrast_relation", "geometry",
-    "fabricated_identity",
+    "confirmed_reference", "screenshot", "logo", "photo", "fixed_title",
+    "fixed_logo", "footer", "page_number", "body_region", "confirmed_body",
+    "image_requirement", "color_palette", "typography", "spacing", "aspect_ratio",
+    "legibility", "crop", "recognizable_identity", "contrast_relation",
+    "body_geometry", "fabricated_identity", "brand", "event", "product",
+    "institution", "evidence",
 )
 CORRECTION_CONSTRAINTS = (
     "aspect_ratio", "legibility", "recognizable", "uncropped", "remove_fixed_layer",
@@ -45,43 +47,39 @@ CORRECTION_CONSTRAINTS = (
     "no_fabricated_identity", "body_region_only", "contrast_relation", "align_geometry",
     "high_fidelity_best_effort",
 )
-_CHECK_CORRECTION_RULES = {
-    "confirmed_content_and_requirements": {
-        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "use", "replace", "correct"},
-        "targets": {"confirmed_body", "image_requirement", "confirmed_reference"},
-        "constraints": {"match_confirmed_body", "match_image_requirement", "recognizable", "high_fidelity_best_effort"},
-    },
-    "global_style_followed": {
-        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "increase", "reduce", "improve", "align", "use", "replace", "correct"},
-        "targets": {"style_property", "contrast_relation", "geometry", "legibility"},
-        "constraints": {"match_style_property", "contrast_relation", "align_geometry", "legibility"},
-    },
-    "body_region_composition": {
-        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "align", "correct"},
-        "targets": {"body_region", "aspect_ratio", "geometry"},
-        "constraints": {"aspect_ratio", "body_region_only", "align_geometry"},
-    },
-    "fixed_layers_absent": {
-        "actions": {"remove", "avoid", "ensure", "correct"},
-        "targets": {"fixed_layer", "body_region"},
-        "constraints": {"remove_fixed_layer", "body_region_only"},
-    },
-    "confirmed_references_recognizable_and_fused": {
-        "actions": {"preserve", "keep", "maintain", "restore", "avoid", "ensure", "align", "use", "correct"},
-        "targets": {"confirmed_reference", "crop", "recognizable_identity", "geometry"},
-        "constraints": {"recognizable", "uncropped", "align_geometry", "high_fidelity_best_effort"},
-    },
-    "no_fabricated_real_world_evidence": {
-        "actions": {"remove", "avoid", "ensure", "replace", "correct"},
-        "targets": {"fabricated_identity", "confirmed_reference", "image_requirement"},
-        "constraints": {"no_fabricated_identity", "match_image_requirement"},
-    },
-    "reference_high_fidelity_best_effort": {
-        "actions": {"preserve", "keep", "maintain", "restore", "avoid", "ensure", "correct"},
-        "targets": {"confirmed_reference", "crop", "recognizable_identity", "aspect_ratio"},
-        "constraints": {"recognizable", "uncropped", "aspect_ratio", "high_fidelity_best_effort"},
-    },
-}
+_SAFE_CORRECTION_TUPLES = frozenset({
+    ("fixed_layers_absent", "remove", target, "remove_fixed_layer")
+    for target in ("fixed_title", "fixed_logo", "footer", "page_number")
+} | {
+    ("confirmed_references_recognizable_and_fused", action, target, constraint)
+    for action, target, constraint in (
+        ("preserve", "confirmed_reference", "recognizable"),
+        ("keep", "confirmed_reference", "recognizable"),
+        ("preserve", "screenshot", "recognizable"),
+        ("keep", "screenshot", "uncropped"),
+        ("preserve", "logo", "aspect_ratio"),
+        ("keep", "logo", "recognizable"),
+        ("preserve", "photo", "recognizable"),
+        ("keep", "photo", "legibility"),
+    )
+} | {
+    ("no_fabricated_real_world_evidence", "remove", target, "no_fabricated_identity")
+    for target in ("fabricated_identity", "brand", "event", "product", "institution", "evidence")
+} | {
+    ("global_style_followed", "use", "color_palette", "match_style_property"),
+    ("global_style_followed", "align", "typography", "match_style_property"),
+    ("global_style_followed", "use", "spacing", "match_style_property"),
+    ("global_style_followed", "increase", "contrast_relation", "contrast_relation"),
+    ("confirmed_content_and_requirements", "restore", "confirmed_body", "match_confirmed_body"),
+    ("confirmed_content_and_requirements", "use", "image_requirement", "match_image_requirement"),
+    ("body_region_composition", "correct", "aspect_ratio", "aspect_ratio"),
+    ("body_region_composition", "align", "body_geometry", "align_geometry"),
+    ("reference_high_fidelity_best_effort", "preserve", "screenshot", "legibility"),
+    ("reference_high_fidelity_best_effort", "keep", "screenshot", "uncropped"),
+    ("reference_high_fidelity_best_effort", "preserve", "logo", "aspect_ratio"),
+    ("reference_high_fidelity_best_effort", "keep", "logo", "aspect_ratio"),
+    ("reference_high_fidelity_best_effort", "preserve", "photo", "recognizable"),
+})
 
 
 def _issue(code: str, detail: str) -> dict[str, str]:
@@ -323,12 +321,9 @@ def _correction(check_code: str, value: Any) -> str | None:
     target = structured.get("target")
     constraint = structured.get("constraint")
     text = structured.get("correction")
-    rules = _CHECK_CORRECTION_RULES.get(check_code)
+    identity = (check_code, action, target, constraint)
     if (
-        rules is None
-        or action not in rules["actions"]
-        or target not in rules["targets"]
-        or constraint not in rules["constraints"]
+        identity not in _SAFE_CORRECTION_TUPLES
         or not isinstance(text, str)
         or not text.strip()
         or len(text.strip()) > 500

@@ -188,12 +188,12 @@ def test_semantic_review_uses_only_frozen_contract_and_declares_exclusions(
 
 def test_actionable_retry_feedback_requires_new_structured_corrections():
     fixed = {
-        "check": "fixed_layers_absent", "action": "remove", "target": "fixed_layer",
+        "check": "fixed_layers_absent", "action": "remove", "target": "fixed_title",
         "constraint": "remove_fixed_layer",
         "correction": "Remove the generated main title from the body.",
     }
     style = {
-        "check": "global_style_followed", "action": "use", "target": "style_property",
+        "check": "global_style_followed", "action": "use", "target": "color_palette",
         "constraint": "match_style_property",
         "correction": "Use the approved navy and gold palette.",
     }
@@ -479,7 +479,7 @@ def test_structured_retry_fields_not_correction_language_control_classification(
     structured = {
         "check": "fixed_layers_absent",
         "action": "remove",
-        "target": "fixed_layer",
+        "target": "fixed_title",
         "constraint": "remove_fixed_layer",
         "correction": correction,
     }
@@ -504,7 +504,7 @@ def test_structured_retry_fields_not_correction_language_control_classification(
         {"action": "remove", "target": "fixed_layer", "correction": "Remove title."},
         {
             "check": "fixed_layers_absent", "action": "remove",
-            "target": "fixed_layer", "constraint": "", "correction": "Remove title.",
+            "target": "fixed_title", "constraint": "", "correction": "Remove title.",
         },
         {
             "check": "fixed_layers_absent", "action": "improve",
@@ -513,7 +513,7 @@ def test_structured_retry_fields_not_correction_language_control_classification(
         },
         {
             "check": "global_style_followed", "action": "remove",
-            "target": "fixed_layer", "constraint": "remove_fixed_layer",
+            "target": "fixed_title", "constraint": "remove_fixed_layer",
             "correction": "Remove title.",
         },
     ],
@@ -538,6 +538,101 @@ def test_legacy_string_correction_is_nonactionable_even_when_imperative():
                 "result": "fail",
                 "detail": "main title present",
                 "correction": "Remove the generated main title from the body region.",
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == []
+
+
+@pytest.mark.parametrize(
+    ("check", "action", "target", "constraint"),
+    [
+        ("fixed_layers_absent", "remove", "fixed_title", "remove_fixed_layer"),
+        ("fixed_layers_absent", "remove", "fixed_logo", "remove_fixed_layer"),
+        ("fixed_layers_absent", "remove", "footer", "remove_fixed_layer"),
+        ("fixed_layers_absent", "remove", "page_number", "remove_fixed_layer"),
+        ("confirmed_references_recognizable_and_fused", "preserve", "confirmed_reference", "recognizable"),
+        ("confirmed_references_recognizable_and_fused", "keep", "screenshot", "uncropped"),
+        ("confirmed_references_recognizable_and_fused", "preserve", "logo", "aspect_ratio"),
+        ("confirmed_references_recognizable_and_fused", "keep", "photo", "legibility"),
+        ("no_fabricated_real_world_evidence", "remove", "fabricated_identity", "no_fabricated_identity"),
+        ("no_fabricated_real_world_evidence", "remove", "brand", "no_fabricated_identity"),
+        ("no_fabricated_real_world_evidence", "remove", "event", "no_fabricated_identity"),
+        ("no_fabricated_real_world_evidence", "remove", "product", "no_fabricated_identity"),
+        ("no_fabricated_real_world_evidence", "remove", "institution", "no_fabricated_identity"),
+        ("no_fabricated_real_world_evidence", "remove", "evidence", "no_fabricated_identity"),
+        ("global_style_followed", "use", "color_palette", "match_style_property"),
+        ("global_style_followed", "align", "typography", "match_style_property"),
+        ("confirmed_content_and_requirements", "restore", "confirmed_body", "match_confirmed_body"),
+        ("confirmed_content_and_requirements", "use", "image_requirement", "match_image_requirement"),
+        ("body_region_composition", "correct", "aspect_ratio", "aspect_ratio"),
+        ("body_region_composition", "align", "body_geometry", "align_geometry"),
+        ("reference_high_fidelity_best_effort", "preserve", "screenshot", "legibility"),
+        ("reference_high_fidelity_best_effort", "keep", "logo", "aspect_ratio"),
+    ],
+)
+def test_exact_semantic_retry_tuple_allowlist_accepts_only_declared_safe_combinations(
+    check: str, action: str, target: str, constraint: str,
+):
+    correction = "Apply this concise confirmed correction."
+    current = {
+        "checks": {
+            check: {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": {
+                    "check": check,
+                    "action": action,
+                    "target": target,
+                    "constraint": constraint,
+                    "correction": correction,
+                },
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == [correction]
+
+
+@pytest.mark.parametrize(
+    ("check", "action", "target", "constraint"),
+    [
+        ("fixed_layers_absent", "ensure", "fixed_layer", "body_region_only"),
+        ("fixed_layers_absent", "correct", "body_region", "remove_fixed_layer"),
+        ("confirmed_references_recognizable_and_fused", "avoid", "crop", "recognizable"),
+        ("confirmed_references_recognizable_and_fused", "align", "geometry", "uncropped"),
+        ("no_fabricated_real_world_evidence", "replace", "confirmed_reference", "match_image_requirement"),
+        ("no_fabricated_real_world_evidence", "ensure", "image_requirement", "no_fabricated_identity"),
+        ("global_style_followed", "increase", "geometry", "legibility"),
+        ("global_style_followed", "replace", "legibility", "align_geometry"),
+        ("confirmed_content_and_requirements", "preserve", "confirmed_reference", "recognizable"),
+        ("confirmed_content_and_requirements", "correct", "image_requirement", "high_fidelity_best_effort"),
+        ("body_region_composition", "ensure", "geometry", "aspect_ratio"),
+        ("body_region_composition", "restore", "body_region", "align_geometry"),
+        ("reference_high_fidelity_best_effort", "correct", "crop", "recognizable"),
+        ("reference_high_fidelity_best_effort", "avoid", "recognizable_identity", "aspect_ratio"),
+        ("fixed_layers_absent", "remove", "logo", "remove_fixed_layer"),
+        ("no_fabricated_real_world_evidence", "remove", "fixed_logo", "no_fabricated_identity"),
+    ],
+)
+def test_exact_semantic_retry_tuple_allowlist_rejects_cross_product_adversaries(
+    check: str, action: str, target: str, constraint: str,
+):
+    current = {
+        "checks": {
+            check: {
+                "result": "fail",
+                "detail": "contract mismatch",
+                "correction": {
+                    "check": check,
+                    "action": action,
+                    "target": target,
+                    "constraint": constraint,
+                    "correction": "This text must not override an invalid tuple.",
+                },
             },
         },
         "issues": [],

@@ -153,7 +153,7 @@ def _semantic_failure(
             "constraint": "match_confirmed_body",
         },
         "fixed_layers_absent": {
-            "action": "remove", "target": "fixed_layer",
+            "action": "remove", "target": "fixed_title",
             "constraint": "remove_fixed_layer",
         },
     }

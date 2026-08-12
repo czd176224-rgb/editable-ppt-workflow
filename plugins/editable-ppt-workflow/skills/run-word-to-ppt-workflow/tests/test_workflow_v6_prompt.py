@@ -67,7 +67,7 @@ def _confirmed_page() -> dict:
 
 
 def test_prompt_serializes_exact_authoritative_sections_in_order_once_and_verbatim():
-    contract = {"visual_style": "STYLE_SENTINEL", "nested": {"z": 1, "a": 2}}
+    contract = {"visual_style": "STYLE_SENTINEL", "color": {"z": 1, "a": 2}}
 
     prompt = compile_confirmed_page_prompt(contract, _confirmed_page())
     payload = json.loads(prompt, object_pairs_hook=dict)
@@ -150,6 +150,88 @@ def test_prompt_is_deterministic_for_equivalent_mapping_key_order():
         _confirmed_page(),
     )
     assert first == second
+
+
+def test_user_editable_json_sections_preserve_deep_keys_that_look_like_local_metadata():
+    page = _confirmed_page()
+    legitimate = {
+        "path": "PATH_IS_USER_CONTENT",
+        "metadata": {"revision": "REVISION_IS_USER_CONTENT"},
+        "hash": "HASH_IS_USER_CONTENT",
+        "nested": {
+            "candidate_path": "CANDIDATE_IS_USER_CONTENT",
+            "receipt": "RECEIPT_IS_USER_CONTENT",
+        },
+    }
+    page["attachment_extracts"] = [{"content": legitimate}]
+    page["chart_facts"] = [{"data": legitimate}]
+    page["image_requirements"] = [{"instruction": legitimate}]
+    page["degradations"] = [{"expression": legitimate}]
+
+    payload = json.loads(compile_confirmed_page_prompt({"visual_style": "minimal"}, page))
+
+    assert payload["confirmed_attachment_extracts"] == page["attachment_extracts"]
+    assert payload["confirmed_chart_facts"] == page["chart_facts"]
+    assert payload["confirmed_image_requirements"] == page["image_requirements"]
+    assert payload["confirmed_degradation_expressions"] == page["degradations"]
+    rendered = json.dumps(payload, ensure_ascii=False)
+    for sentinel in (
+        "PATH_IS_USER_CONTENT", "REVISION_IS_USER_CONTENT", "HASH_IS_USER_CONTENT",
+        "CANDIDATE_IS_USER_CONTENT", "RECEIPT_IS_USER_CONTENT",
+    ):
+        assert rendered.count(sentinel) == 4
+
+
+def test_global_contract_projects_real_visual_schema_and_excludes_runtime_controls():
+    visual_fields = {
+        "canvas": "ppt169",
+        "direction": 2,
+        "template_selection": {
+            "id": "policy-project-brief", "label": "Policy", "version": "1.0",
+            "substyle_id": None, "override_fields": ["color"],
+        },
+        "visual_style": "editorial",
+        "color": {"primary": "#112233", "metadata": "LEGITIMATE_PALETTE_METADATA"},
+        "icons": "outline",
+        "typography": {
+            "name_zh": "现代商务",
+            "heading": {"cjk": "微软雅黑", "latin": "Arial", "css": "Arial, sans-serif"},
+            "body": {"cjk": "微软雅黑", "latin": "Arial", "css": "Arial, sans-serif"},
+            "body_size": 16,
+            "type_scale_pt": {
+                "page_title": 28, "section_title": 20, "body": 16, "caption": 10,
+            },
+        },
+        "image_rendering": {"mode": "photographic", "path": "LEGITIMATE_RENDER_PATH"},
+        "style_axes": {"formal": 80, "modern": 70, "minimal": 60},
+        "layout_preferences": ["editorial", "data-led"],
+        "information_density": "balanced",
+        "regional_style": {"enabled": True, "region": "China"},
+        "background_system": "light",
+        "image_role": {"role": "evidence", "proportion": "medium"},
+        "evidence_strength": "strict",
+        "composition_tendency": "formal-consulting",
+        "brand_device": "light",
+        "additional_requirements": "Keep restrained whitespace",
+        "image_usage_policy": "content-driven",
+    }
+    runtime_fields = {
+        "stage": "final", "status": "confirmed", "confirmed_at": "2026-08-12",
+        "page_count": 9, "pagination_mode": "word-pages", "one_page_to_one_slide": True,
+        "production_profile": "speed", "formula_policy": "mixed",
+        "generation_mode": "continuous", "refine_spec": True, "image_quality": "high",
+        "max_concurrency": 3, "automatic_repair_budget": 2, "editable_output": True,
+        "start_generation": True, "nonce": "PRIVATE_NONCE", "contract_hash": "e" * 64,
+    }
+
+    payload = json.loads(compile_confirmed_page_prompt(
+        {**visual_fields, **runtime_fields}, _confirmed_page()
+    ))
+
+    assert payload["frozen_global_visual_contract"] == visual_fields
+    rendered = json.dumps(payload["frozen_global_visual_contract"], ensure_ascii=False)
+    assert "PRIVATE_NONCE" not in rendered
+    assert "e" * 64 not in rendered
 
 
 def test_empty_global_visual_contract_fails_before_compilation():

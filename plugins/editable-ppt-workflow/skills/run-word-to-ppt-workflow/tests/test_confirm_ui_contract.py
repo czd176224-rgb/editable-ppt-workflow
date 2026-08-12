@@ -537,7 +537,7 @@ def test_v6_ui_prompt_estimate_uses_the_shared_final_prompt_contract():
         sys.path.insert(0, str(scripts))
     from workflow_v6_prompt_contract import estimate_frozen_page_chars
     server = load_server()
-    contract = {"style": "balanced"}; page = {"effective_body": "x" * 17, "reference_images": []}
+    contract = {"visual_style": "balanced"}; page = {"effective_body": "x" * 17, "reference_images": []}
 
     assert server._estimate_v6_final_prompt_chars(contract, page) == estimate_frozen_page_chars(contract, page)
 

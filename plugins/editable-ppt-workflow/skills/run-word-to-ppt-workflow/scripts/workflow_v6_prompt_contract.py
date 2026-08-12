@@ -42,37 +42,38 @@ _PAGE_MATERIAL_FIELDS = (
     "degradations",
 )
 
+_VISUAL_CONTRACT_FIELDS = (
+    "canvas",
+    "direction",
+    "template_selection",
+    "visual_style",
+    "color",
+    "icons",
+    "typography",
+    "image_rendering",
+    "style_axes",
+    "layout_preferences",
+    "information_density",
+    "regional_style",
+    "background_system",
+    "image_role",
+    "evidence_strength",
+    "composition_tendency",
+    "brand_device",
+    "additional_requirements",
+    "image_usage_policy",
+)
 
-def _is_local_metadata_key(key: str) -> bool:
-    normalized = key.casefold()
-    return (
-        normalized in {
-            "path", "integrity", "metadata", "revision", "fixed_page_title",
-            "word_original", "raw_word_original", "comments", "raw_comments",
-            "comment_directives", "search_tasks", "search_records", "search_results",
-            "acquisition_receipt", "acquisition_records", "acquisition_state",
-            "backend_conclusion", "backend_conclusions",
-        }
-        or normalized.endswith("_path")
-        or normalized.endswith("_sha256")
-        or normalized.endswith("_hash")
-        or normalized.endswith("_digest")
-        or normalized.endswith("_revision")
-        or "receipt" in normalized
-        or "candidate" in normalized
-    )
 
-
-def _stable_material_copy(value: Any) -> Any:
-    """Deep-copy user material deterministically while dropping local-only metadata."""
+def _stable_json_copy(value: Any) -> Any:
+    """Deep-copy JSON deterministically without changing its keys or values."""
     if isinstance(value, Mapping):
         return {
-            str(key): _stable_material_copy(item)
+            str(key): _stable_json_copy(item)
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-            if not _is_local_metadata_key(str(key))
         }
     if isinstance(value, (list, tuple)):
-        return [_stable_material_copy(item) for item in value]
+        return [_stable_json_copy(item) for item in value]
     return copy.deepcopy(value)
 
 
@@ -99,7 +100,7 @@ def _usable_reference_record(reference: Mapping[str, Any]) -> dict[str, Any] | N
 def filter_confirmed_page_for_prompt(confirmed_page: Mapping[str, Any]) -> dict[str, Any]:
     """Project one frozen page to the exact material shared by Image2 and lightweight QA."""
     filtered = {
-        field: _stable_material_copy(confirmed_page.get(field, "" if field == "effective_body" else []))
+        field: _stable_json_copy(confirmed_page.get(field, "" if field == "effective_body" else []))
         for field in _PAGE_MATERIAL_FIELDS
     }
     filtered["reference_images"] = [
@@ -113,10 +114,14 @@ def filter_confirmed_page_for_prompt(confirmed_page: Mapping[str, Any]) -> dict[
 
 
 def filter_global_visual_contract(global_visual_contract: Mapping[str, Any]) -> dict[str, Any]:
-    """Keep the complete sealed visual contract while removing local integrity metadata."""
+    """Project the mixed UI result contract to its schema-defined visual fields."""
     if not isinstance(global_visual_contract, Mapping) or not global_visual_contract:
         raise ValueError("V6 global visual contract must be nonempty")
-    filtered = _stable_material_copy(global_visual_contract)
+    filtered = {
+        field: _stable_json_copy(global_visual_contract[field])
+        for field in _VISUAL_CONTRACT_FIELDS
+        if field in global_visual_contract
+    }
     if not filtered:
         raise ValueError("V6 global visual contract must contain visual instructions")
     return filtered

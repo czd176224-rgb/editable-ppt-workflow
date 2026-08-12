@@ -283,6 +283,13 @@ def test_generation_prompt_and_qa_receive_only_filtered_frozen_material(tmp_path
         "confirmed_revision": 1,
         "confirmed_revision_digest": "c" * 64,
     })
+    page["attachment_extracts"] = [{
+        "content": {
+            "path": "USER_ATTACHMENT_PATH",
+            "metadata": {"revision": "USER_ATTACHMENT_REVISION"},
+            "hash": "USER_ATTACHMENT_HASH",
+        },
+    }]
     result["global_visual_contract"].update({
         "contract_digest": "d" * 64,
         "local_path": "confirm_ui/PRIVATE_STYLE_PATH.json",
@@ -315,6 +322,7 @@ def test_generation_prompt_and_qa_receive_only_filtered_frozen_material(tmp_path
         "confirmed_revision", "confirmed_revision_digest",
     }
     assert forbidden_fields.isdisjoint(observed["qa_page"])
+    assert observed["qa_page"]["attachment_extracts"] == page["attachment_extracts"]
     assert "contract_digest" not in observed["qa_style"]
     assert "local_path" not in observed["qa_style"]
     assert all(
@@ -324,6 +332,12 @@ def test_generation_prompt_and_qa_receive_only_filtered_frozen_material(tmp_path
             "SEARCH_RECORD_PRIVATE", "ACQUISITION_RECORD_PRIVATE",
             "BACKEND_CONCLUSION_PRIVATE", "CANDIDATE_PRIVATE", "c" * 64,
             "PRIVATE_STYLE_PATH", "d" * 64,
+        )
+    )
+    assert all(
+        sentinel in observed["prompt"]
+        for sentinel in (
+            "USER_ATTACHMENT_PATH", "USER_ATTACHMENT_REVISION", "USER_ATTACHMENT_HASH",
         )
     )
 

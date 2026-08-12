@@ -2065,9 +2065,12 @@ def test_installed_app_server_v2_schema_declares_all_web_search_modes() -> None:
     if not executable:
         pytest.skip("installed Codex runtime is unavailable in this test environment")
 
-    modes = codex_subscription_runtime.app_server_web_search_modes(
-        [executable, "app-server", "--stdio"], timeout=15
-    )
+    try:
+        modes = codex_subscription_runtime.app_server_web_search_modes(
+            [executable, "app-server", "--stdio"], timeout=15
+        )
+    except codex_subscription_runtime.CodexRuntimeUnavailable as exc:
+        pytest.skip(f"installed Codex runtime cannot be probed in this environment: {exc}")
 
     assert modes == frozenset({"disabled", "cached", "indexed", "live"})
 

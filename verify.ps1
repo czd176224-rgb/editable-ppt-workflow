@@ -162,4 +162,4 @@ if ($PortableSmokeTest) {
     }
 }
 
-Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v6, generate-only Image2 bodies, light pre-reconstruction QA, editable reconstruction, fixed-layer mechanical assembly, optional Office validation, fixed-canvas-cm-v2."
+Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v6, adaptive generate/edit Image2 bodies, light pre-reconstruction QA, editable reconstruction, fixed-layer mechanical assembly, optional Office validation, fixed-canvas-cm-v2."

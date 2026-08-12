@@ -288,3 +288,9 @@ def test_generated_release_json_writers_force_lf():
     checker = (ROOT / "scripts/check_public_release.py").read_text(encoding="utf-8")
     assert '-replace "`r`n", "`n"' in exporter
     assert 'newline="\\n"' in checker
+
+
+def test_public_verifier_reports_the_adaptive_image_policy():
+    verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8")
+    assert "generate-only" not in verifier.lower()
+    assert "adaptive generate/edit Image2 bodies" in verifier

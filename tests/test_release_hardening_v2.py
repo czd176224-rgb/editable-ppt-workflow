@@ -342,3 +342,56 @@ def test_release_gate_validates_export_from_clean_public_development_checkout(tm
     assert gated.returncode == 0, gated.stdout + gated.stderr
     assert "Public release snapshot created:" in gated.stdout
     assert '"passed": true' in gated.stdout
+
+
+def test_package_release_exports_clean_public_source_from_git_checkout(tmp_path: Path):
+    require_export_checkout()
+    checkout = tmp_path / "checkout"
+    archive = tmp_path / "checkout.zip"
+    archived = subprocess.run(
+        ["git", "archive", "--format=zip", "--output", str(archive), "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert archived.returncode == 0, archived.stdout + archived.stderr
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(checkout)
+    shutil.copy2(ROOT / "scripts/package_release.ps1", checkout / "scripts/package_release.ps1")
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "ci@example.invalid"],
+        ["config", "user.name", "CI"],
+        ["add", "-A"],
+        ["commit", "-m", "clean checkout"],
+    ):
+        subprocess.run(["git", *args], cwd=checkout, check=True, capture_output=True)
+    assert (checkout / "docs/superpowers/specs/2026-08-11-v6-adaptive-image-materials-design.md").is_file()
+
+    dist_a = tmp_path / "dist-a"
+    dist_b = tmp_path / "dist-b"
+    results = []
+    for destination in (dist_a, dist_b):
+        results.append(subprocess.run(
+            [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                str(checkout / "scripts/package_release.ps1"),
+                "-SourceRoot", str(checkout),
+                "-OutputDirectory", str(destination),
+            ],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
+        ))
+    assert all(result.returncode == 0 for result in results), "\n".join(
+        result.stdout + result.stderr for result in results
+    )
+    zip_name = "editable-ppt-workflow-2.1.0-windows.zip"
+    assert (dist_a / zip_name).read_bytes() == (dist_b / zip_name).read_bytes()
+    with zipfile.ZipFile(dist_a / zip_name) as bundle:
+        names = set(bundle.namelist())
+        assert "docs/superpowers/specs/2026-08-11-v6-adaptive-image-materials-design.md" not in names
+        assert ".superpowers/sdd/2026-08-11-v6-adaptive-image-materials-implementation/task-4-report.md" not in names

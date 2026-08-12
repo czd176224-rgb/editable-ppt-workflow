@@ -65,6 +65,15 @@ def smoke(editppt: Path, output: Path) -> dict:
         "production_profile": "balanced",
         "additional_requirements": "Preserve the Word narrative and V6 fixed-layer boundary.",
     }
+    page_materials = client.get("/api/pages").get_json()
+    confirmation["revision"] = 0
+    editable_fields = (
+        "page_number", "effective_body", "attachment_extracts", "chart_facts",
+        "image_requirements", "degradations", "reference_images", "reference_decisions",
+    )
+    confirmation["confirmed_pages"] = [
+        {key: page[key] for key in editable_fields} for page in page_materials["pages"]
+    ]
     response = client.post("/api/confirm", json=confirmation)
     if response.status_code != 200 or _wait(project, "final", 5) != 0:
         raise RuntimeError(f"portable V6 confirmation failed: {response.get_json()}")

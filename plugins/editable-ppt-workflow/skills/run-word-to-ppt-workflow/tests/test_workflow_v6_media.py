@@ -104,6 +104,35 @@ def test_screenshot_model_input_is_lossless_png_and_svg_logo_is_safe_raster_with
         assert actual.size[0] == actual.size[1] * 2
 
 
+def test_svg_renderer_allows_bounded_windows_cold_start_budget(tmp_path: Path, monkeypatch):
+    """A safe Chrome render gets one bounded minute, not the flaky 20 second startup window."""
+    media = load_media()
+    observed: dict[str, object] = {}
+
+    def cold_start_run(command, **kwargs):
+        observed["command"] = list(command)
+        observed["timeout"] = kwargs.get("timeout")
+        output_arg = next(item for item in command if str(item).startswith("--screenshot="))
+        output = Path(str(output_arg).split("=", 1)[1])
+        Image.new("RGBA", (200, 100), "#224488").save(output, format="PNG")
+        return __import__("subprocess").CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(media, "_browser_renderer", lambda: Path("safe-chrome.exe"))
+    monkeypatch.setattr(media.subprocess, "run", cold_start_run)
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
+        b'<rect width="200" height="100" fill="#224488"/></svg>'
+    )
+
+    image = media._safe_svg_raster(svg, tmp_path)
+
+    assert image.size == (200, 100)
+    assert observed["timeout"] == 60
+    command = observed["command"]
+    assert "--disable-background-networking" in command
+    assert any(str(item).startswith("--user-data-dir=") for item in command)
+
+
 def test_svg_with_script_or_external_reference_is_rejected(tmp_path: Path):
     media = load_media()
     for name, body in {

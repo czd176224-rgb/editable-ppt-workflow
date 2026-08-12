@@ -24,6 +24,7 @@ MAX_DECODED_PIXELS: Final = 80_000_000
 MAX_EDGE: Final = 16_384
 MODEL_MAX_EDGE: Final = 2_048
 THUMBNAIL_MAX_EDGE: Final = 512
+SVG_RENDER_TIMEOUT_SECONDS: Final = 60
 MEDIA_ROOT: Final = PurePosixPath("02_v6/reference_media")
 _RASTER_FORMATS: Final = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "BMP": "image/bmp"}
 _SAFE_VARIANTS: Final = {
@@ -351,7 +352,7 @@ def _safe_svg_raster(data: bytes, destination: Path) -> Image.Image:
         html.write_bytes(markup)
         completed = subprocess.run(
             [str(_browser_renderer()), "--headless=new", "--disable-gpu", "--disable-extensions", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--hide-scrollbars", "--allow-file-access-from-files", "--run-all-compositor-stages-before-draw", "--force-device-scale-factor=1", f"--user-data-dir={profile}", f"--window-size={output_width},{output_height}", f"--screenshot={output}", html.resolve().as_uri()],
-            check=False, capture_output=True, timeout=20,
+            check=False, capture_output=True, timeout=SVG_RENDER_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0 or not output.is_file() or _is_link_or_reparse(output):
             raise ValueError("SVG could not be safely rasterized")

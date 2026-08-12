@@ -31,13 +31,26 @@ def _project():
     )
 
 
-def test_v6_contract_is_generate_only_and_uses_fixed_geometry():
+def test_v6_contract_is_adaptive_and_uses_fixed_geometry():
     project = _project()
     assert project["workflow_contract_version"] == WORKFLOW_VERSION
     assert project["image_policy"] == IMAGE_POLICY
+    assert IMAGE_POLICY == "generate-without-refs-edit-with-confirmed-refs"
     assert project["geometry"]["slide_aspect"] == "16:9"
     assert project["geometry"]["body_aspect"] == "17:8"
     assert project["geometry"]["body_pixels"] == {"width": 1904, "height": 896}
+
+
+def test_active_v6_entrypoints_do_not_claim_generate_only():
+    active = [
+        ROOT / "scripts" / "word_to_editable_ppt.py",
+        ROOT / "scripts" / "workflow_v6_cli.py",
+        ROOT / "scripts" / "workflow_v6_contract.py",
+    ]
+    for path in active:
+        text = path.read_text(encoding="utf-8").lower()
+        assert "generate-only" not in text
+        assert "generate_only" not in text
 
 
 def test_v6_rejects_legacy_fields():

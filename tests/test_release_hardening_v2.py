@@ -283,3 +283,8 @@ def test_readme_and_quickstart_install_verified_exact_release_zip():
     assert "SHA256SUMS.txt" in docs
     assert "Get-FileHash" in docs
     assert "raw.githubusercontent.com" not in docs
+def test_generated_release_json_writers_force_lf():
+    exporter = (ROOT / "scripts/export_public_release.ps1").read_text(encoding="utf-8")
+    checker = (ROOT / "scripts/check_public_release.py").read_text(encoding="utf-8")
+    assert '-replace "`r`n", "`n"' in exporter
+    assert 'newline="\\n"' in checker

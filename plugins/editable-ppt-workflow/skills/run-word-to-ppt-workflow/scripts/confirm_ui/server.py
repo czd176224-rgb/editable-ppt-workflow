@@ -48,8 +48,6 @@ from fixed_region_contract import (  # noqa: E402
     SLIDE_SIZE_CM,
 )
 from style_contract import compile_style_execution, revise_style_contract  # noqa: E402
-from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: E402
-from workflow_v5_dag import DagStore  # noqa: E402
 from workflow_v6_media import read_validated_project_media  # noqa: E402
 from workflow_v6_materials import confirmed_revision_digest, validate_page_materials  # noqa: E402
 from workflow_v6_source import _found_candidate_reference  # noqa: E402
@@ -1001,8 +999,6 @@ def create_app(
         LOCK_OWNER=dict(lock_owner) if lock_owner else None,
         LAST_REQUEST=time.monotonic(),
     )
-    v5_enabled = (project / "04_v5" / "dag.json").is_file()
-
     @app.before_request
     def _activity() -> None:
         app.config["LAST_REQUEST"] = time.monotonic()
@@ -1035,53 +1031,6 @@ def create_app(
         response = jsonify(_write_session(project, "poll"))
         response.headers["Cache-Control"] = "no-store"
         return response
-
-    @app.get("/api/v5/lifecycle")
-    def v5_lifecycle():
-        if not v5_enabled:
-            return jsonify({"enabled": False})
-        response = jsonify(ConfirmationLifecycle(project).snapshot())
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/api/v5/events")
-    def v5_events():
-        if not v5_enabled:
-            return jsonify({"error": "V5 progress stream is not enabled"}), 404
-        try:
-            cursor = int(request.headers.get("Last-Event-ID") or request.args.get("cursor", "0"))
-        except ValueError:
-            return jsonify({"error": "invalid V5 event cursor"}), 400
-        diagnostics = request.args.get("diagnostics") == "1"
-
-        def stream():
-            current = cursor
-            deadline = time.monotonic() + 25.0
-            while time.monotonic() < deadline:
-                batch = read_progress_events(project, cursor=current, diagnostics=diagnostics)
-                if batch["events"]:
-                    current = batch["next_cursor"]
-                    data = json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
-                    yield f"id: {current}\ndata: {data}\n\n"
-                else:
-                    yield ": keep-alive\n\n"
-                time.sleep(0.5)
-
-        response = Response(stream(), mimetype="text/event-stream")
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Accel-Buffering"] = "no"
-        return response
-
-    @app.post("/api/v5/cancel")
-    def v5_cancel():
-        if not v5_enabled:
-            return jsonify({"error": "V5 workflow is not enabled"}), 404
-        dag = DagStore(project).cancel(["project:source"], reason="user_cancelled")
-        canceled = sum(node["status"] == "canceled" for node in dag["nodes"])
-        return jsonify({
-            "status": "canceled", "canceled_nodes": canceled,
-            "completed_artifacts_preserved": True,
-        })
 
     @app.get("/api/catalogs")
     def catalogs():
@@ -1190,27 +1139,11 @@ def create_app(
             return jsonify({"error": error}), 409
         assert result is not None
         result_stage = result.get("stage", "final")
-        if v5_enabled and result_stage == "final":
-            stable_contract = {
-                key: value for key, value in result.items()
-                if key not in {"stage", "status", "confirmed_at"}
-            }
-            contract_id = hashlib.sha256(
-                json.dumps(
-                    stable_contract, ensure_ascii=False, sort_keys=True,
-                    separators=(",", ":"), allow_nan=False,
-                ).encode("utf-8")
-            ).hexdigest()
-            try:
-                ConfirmationLifecycle(project).confirm(contract_id)
-            except ValueError as exc:
-                return jsonify({"error": str(exc)}), 409
         if not ((project / "workflow_v6.json").is_file() and type(result.get("revision")) is int):
             _write_json(project / CONFIRM_DIR / RESULT, result)
         _write_session(project, f"{result_stage}-submitted")
         if (
             result_stage == "final"
-            and not v5_enabled
             and app.config.get("LOCK_FILE") is not None
         ):
             threading.Thread(
@@ -1563,16 +1496,7 @@ def _start(project: Path, port: int, no_browser: bool, idle_timeout: int) -> int
                 return 1
             url = _server_url(port)
             if not no_browser:
-                if (project / "04_v5" / "dag.json").is_file():
-                    lifecycle = ConfirmationLifecycle(project)
-                    decision = lifecycle.claim_browser_launch(
-                        session_id=nonce,
-                    )
-                    if decision["open_browser"]:
-                        opened = bool(webbrowser.open(url))
-                        lifecycle.record_launch_result(session_id=nonce, success=opened)
-                else:
-                    webbrowser.open(url)
+                webbrowser.open(url)
             print(json.dumps({"status": "started", "url": url, "pid": process.pid}, ensure_ascii=False))
             return 0
         finally:

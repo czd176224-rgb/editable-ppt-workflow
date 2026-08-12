@@ -78,3 +78,40 @@ def test_current_command_registry_matches_runtime_policy():
     )
 
     assert findings == []
+
+
+def test_scanner_rejects_legacy_import_in_any_active_v6_ui_module(tmp_path: Path):
+    skill_root = tmp_path / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow"
+    ui = skill_root / "scripts/confirm_ui"
+    ui.mkdir(parents=True)
+    (ui / "preview.py").write_text("from workflow_v5_ui import Legacy\n", encoding="utf-8")
+
+    findings = scanner._scan_v6_runtime_contract(skill_root, tmp_path)
+
+    assert any("legacy workflow import" in finding and "preview.py" in finding for finding in findings)
+
+
+def test_scanner_rejects_obsolete_generate_only_policy_in_contract(tmp_path: Path):
+    skill_root = tmp_path / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow"
+    scripts = skill_root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "workflow_v6_contract.py").write_text(
+        'IMAGE_POLICY = "gpt-image-2-generate-only"\n', encoding="utf-8",
+    )
+
+    findings = scanner._scan_v6_runtime_contract(skill_root, tmp_path)
+
+    assert any("obsolete generate-only policy" in finding for finding in findings)
+
+
+def test_scanner_rejects_wrong_adaptive_policy_literal(tmp_path: Path):
+    skill_root = tmp_path / "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow"
+    scripts = skill_root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "workflow_v6_contract.py").write_text(
+        'IMAGE_POLICY = "adaptive-ish"\n', encoding="utf-8",
+    )
+
+    findings = scanner._scan_v6_runtime_contract(skill_root, tmp_path)
+
+    assert any("adaptive image policy" in finding for finding in findings)

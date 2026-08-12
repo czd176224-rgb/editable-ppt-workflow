@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import builtins
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import http.server
@@ -57,6 +58,27 @@ def load_server():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_v6_confirm_ui_import_and_routes_do_not_depend_on_v4_or_v5(monkeypatch, tmp_path: Path):
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith(("workflow_v4", "workflow_v5")):
+            raise AssertionError(f"V6 UI imported legacy module {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    server = load_server()
+    app = server.create_app(str(tmp_path))
+    assert "/api/health" in {rule.rule for rule in app.url_map.iter_rules()}
+
+
+def test_v6_confirm_ui_exposes_no_v5_routes(tmp_path: Path):
+    server = load_server()
+    app = server.create_app(str(tmp_path))
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    assert not any(rule.startswith("/api/v5/") for rule in rules)
 
 
 def test_media_endpoint_requires_matching_project_owner_and_nonce_for_every_variant(

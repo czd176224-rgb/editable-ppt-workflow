@@ -111,6 +111,7 @@ REQUIRED_V6_SCHEMAS = frozenset({
     "reference_image_v6.schema.json",
     "style_confirmation.schema.json",
 })
+ADAPTIVE_IMAGE_POLICY = "generate-without-refs-edit-with-confirmed-refs"
 
 
 def _display(path: Path, root: Path) -> str:
@@ -148,17 +149,60 @@ def _scan_tokens(skill_root: Path, repo_root: Path) -> list[str]:
     return findings
 
 
-def _scan_v4_semantics(skill_root: Path, repo_root: Path) -> list[str]:
-    entry = skill_root / "scripts" / "word_to_editable_ppt.py"
-    cli = skill_root / "scripts" / "workflow_v6_cli.py"
+def _scan_v6_runtime_contract(skill_root: Path, repo_root: Path) -> list[str]:
+    """Structurally enforce V6 independence and the released adaptive policy."""
+    scripts = skill_root / "scripts"
+    active = [scripts / "word_to_editable_ppt.py"]
+    active.extend(sorted(scripts.glob("workflow_v6*.py")))
+    ui_root = scripts / "confirm_ui"
+    if ui_root.is_dir():
+        active.extend(sorted(ui_root.rglob("*.py")))
     findings: list[str] = []
-    for path in (entry, cli):
+    for path in active:
         if not path.is_file():
-            findings.append(f"{_display(path, repo_root)}: required V6 production module is missing")
             continue
         text = path.read_text(encoding="utf-8-sig", errors="replace")
-        if "workflow_v4" in text or "workflow_v5" in text:
-            findings.append(f"{_display(path, repo_root)}: V6 production imports a legacy workflow")
+        try:
+            module = ast.parse(text, filename=str(path))
+        except SyntaxError as error:
+            findings.append(f"{_display(path, repo_root)}:{error.lineno}: cannot parse active V6 runtime")
+            continue
+        imports = []
+        for node in ast.walk(module):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.append(node.module)
+        for name in imports:
+            if name.startswith(("workflow_v4", "workflow_v5")):
+                findings.append(
+                    f"{_display(path, repo_root)}: legacy workflow import in active V6 runtime: {name}"
+                )
+        if re.search(r"generate[-_]only|gpt-image-2-generate-only", text, re.IGNORECASE):
+            findings.append(f"{_display(path, repo_root)}: obsolete generate-only policy")
+
+    contract = scripts / "workflow_v6_contract.py"
+    if not contract.is_file():
+        findings.append(f"{_display(contract, repo_root)}: required V6 production module is missing")
+        return findings
+    try:
+        module = ast.parse(contract.read_text(encoding="utf-8-sig"), filename=str(contract))
+    except SyntaxError as error:
+        findings.append(f"{_display(contract, repo_root)}:{error.lineno}: cannot parse V6 contract")
+        return findings
+    policy = None
+    for node in module.body:
+        if not isinstance(node, ast.Assign) or not any(
+            isinstance(target, ast.Name) and target.id == "IMAGE_POLICY" for target in node.targets
+        ):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            policy = node.value.value
+        break
+    if policy != ADAPTIVE_IMAGE_POLICY:
+        findings.append(
+            f"{_display(contract, repo_root)}: adaptive image policy must be {ADAPTIVE_IMAGE_POLICY!r}"
+        )
     return findings
 
 
@@ -453,7 +497,7 @@ def check(repo_root: Path) -> list[str]:
     findings: list[str] = []
     findings.extend(_scan_removed_paths(skill_root, repo_root))
     findings.extend(_scan_tokens(skill_root, repo_root))
-    findings.extend(_scan_v4_semantics(skill_root, repo_root))
+    findings.extend(_scan_v6_runtime_contract(skill_root, repo_root))
     findings.extend(_scan_other_plugin_runtime(repo_root))
     findings.extend(_scan_initial_generation(skill_root, repo_root))
     findings.extend(_scan_required_v6_files(skill_root, repo_root))

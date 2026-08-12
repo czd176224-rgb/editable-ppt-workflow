@@ -214,9 +214,8 @@ def main() -> int:
     report = validate(args.root)
     if args.write_report:
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
-        args.write_report.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with args.write_report.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"passed": report["passed"], "errors": report["errors"], "fileCount": len(report["files"])}, ensure_ascii=False))
     return 0 if report["passed"] else 1
 

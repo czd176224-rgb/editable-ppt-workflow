@@ -113,6 +113,7 @@ $SourceManifestJson = [ordered]@{
     indexTreeSha256 = Get-ContentTreeSha256 $SourceFiles
     files = $SourceFiles
 } | ConvertTo-Json -Depth 10
+$SourceManifestJson = $SourceManifestJson -replace "`r`n", "`n"
 Write-Utf8NoBom (Join-Path $OutputPath "public-source-manifest.json") ($SourceManifestJson + "`n")
 
 $ReportPath = Join-Path $OutputPath "public-release-audit.json"

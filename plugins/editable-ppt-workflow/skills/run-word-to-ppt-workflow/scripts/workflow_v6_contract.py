@@ -1,4 +1,4 @@
-"""Canonical contracts for the generate-only V6 Word-to-PPT workflow."""
+"""Canonical contracts for the adaptive V6 Word-to-PPT workflow."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from fixed_region_contract import BODY_BOX_CM, CONTRACT_VERSION, SLIDE_SIZE_CM
 WORKFLOW_VERSION = "word-ppt-workflow-v6"
 PROJECT_ARTIFACT_VERSION = "word-ppt-project-v6"
 PAGE_ARTIFACT_VERSION = "word-ppt-page-v6"
-IMAGE_POLICY = "gpt-image-2-generate-only"
+IMAGE_POLICY = "generate-without-refs-edit-with-confirmed-refs"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 PAGE_STATES = frozenset({
@@ -208,7 +208,9 @@ def validate_project(project: Mapping[str, Any]) -> None:
     if project["workflow_contract_version"] != WORKFLOW_VERSION:
         raise ValueError("V6 workflow contract version is invalid")
     if project["image_policy"] != IMAGE_POLICY:
-        raise ValueError("V6 must use the generate-only Image2 policy")
+        raise ValueError(
+            "V6 image policy must generate without confirmed references and edit with them"
+        )
     if project["geometry"] != geometry_contract():
         raise ValueError("V6 fixed geometry contract changed")
     if not isinstance(project["word_source"], Mapping) or not isinstance(

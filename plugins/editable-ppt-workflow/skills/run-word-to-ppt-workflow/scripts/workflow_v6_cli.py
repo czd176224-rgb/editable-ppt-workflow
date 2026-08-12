@@ -1,4 +1,4 @@
-"""Production command line for the generate-only V6 Word-to-PPT workflow."""
+"""Production command line for the adaptive V6 Word-to-PPT workflow."""
 
 from __future__ import annotations
 

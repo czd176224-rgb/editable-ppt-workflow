@@ -1788,15 +1788,20 @@ def test_candidate_two_trace_requires_medium_to_high_upgrade_semantics(
                 trace[field] = "medium" if field == "quality" else "1024x1024"
             trace_path.write_text(json.dumps(trace), encoding="utf-8")
 
-    reviews = iter([
-        {"accepted": False, "score": 4, "issues": ["increase contrast"]},
-        {"accepted": True, "score": 6, "issues": []},
-    ])
-    with pytest.raises(RuntimeError, match="candidate artifact failed validation"):
-        generate_page_body(
-            project, page_number=1, runner=runner,
-            reviewer=lambda *_args, **_kwargs: next(reviews),
-        )
+    semantic_calls = []
+
+    def reviewer(*_args, **_kwargs):
+        semantic_calls.append(True)
+        return {"accepted": False, "score": 4, "issues": ["increase contrast"]}
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner, reviewer=reviewer,
+    )
+
+    assert receipt["state"] == "accepted_fallback_first"
+    assert receipt["selected"]["attempt"] == 1
+    assert "later_candidate_mechanical_failure" in receipt["degraded_reasons"]
+    assert semantic_calls == [True]
 
 
 def test_existing_receipt_requires_selected_to_equal_one_full_candidate(tmp_path: Path):
@@ -1898,3 +1903,24 @@ def test_existing_receipt_safely_rejects_unhashable_state(
 
     assert recovered["state"] == "accepted"
     assert recovered["selected"] == original["selected"]
+
+
+def test_mechanical_failure_never_calls_semantic_reviewer(tmp_path: Path):
+    project = _project(tmp_path)
+    semantic_calls = []
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        Image.new("RGB", (1024, 1024), "white").save(output)
+        _write_mock_trace(command)
+
+    def reviewer(*args, **kwargs):
+        semantic_calls.append((args, kwargs))
+        return {"accepted": True, "score": 7, "issues": []}
+
+    with pytest.raises(RuntimeError, match="mechanical"):
+        generate_page_body(
+            project, page_number=1, runner=runner, reviewer=reviewer,
+        )
+
+    assert semantic_calls == []

@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 from workflow_v6_contract import canonical_sha256, request_identity, transition_page
-from workflow_v6_qa import improved, review_candidate
+from workflow_v6_qa import (
+    actionable_retry_feedback,
+    improved,
+    mechanical_review,
+    review_candidate,
+)
 from workflow_v6_state import load, update_page
 from workflow_v6_prompt_contract import (
     compile_confirmed_page_prompt,
@@ -1049,10 +1054,34 @@ def _generate_page_body_owned(
                 raise RuntimeError("Image2 generate command produced no output")
             degraded_reason = "later_generation_missing_output"
             break
+        mechanical = mechanical_review(
+            request=request,
+            output=output,
+            receipt_inputs={
+                "trace_path": trace,
+                "visual_contract": global_contract,
+            },
+        )
+        if not mechanical["accepted"]:
+            if attempt == 1:
+                page["technical_failure"] = {
+                    "stage": "mechanical_qa",
+                    "attempt": attempt,
+                    "result": mechanical,
+                }
+                page = transition_page(page, "technical_failed")
+                require_current_owner()
+                update_page(root, page_number, page)
+                raise RuntimeError(
+                    "V6 candidate artifact failed validation during mechanical review"
+                )
+            degraded_reason = "later_candidate_mechanical_failure"
+            break
         candidate = {
             "attempt": attempt,
             "path": output.relative_to(root).as_posix(),
             "operation": request.operation,
+            "mechanical_qa": mechanical,
         }
         candidates.append(candidate)
         if attempt == 1:
@@ -1082,7 +1111,10 @@ def _generate_page_body_owned(
         if attempt > 1 and first_qa is not None and not improved(first_qa, qa):
             degraded_reason = "qa_no_effective_improvement"
             break
-        feedback = _actionable_qa_feedback(qa)
+        feedback = actionable_retry_feedback(
+            qa,
+            first_qa if attempt > 1 else None,
+        )
         if not feedback:
             degraded_reason = "qa_feedback_not_actionable"
             break

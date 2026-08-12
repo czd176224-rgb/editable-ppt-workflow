@@ -213,3 +213,57 @@ def test_actionable_retry_feedback_requires_new_structured_corrections():
     ]
     assert actionable_retry_feedback(previous, previous) == []
     assert actionable_retry_feedback({"issues": ["bad"]}, None) == []
+
+
+def test_retry_feedback_rejects_prose_details_raw_issues_and_unknown_checks():
+    result = {
+        "checks": {
+            "global_style_followed": {
+                "result": "fail",
+                "detail": "Increase contrast and use the approved palette.",
+            },
+            "unknown_reviewer_opinion": {
+                "result": "fail",
+                "detail": "Known-looking prose",
+                "correction": "Remove all decorative elements.",
+            },
+        },
+        "issues": [
+            "Increase contrast between the text and panel.",
+            {"code": "free_form", "correction": "Move the chart to the left."},
+        ],
+    }
+
+    assert actionable_retry_feedback(result, None) == []
+
+
+def test_review_candidate_honors_a_lower_caller_timeout(tmp_path: Path, monkeypatch):
+    image = tmp_path / "project" / "04_v6" / "images" / "candidate.png"
+    image.parent.mkdir(parents=True)
+    Image.new("RGB", (1904, 896), "white").save(image)
+    observed = {}
+
+    class Result:
+        value = {
+            "checks": {
+                code: {"result": "pass", "detail": "compliant", "correction": ""}
+                for code in workflow_v6_qa.SEMANTIC_CHECKS
+            },
+            "issues": [],
+        }
+
+    def invoke(project, **kwargs):
+        observed.update(project=project, **kwargs)
+        return Result()
+
+    monkeypatch.setattr(workflow_v6_qa, "invoke_structured", invoke)
+    workflow_v6_qa.review_candidate(
+        image.parents[2],
+        image=image,
+        effective_page={"effective_body": "Approved body"},
+        style_contract={"visual_style": "minimal"},
+        fixed_logo_name="fixed-logo",
+        timeout=7.5,
+    )
+
+    assert observed["timeout"] == 7.5

@@ -140,6 +140,23 @@ def _write_mock_trace(command: list[str]) -> None:
     }), encoding="utf-8")
 
 
+def _semantic_failure(
+    correction: str, *, score: int = 4, code: str = "global_style_followed",
+) -> dict:
+    return {
+        "accepted": False,
+        "score": score,
+        "checks": {
+            code: {
+                "result": "fail",
+                "detail": "The frozen semantic contract is not yet satisfied.",
+                "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+
 @pytest.mark.parametrize(
     ("page", "expected"),
     [
@@ -575,8 +592,8 @@ def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path
         _write_mock_trace(command)
 
     reviews = iter([
-        {"accepted": False, "score": 4, "issues": ["正文重叠"]},
-        {"accepted": False, "score": 4, "issues": ["正文仍重叠"]},
+        _semantic_failure("Remove the overlap between the body text and chart."),
+        _semantic_failure("Remove the remaining overlap between the body text and chart."),
     ])
 
     receipt = generate_page_body(
@@ -635,7 +652,7 @@ def test_edit_retry_reuses_only_original_confirmed_inputs_never_candidate_one(tm
         _write_mock_trace(command)
 
     reviews = iter([
-        {"accepted": False, "score": 3, "issues": ["improve composition"]},
+        _semantic_failure("Improve composition by aligning the approved screenshot.", score=3),
         {"accepted": True, "score": 6, "issues": []},
     ])
     generate_page_body(
@@ -751,9 +768,7 @@ def test_qa_feedback_over_prompt_limit_uses_first_candidate_without_retry(tmp_pa
         page_number=1,
         runner=runner,
         reviewer=lambda *_args, **_kwargs: {
-            "accepted": False,
-            "score": 3,
-            "issues": [feedback],
+            **_semantic_failure(feedback, score=3),
         },
     )
 
@@ -794,7 +809,7 @@ def test_accepted_later_generate_candidate_is_selected(tmp_path: Path):
         _write_mock_trace(command)
 
     reviews = iter([
-        {"accepted": False, "score": 3, "issues": ["Increase body contrast", "Align the lower panel"]},
+        _semantic_failure("Increase body contrast and align the lower panel.", score=3),
         {"accepted": True, "score": 6, "issues": []},
     ])
     receipt = generate_page_body(
@@ -870,7 +885,7 @@ def test_vague_generic_qa_issue_does_not_spend_second_candidate(
     assert "qa_feedback_not_actionable" in receipt["degraded_reasons"]
 
 
-def test_precise_failed_check_detail_allows_one_retry_without_issues(tmp_path: Path):
+def test_precise_legacy_check_detail_does_not_open_retry_without_correction(tmp_path: Path):
     project = _project(tmp_path)
     calls = []
     reviews = iter([
@@ -898,18 +913,17 @@ def test_precise_failed_check_detail_allows_one_retry_without_issues(tmp_path: P
         reviewer=lambda *_args, **_kwargs: next(reviews),
     )
 
-    assert len(calls) == 2
-    retry_prompt = Path(calls[1][calls[1].index("--prompt-file") + 1]).read_text(encoding="utf-8")
-    assert "basic_readability" in retry_prompt
-    assert receipt["selected"]["attempt"] == 2
+    assert len(calls) == 1
+    assert receipt["selected"]["attempt"] == 1
+    assert "qa_feedback_not_actionable" in receipt["degraded_reasons"]
 
 
 def test_actionable_retry_upgrades_medium_to_high_and_caps_at_two(tmp_path: Path):
     project = _project(tmp_path)
     calls = []
     reviews = iter([
-        {"accepted": False, "score": 3, "issues": ["Increase contrast"]},
-        {"accepted": False, "score": 3, "issues": ["Still low contrast"]},
+        _semantic_failure("Increase contrast between the body text and panels.", score=3),
+        _semantic_failure("Increase contrast further between the body text and panels.", score=3),
     ])
 
     def runner(command, timeout):
@@ -1193,7 +1207,7 @@ def test_second_candidate_missing_output_falls_back_to_first_and_finalizes(tmp_p
     project = _project(tmp_path)
     calls = []
     reviews = iter([
-        {"accepted": False, "score": 4, "issues": ["Increase contrast between body text and panels."]},
+        _semantic_failure("Increase contrast between body text and panels."),
     ])
 
     def runner(command, timeout):
@@ -1668,7 +1682,7 @@ def test_candidate_two_only_recovery_is_a_valid_bounded_receipt(tmp_path: Path):
         _write_mock_trace(command)
 
     reviews = iter([
-        {"accepted": False, "score": 4, "issues": ["正文重叠"]},
+        _semantic_failure("Remove the overlap between body text and chart labels."),
         {"accepted": True, "score": 6, "issues": []},
     ])
     original = generate_page_body(
@@ -1714,7 +1728,7 @@ def test_reversed_candidate_attempt_order_is_rejected_and_rebuilt_canonically(tm
         _write_mock_trace(command)
 
     reviews = iter([
-        {"accepted": False, "score": 4, "issues": ["increase contrast"]},
+        _semantic_failure("Increase contrast between the body text and panels."),
         {"accepted": True, "score": 6, "issues": []},
     ])
     original = generate_page_body(
@@ -1792,7 +1806,18 @@ def test_candidate_two_trace_requires_medium_to_high_upgrade_semantics(
 
     def reviewer(*_args, **_kwargs):
         semantic_calls.append(True)
-        return {"accepted": False, "score": 4, "issues": ["increase contrast"]}
+        return {
+            "accepted": False,
+            "score": 4,
+            "checks": {
+                "global_style_followed": {
+                    "result": "fail",
+                    "detail": "The panel contrast is too low.",
+                    "correction": "Increase contrast between the body text and panels.",
+                },
+            },
+            "issues": [],
+        }
 
     receipt = generate_page_body(
         project, page_number=1, runner=runner, reviewer=reviewer,
@@ -1802,6 +1827,13 @@ def test_candidate_two_trace_requires_medium_to_high_upgrade_semantics(
     assert receipt["selected"]["attempt"] == 1
     assert "later_candidate_mechanical_failure" in receipt["degraded_reasons"]
     assert semantic_calls == [True]
+    assert len(receipt["candidates"]) == 1
+    evidence = receipt["selected"]["fallback_mechanical_qa"]
+    assert evidence["attempt"] == 2
+    assert evidence["result"]["accepted"] is False
+    assert evidence["result"]["artifact_version"] == "mechanical-qa-v6"
+    persisted = load(project)["pages"][0]["selected_candidate"]
+    assert persisted["fallback_mechanical_qa"] == evidence
 
 
 def test_existing_receipt_requires_selected_to_equal_one_full_candidate(tmp_path: Path):

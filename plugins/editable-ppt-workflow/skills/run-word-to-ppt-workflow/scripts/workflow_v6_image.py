@@ -51,29 +51,6 @@ _HIGH_DETAIL_TERMS = re.compile(
     re.IGNORECASE,
 )
 _PROVIDER_ERROR_PREFIX = "CODEX_IMAGE_ERROR_JSON:"
-_ACTIONABLE_CHECK_CODES = frozenset({
-    "body_is_17_8",
-    "effective_page_content_followed",
-    "global_style_followed",
-    "fixed_layers_absent",
-    "basic_readability",
-    "content_is_relevant",
-})
-_VAGUE_QA_FEEDBACK = frozenset({
-    "bad", "poor", "wrong", "improve", "fix", "fix it", "not good",
-    "不好", "很差", "有问题", "改进", "修改",
-})
-_SPECIFIC_QA_SIGNAL = re.compile(
-    r"(?:overlap|clip|contrast|align|spacing|margin|overflow|unreadable|unrelated|"
-    r"title|logo|footer|page number|重叠|裁切|截断|对比|对齐|间距|边距|溢出|"
-    r"不可读|无关|标题|徽标|页脚|页码)",
-    re.IGNORECASE,
-)
-_ACTIONABLE_QA_INSTRUCTION = re.compile(
-    r"(?:increase|reduce|remove|add|align|separate|move|resize|correct|avoid|"
-    r"improve|use|make|提高|降低|删除|增加|对齐|分开|移动|调整|修正|避免|改进|使用)",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -134,45 +111,6 @@ def initial_quality(page: Mapping[str, Any]) -> Literal["medium", "high"]:
         or dense_data
         or bool(_HIGH_DETAIL_TERMS.search(_material_role_text(page)))
     ) else "medium"
-
-
-def _specific_qa_feedback(value: Any, *, structured: bool = False) -> str | None:
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    normalized = text.casefold().rstrip(".!。！")
-    if normalized in _VAGUE_QA_FEEDBACK:
-        return None
-    if len(text) < 8 and not _SPECIFIC_QA_SIGNAL.search(text):
-        return None
-    if not structured and not (
-        _SPECIFIC_QA_SIGNAL.search(text) or _ACTIONABLE_QA_INSTRUCTION.search(text)
-    ):
-        return None
-    return text
-
-
-def _actionable_qa_feedback(qa: Mapping[str, Any]) -> list[str]:
-    feedback: list[str] = []
-    checks = qa.get("checks")
-    if isinstance(checks, Mapping):
-        for code in sorted(_ACTIONABLE_CHECK_CODES):
-            check = checks.get(code)
-            if not isinstance(check, Mapping) or check.get("result") != "fail":
-                continue
-            detail = _specific_qa_feedback(check.get("detail", ""), structured=True)
-            if detail:
-                feedback.append(f"{code}: {detail}")
-    for issue in qa.get("issues", []):
-        actionable = _specific_qa_feedback(issue)
-        if actionable:
-            feedback.append(actionable)
-    unique: list[str] = []
-    seen: set[str] = set()
-    for item in feedback:
-        identity = item.casefold()
-        if identity not in seen:
-            seen.add(identity)
-            unique.append(item)
-    return unique
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -1075,6 +1013,12 @@ def _generate_page_body_owned(
                 raise RuntimeError(
                     "V6 candidate artifact failed validation during mechanical review"
                 )
+            fallback_evidence = {
+                "attempt": attempt,
+                "result": copy.deepcopy(mechanical),
+            }
+            candidates[0]["fallback_mechanical_qa"] = fallback_evidence
+            page["first_candidate"] = copy.deepcopy(candidates[0])
             degraded_reason = "later_candidate_mechanical_failure"
             break
         candidate = {

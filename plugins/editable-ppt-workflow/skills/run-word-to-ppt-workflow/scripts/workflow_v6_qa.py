@@ -29,14 +29,6 @@ SEMANTIC_CHECKS = (
     "no_fabricated_real_world_evidence",
     "reference_high_fidelity_best_effort",
 )
-_LEGACY_ACTIONABLE_CHECKS = frozenset({
-    "body_is_17_8",
-    "effective_page_content_followed",
-    "global_style_followed",
-    "fixed_layers_absent",
-    "basic_readability",
-    "content_is_relevant",
-})
 _VAGUE = frozenset({
     "bad", "poor", "wrong", "improve", "fix", "fix it", "not good",
     "不好", "很差", "有问题", "改进", "修改",
@@ -212,6 +204,7 @@ def output_schema() -> dict[str, Any]:
 def semantic_review(
     *, image: Path, confirmed_page: Mapping[str, Any],
     visual_contract: Mapping[str, Any], reference_roles: Sequence[str],
+    timeout: float = 180,
 ) -> dict[str, Any]:
     """Perform exactly one lightweight semantic review of a valid candidate."""
     prompt = (
@@ -236,13 +229,16 @@ def semantic_review(
         }, ensure_ascii=False, sort_keys=True)
     )
     project = Path(image).parents[2]
+    semantic_timeout = min(float(timeout), 180.0)
+    if semantic_timeout <= 0:
+        raise ValueError("semantic QA timeout must be positive")
     result = invoke_structured(
         project,
         role="v6-light-semantic-qa",
         prompt=prompt,
         images=[Path(image)],
         output_schema=output_schema(),
-        timeout=180,
+        timeout=semantic_timeout,
     )
     checks = {
         name: dict(result.value["checks"][name]) for name in SEMANTIC_CHECKS
@@ -258,19 +254,16 @@ def semantic_review(
     }
 
 
-def _correction(value: Any, *, allow_detail: bool = False) -> str | None:
-    if isinstance(value, Mapping):
-        candidate = value.get("correction")
-        if not isinstance(candidate, str) or not candidate.strip():
-            candidate = value.get("detail") if allow_detail else None
-    else:
-        candidate = value
+def _correction(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    candidate = value.get("correction")
     if not isinstance(candidate, str):
         return None
     text = candidate.strip()
     if not text or len(text) > 2_000 or text.casefold().rstrip(".!。！") in _VAGUE:
         return None
-    if not allow_detail and not _ACTIONABLE_SIGNAL.search(text):
+    if not _ACTIONABLE_SIGNAL.search(text):
         return None
     return text
 
@@ -283,26 +276,11 @@ def actionable_retry_feedback(
     feedback: list[str] = []
     checks = current.get("checks")
     if isinstance(checks, Mapping):
-        for code in sorted(checks):
-            check = checks[code]
+        for code in SEMANTIC_CHECKS:
+            check = checks.get(code)
             if not isinstance(check, Mapping) or check.get("result") != "fail":
                 continue
-            has_explicit_correction = isinstance(check.get("correction"), str) and bool(
-                check.get("correction", "").strip()
-            )
-            text = _correction(
-                check,
-                allow_detail=code in _LEGACY_ACTIONABLE_CHECKS or code in SEMANTIC_CHECKS,
-            )
-            if text:
-                feedback.append(
-                    text if has_explicit_correction or code in SEMANTIC_CHECKS
-                    else f"{code}: {text}"
-                )
-    issues = current.get("issues")
-    if isinstance(issues, list):
-        for issue in issues:
-            text = _correction(issue)
+            text = _correction(check)
             if text:
                 feedback.append(text)
     unique: list[str] = []
@@ -325,7 +303,7 @@ def review_candidate(
     timeout: float,
 ) -> dict[str, Any]:
     """Compatibility wrapper; fixed-logo identity is a native-layer exclusion."""
-    del project, fixed_logo_name, timeout
+    del project, fixed_logo_name
     roles = [
         str(item.get("purpose", item.get("role", "")))
         for item in effective_page.get("reference_images", [])
@@ -336,6 +314,7 @@ def review_candidate(
         confirmed_page=effective_page,
         visual_contract=style_contract,
         reference_roles=roles,
+        timeout=timeout,
     )
 
 

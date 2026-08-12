@@ -108,6 +108,8 @@ $SourceManifestJson = [ordered]@{
     releaseTag = [string]$Package.releaseTag
     pluginVersion = [string]$Package.pluginVersion
     workflowContractVersion = [string]$Package.workflowContractVersion
+    promptContractVersion = [string]$Package.promptContractVersion
+    pageImagePolicy = [string]$Package.pageImagePolicy
     indexTreeSha256 = Get-ContentTreeSha256 $SourceFiles
     files = $SourceFiles
 } | ConvertTo-Json -Depth 10

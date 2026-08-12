@@ -28,11 +28,22 @@ def require_export_checkout() -> None:
 
 def test_release_identity_is_immutable_v2_tag():
     package = json.loads(text("package-info.json"))
-    assert package["pluginVersion"] == "2.0.3"
-    assert package["releaseTag"] == "v2.0.3"
+    assert package["pluginVersion"] == "2.1.0"
+    assert package["releaseTag"] == "v2.1.0"
+    assert package["workflowContractVersion"] == "word-ppt-workflow-v6"
+    assert package["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     installer = text("install.ps1")
     assert "--ref $ReleaseTag" in installer
     assert "--ref main" not in installer
+
+
+def test_metadata_verifier_accepts_adaptive_image_endpoint_contract():
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "verify.ps1"), "-MetadataOnly"],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_no_pymupdf_or_fitz_in_active_runtime_contract():
@@ -95,7 +106,7 @@ def test_export_rejects_untracked_allowlisted_descendants(tmp_path: Path):
         assert poison.relative_to(ROOT).as_posix() not in source_manifest["files"]
         assert "sourceCommit" not in source_manifest
         assert source_manifest["authority"] == "tracked-public-source"
-        assert source_manifest["releaseTag"] == "v2.0.3"
+        assert source_manifest["releaseTag"] == "v2.1.0"
         assert len(source_manifest["indexTreeSha256"]) == 64
     finally:
         poison.unlink(missing_ok=True)
@@ -143,7 +154,7 @@ def test_export_scan_report_package_chain_has_non_circular_authorities(tmp_path:
     assert audited.returncode == 0, audited.stdout + audited.stderr
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
-    assert audit["releaseTag"] == "v2.0.3"
+    assert audit["releaseTag"] == "v2.1.0"
     packaged = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
          str(output / "scripts/package_release.ps1"), "-SourceRoot", str(output),
@@ -181,7 +192,7 @@ def test_git_archive_uses_head_bytes_not_dirty_manifest_or_untracked_files(tmp_p
          "-OutputDirectory", str(dist)], cwd=output, capture_output=True, text=True, timeout=90,
     )
     assert packaged.returncode == 0, packaged.stdout + packaged.stderr
-    with zipfile.ZipFile(dist / "editable-ppt-workflow-2.0.3-windows.zip") as bundle:
+    with zipfile.ZipFile(dist / "editable-ppt-workflow-2.1.0-windows.zip") as bundle:
         assert "INJECTED.txt" not in bundle.namelist()
         assert bundle.read("public-source-manifest.json") == committed_manifest
 
@@ -268,7 +279,7 @@ def test_editppt_runtime_supports_installed_package_import_boundary():
 
 def test_readme_and_quickstart_install_verified_exact_release_zip():
     docs = text("README.md") + text("docs/QUICKSTART.zh-CN.md")
-    assert "releases/download/v2.0.3/editable-ppt-workflow-2.0.3-windows.zip" in docs
+    assert "releases/download/v2.1.0/editable-ppt-workflow-2.1.0-windows.zip" in docs
     assert "SHA256SUMS.txt" in docs
     assert "Get-FileHash" in docs
     assert "raw.githubusercontent.com" not in docs

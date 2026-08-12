@@ -626,6 +626,29 @@ def test_qa_no_improvement_falls_back_to_first_generate_candidate(tmp_path: Path
     assert load(project)["pages"][0]["state"] == "accepted_fallback_first"
 
 
+def test_qa_unavailable_is_explicit_nonblocking_candidate1_fallback(tmp_path: Path):
+    project = _project(tmp_path)
+
+    def runner(command, timeout):
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(output)
+        _write_mock_trace(command)
+
+    receipt = generate_page_body(
+        project, page_number=1, runner=runner,
+        reviewer=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("review service unavailable")),
+    )
+
+    assert receipt["state"] == "accepted_fallback_first"
+    assert receipt["selected"]["attempt"] == 1
+    assert receipt["degraded_reasons"] == ["qa_unavailable"]
+    assert "qa" not in receipt["selected"]
+    page = load(project)["pages"][0]
+    assert page["state"] == "accepted_fallback_first"
+    assert page["degraded_reasons"] == ["qa_unavailable"]
+
+
 def test_edit_retry_reuses_only_original_confirmed_inputs_never_candidate_one(tmp_path: Path):
     project = _project(tmp_path)
     model_input = project / "02_v6" / "reference_media" / "approved" / "model-input.png"

@@ -6,6 +6,7 @@ description: Use when converting one paginated Word document and one SVG Logo in
 # Run Word-to-PPT Workflow V6
 
 Use only `word-ppt-workflow-v6`. The original paginated Word and SVG Logo create a new V6 project; never migrate an old project or invoke a V4/V5 runtime fallback.
+The resumable project authority is `workflow_v6.json`.
 
 ## Authoritative flow
 
@@ -13,9 +14,10 @@ Use only `word-ppt-workflow-v6`. The original paginated Word and SVG Logo create
 2. Extract only necessary attachment text/table/chart facts. Inaccessible attachments are recorded and never block.
 3. Each pending real-reference acquisition occurs once. Import a successful local result, then confirm or reject it; close an unavailable result as `failed_no_retry`. Never fetch it again automatically.
 4. Open one Confirm UI interaction. Its final stage exposes editable per-page materials and safe thumbnail, original and model-input controls. The user may accept/reject found references and edit their purposes.
-5. Submit once. The sealed result is the only prompt and QA authority. The backend never reinterprets comments, re-extracts materials, or changes confirmed facts.
+5. Submit once. Every acquired image, including custody-confirmed bytes, requires an explicit keep/remove decision; only kept references enter the sealed result. This sealed result is the only prompt and QA authority, and cannot be resubmitted. The backend never reinterprets comments, re-extracts materials, or changes confirmed facts.
 6. Generate each body through `v6 generate-page`: zero valid confirmed references selects `generate`; one to sixteen valid confirmed references selects `edit`. Empty edit is invalid.
 7. Retry at most once with the same operation and same original confirmed references, never candidate 1. Ordinary pages start at `medium`; Logo, screenshot, dense-data, small-text and high-detail risk pages start at `high`. Use at most two candidates, bounded concurrency and nonblocking first-candidate fallback.
+   If semantic QA is unavailable, continue with candidate 1 as `accepted_fallback_first` and record `qa_unavailable`; this is explicitly not a semantic pass.
 8. Use `reconstruction-request`, hand the request to `reconstruct-editable-slide`, then `finalize-page`. Finally run `assemble`.
 
 The 1904x896 (17:8) body excludes the fixed page title, original SVG Logo, footer and page number. They are added only as native fixed PPT layers. Logo, screenshot and real-photo fusion is high-fidelity best effort, not an exact-reproduction promise. There is no post-generation exact overlay and no post-reconstruction visual repair or comparison.

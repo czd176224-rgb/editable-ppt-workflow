@@ -576,6 +576,7 @@
         item.append(node("span", "", ref.purpose || ref.reference_id));
         [["thumbnail_url", "缩略图"], ["original_url", "原始图"], ["model_input_url", "模型输入"]].forEach(function (entry) { var link = node("a", "", entry[1]); link.href = ref[entry[0]]; link.target = "_blank"; link.rel = "noreferrer"; item.appendChild(link); });
         var purpose = node("input", "text-input"); purpose.value = ref.purpose || ""; purpose.addEventListener("input", function () { ref.purpose = purpose.value; }); item.appendChild(purpose);
+        var review = document.createElement("select"); review.className = "select-input"; [["", "Review: keep or remove"], ["keep", "Keep this image"], ["remove", "Remove this image"]].forEach(function (entry) { var option = document.createElement("option"); option.value = entry[0]; option.textContent = entry[1]; review.appendChild(option); }); review.value = ref.review_decision || ""; review.addEventListener("change", function () { ref.review_decision = review.value; }); item.appendChild(review);
         ["allow_crop", "allow_restyle"].forEach(function (field) { var label = node("label", "toggle-row"); var check = node("input"); check.type = "checkbox"; check.checked = !!ref[field]; check.addEventListener("change", function () { ref[field] = check.checked; }); label.append(check, document.createTextNode(field === "allow_crop" ? "允许裁切" : "允许重风格")); item.appendChild(label); });
         refs.appendChild(item);
       });
@@ -686,7 +687,7 @@
         page_number: page.page_number, effective_body: page.effective_body,
         attachment_extracts: page.attachment_extracts, chart_facts: page.chart_facts,
         image_requirements: page.image_requirements, degradations: page.degradations,
-        reference_images: page.reference_images.map(function (ref) { return { reference_id: ref.reference_id, purpose: ref.purpose, allow_crop: !!ref.allow_crop, allow_restyle: !!ref.allow_restyle, status: ref.status }; }),
+        reference_images: page.reference_images.map(function (ref) { return { reference_id: ref.reference_id, purpose: ref.purpose, allow_crop: !!ref.allow_crop, allow_restyle: !!ref.allow_restyle, status: ref.status, decision: ref.review_decision || "" }; }),
         reference_decisions: page.reference_decisions || []
       }; });
     }

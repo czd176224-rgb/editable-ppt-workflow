@@ -417,12 +417,14 @@ def test_v6_final_submission_freezes_one_complete_revision_and_rejects_stale_pay
     assert "fixed_page_title" not in result["confirmed_pages"][0]
 
     stale = client.post("/api/confirm", json=payload)
-    assert stale.status_code == 409
+    assert stale.status_code == 400
+    assert "exactly once" in stale.get_json()["error"]
     payload["revision"] = 1
     payload["confirmed_pages"][0]["effective_body"] = "Reconfirmed body"
     second = client.post("/api/confirm", json=payload)
-    assert second.status_code == 200, second.get_json()
-    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 2
+    assert second.status_code == 400
+    assert "exactly once" in second.get_json()["error"]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
 
 
 def test_v6_final_submission_only_replaces_result_and_never_mutates_source_artifacts(tmp_path: Path):
@@ -479,7 +481,7 @@ def test_v6_concurrent_same_base_submissions_leave_one_authoritative_revision(tm
     successes = [result for result, error in outcomes if result is not None and error is None]
     failures = [error for result, error in outcomes if result is None or error is not None]
     assert len(successes) == 1
-    assert len(failures) == 1 and "stale" in failures[0]
+    assert len(failures) == 1 and "exactly once" in failures[0]
     assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
 
 
@@ -592,17 +594,99 @@ def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_re
     assert frozen["reference_decisions"] == [{"request_id": "found-1", "decision": "accept"}]
     assert frozen["reference_images"][0]["source_url"] == "https://example.test/image.png"
     assert receipt_path.read_bytes() == receipt_before
-    reopened = client.get("/api/pages").get_json()["pages"][0]
-    second_payload = valid_one_screen_submission()
-    second_payload.update({"revision": 1, "confirmed_pages": [{
-        "page_number": 1, "effective_body": reopened["effective_body"],
-        "attachment_extracts": reopened["attachment_extracts"], "chart_facts": reopened["chart_facts"],
-        "image_requirements": reopened["image_requirements"], "degradations": reopened["degradations"],
-        "reference_images": [{"reference_id": item["reference_id"], "purpose": item["purpose"], "allow_crop": item["allow_crop"], "allow_restyle": item["allow_restyle"], "status": item["status"]} for item in reopened["reference_images"]],
-        "reference_decisions": reopened["reference_decisions"],
+    second_payload = dict(payload)
+    second_payload["revision"] = 1
+    second = client.post("/api/confirm", json=second_payload)
+    assert second.status_code == 400
+    assert "exactly once" in second.get_json()["error"]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
+
+
+def test_v6_final_submission_can_remove_preconfirmed_irrelevant_reference(tmp_path: Path):
+    """Custody confirmation cannot silently promote an irrelevant image past final UI review."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_source import confirm_reference, import_reference
+
+    receipt_path = project / "02_v6" / "reference_materials" / "page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({
+        "artifact_version": "reference-materials-v6", "page_number": 1,
+        "references": [], "search_requests": [],
+        "reference_acquisitions": [{
+            "request_id": "irrelevant-1", "page_number": 1,
+            "purpose": "real meeting photo", "identity_evidence_need": "meeting participants",
+            "status": "pending", "history": ["pending"],
+        }],
+    }), encoding="utf-8")
+    image = tmp_path / "irrelevant.png"
+    Image.new("RGB", (8, 5), "white").save(image)
+    import_reference(project, page_number=1, request_id="irrelevant-1", image=image, source_url=None)
+    confirm_reference(project, page_number=1, request_id="irrelevant-1")
+
+    server = load_server()
+    client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    assert page["reference_images"][0]["review_decision"] == ""
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [{
+            "reference_id": item["reference_id"], "purpose": item["purpose"],
+            "allow_crop": item["allow_crop"], "allow_restyle": item["allow_restyle"],
+            "status": item["status"], "decision": "remove",
+        } for item in page["reference_images"]],
+        "reference_decisions": [],
     }]})
-    assert client.post("/api/confirm", json=second_payload).status_code == 200
-    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 2
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    frozen = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert frozen["revision"] == 1
+    assert frozen["confirmed_pages"][0]["reference_images"] == []
+    assert frozen["confirmed_pages"][0]["reference_decisions"] == [{
+        "reference_id": page["reference_images"][0]["reference_id"], "decision": "remove",
+    }]
+
+
+def test_v6_final_submission_rejects_unreviewed_preconfirmed_reference(tmp_path: Path):
+    project = _v6_project_for_final_confirmation(tmp_path)
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    material = json.loads(material_path.read_text(encoding="utf-8"))
+    reference = {
+        "reference_id": "preconfirmed", "kind": "photo", "source": "attachment",
+        "purpose": "meeting", "status": "available", "source_url": None,
+        "original_path": "02_v6/reference_media/preconfirmed/original.png",
+        "thumbnail_path": "02_v6/reference_media/preconfirmed/thumbnail.png",
+        "model_input_path": "02_v6/reference_media/preconfirmed/model-input.jpg",
+        "allow_crop": False, "allow_restyle": False,
+        "integrity": {"original_sha256": "a" * 64, "thumbnail_sha256": "b" * 64, "model_input_sha256": "c" * 64},
+    }
+    material["reference_images"] = [reference]
+    material_path.write_text(json.dumps(material), encoding="utf-8")
+    server = load_server(); client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [{
+            "reference_id": "preconfirmed", "purpose": "meeting", "allow_crop": False,
+            "allow_restyle": False, "status": "available", "decision": "",
+        }], "reference_decisions": [],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 400
+    assert "explicit keep or remove" in response.get_json()["error"]
+    assert not (project / "confirm_ui" / "result.json").exists()
 
 
 def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: Path):

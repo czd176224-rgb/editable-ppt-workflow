@@ -166,7 +166,7 @@ def test_confirmed_run_initializes_v5_and_returns_skill_ready_work(
     assert result["ready_nodes"] == len(result["ready_work"]) > 0
     assert {item["kind"] for item in result["ready_work"]} == {"design"}
     assert result["dispatch_wave"]["mode"] == "parallel_pages"
-    assert result["dispatch_wave"]["max_concurrency"] == 4
+    assert result["dispatch_wave"]["max_concurrency"] == 2
     assert result["dispatch_wave"]["selected_node_ids"] == [
         item["node_id"] for item in result["ready_work"]
     ]

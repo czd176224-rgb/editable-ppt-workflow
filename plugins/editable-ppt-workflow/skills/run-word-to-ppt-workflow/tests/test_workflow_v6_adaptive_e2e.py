@@ -48,7 +48,11 @@ def _png(path: Path, color: str, label: str, size: tuple[int, int] = (1200, 700)
 
 
 def _source_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
-    meeting = _png(tmp_path / "meeting.png", "#345995", "REAL MEETING PHOTO")
+    licensed_meeting = FIXTURE.with_name("staff-meeting-public-domain.jpg")
+    license_record = json.loads(FIXTURE.with_name("staff-meeting-public-domain.license.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256(licensed_meeting.read_bytes()).hexdigest() == license_record["sha256"]
+    meeting = tmp_path / licensed_meeting.name
+    meeting.write_bytes(licensed_meeting.read_bytes())
     company_logo = _png(tmp_path / "company-logo.png", "#B23A48", "REAL COMPANY LOGO", (900, 360))
     word = tmp_path / "four-pages.docx"
     document = Document()
@@ -111,6 +115,7 @@ def _confirm_once(project: Path) -> dict:
                     "allow_crop": item["allow_crop"],
                     "allow_restyle": item["allow_restyle"],
                     "status": item["status"],
+                    "decision": "keep",
                 }
                 for item in page["reference_images"]
             ],
@@ -207,6 +212,8 @@ def _editable_body(path: Path, page_number: int) -> None:
 
 def test_four_page_adaptive_v6_runs_once_resumes_and_assembles_in_word_order(tmp_path: Path, monkeypatch) -> None:
     contract = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    license_record = json.loads(FIXTURE.with_name("staff-meeting-public-domain.license.json").read_text(encoding="utf-8"))
+    assert license_record["license"].startswith("Public domain")
     word, fixed_logo, meeting, company_logo = _source_fixture(tmp_path)
     project = tmp_path / "brand-new-v6-project"
     real_extract = workflow_v6_source.extract_source_assets

@@ -167,7 +167,7 @@ def test_current_ui_adapter_preserves_confirmation_and_execution_bytes() -> None
     confirmation = canonical_confirmation(raw)
     execution = compile_style_execution(raw)
     assert hashlib.sha256(canonical_json_bytes(confirmation)).hexdigest() == (
-        "a261036994e2c821c19eb7488d166dee4812e912b7de8c443c21d8448679df96"
+        "1f5e618b3e33419ec4822a18035b258fe5cf253ee8feeff573593e29c4560c10"
     )
     assert hashlib.sha256(canonical_json_bytes(execution)).hexdigest() == (
         "30dae90948c7d8ec75a1dc31a568fd0e9117c5622e2c5ebae2d9b4d72372a92e"

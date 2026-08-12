@@ -344,6 +344,7 @@ def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
                 "allow_crop": bool(item.get("allow_crop")),
                 "allow_restyle": bool(item.get("allow_restyle")),
                 "status": item.get("status", "available"),
+                "review_decision": "",
                 "thumbnail_url": "/api/media/thumbnail?path=" + str(item.get("thumbnail_path", "")),
                 "original_url": "/api/media/original?path=" + str(item.get("original_path", "")),
                 "model_input_url": "/api/media/model-input?path=" + str(item.get("model_input_path", "")),
@@ -411,7 +412,9 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
     """Validate and seal all V6 page material in the same final UI revision."""
     with _v6_confirmation_lock(project):
         result_path = project / CONFIRM_DIR / RESULT
-        current = _read_json(result_path) if result_path.is_file() else {}
+        if result_path.is_file():
+            raise ValueError("V6 final confirmation may be submitted exactly once")
+        current = {}
         current_revision = current.get("revision", 0)
         if type(current_revision) is not int or current_revision < 0:
             raise ValueError("authoritative confirmation revision is invalid")
@@ -442,32 +445,40 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
             for field in _V6_PAGE_EDITABLE_FIELDS:
                 if field not in {"page_number", "reference_decisions"}:
                     updated[field] = _clean(submitted[field])
-            prior_references = prior_frozen_pages.get(page_number, {}).get("reference_images", [])
             base_references = {
-            item.get("reference_id"): dict(item) for item in list(material.get("reference_images", [])) + list(prior_references)
+            item.get("reference_id"): dict(item) for item in material.get("reference_images", [])
             if isinstance(item, dict) and isinstance(item.get("reference_id"), str)
             }
             controlled_references = []
+            reviewed_reference_ids = set()
+            fixed_reference_decisions = []
             for reference in submitted["reference_images"]:
                 if not isinstance(reference, dict) or set(reference) != {
-                "reference_id", "purpose", "allow_crop", "allow_restyle", "status",
+                "reference_id", "purpose", "allow_crop", "allow_restyle", "status", "decision",
                 }:
                     raise ValueError("reference controls must identify an existing safe reference")
                 original = base_references.get(reference.get("reference_id"))
                 if original is None:
                     raise ValueError("reference controls cannot add a new local image")
+                if reference["reference_id"] in reviewed_reference_ids:
+                    raise ValueError("reference controls cannot duplicate a local image")
+                if reference["decision"] not in {"keep", "remove"}:
+                    raise ValueError("every acquired reference requires an explicit keep or remove decision")
                 if not isinstance(reference["purpose"], str) or type(reference["allow_crop"]) is not bool or type(reference["allow_restyle"]) is not bool:
                     raise ValueError("reference purpose, crop, and restyle controls are invalid")
+                reviewed_reference_ids.add(reference["reference_id"])
                 original.update({
                 "purpose": reference["purpose"],
                 "allow_crop": reference["allow_crop"],
                 "allow_restyle": reference["allow_restyle"],
                 })
-                controlled_references.append(original)
-            controlled_ids = {item["reference_id"] for item in controlled_references}
-            controlled_references.extend(
-            item for reference_id, item in base_references.items() if reference_id not in controlled_ids
-            )
+                fixed_reference_decisions.append({
+                    "reference_id": reference["reference_id"], "decision": reference["decision"],
+                })
+                if reference["decision"] == "keep":
+                    controlled_references.append(original)
+            if reviewed_reference_ids != set(base_references):
+                raise ValueError("every acquired reference requires an explicit keep or remove decision")
             decisions = submitted["reference_decisions"]
             receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
             acquisitions = _read_json(receipt_path).get("reference_acquisitions", []) if receipt_path.is_file() else []
@@ -491,7 +502,7 @@ def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload
                 decision_map[request_id] = decision["decision"]
             if set(decision_map) != set(found):
                 raise ValueError("every found reference candidate requires an explicit decision")
-            frozen_decisions = [dict(item) for item in prior_decisions if isinstance(item, dict)]
+            frozen_decisions = fixed_reference_decisions
             for request_id, acquisition in found.items():
                 decision = decision_map[request_id]
                 if decision == "accept":

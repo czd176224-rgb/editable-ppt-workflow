@@ -1,5 +1,8 @@
 from pathlib import Path
 import importlib.util
+import json
+import re
+import shutil
 import sys
 
 
@@ -126,3 +129,79 @@ def test_runtime_checker_verifies_both_image_operations_and_input_guards():
     checker = _load_runtime_checker()
     findings = checker._scan_image_cli(PLUGIN_ROOT, REPO_ROOT)
     assert findings == []
+
+
+def test_documented_v6_reference_commands_match_parser_flags():
+    import workflow_v6_cli
+
+    text = (WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
+    documented = {}
+    for line in text.splitlines():
+        match = re.search(r"\bv6 (import-reference|confirm-reference|fail-reference)\b(.*)", line)
+        if match:
+            documented[match.group(1)] = set(re.findall(r"--[a-z-]+", match.group(2)))
+    parser = workflow_v6_cli._parser()
+    subparsers = next(action for action in parser._actions if isinstance(getattr(action, "choices", None), dict))
+    for command, expected_flags in documented.items():
+        actual = {option for action in subparsers.choices[command]._actions for option in action.option_strings}
+        assert expected_flags <= actual
+    assert "--request-id" in documented["confirm-reference"]
+    assert "--reference-id" not in documented["confirm-reference"]
+
+
+def _mutated_plugin(tmp_path, *, relative, old, new):
+    target = tmp_path / "plugins" / "editable-ppt-workflow"
+    shutil.copytree(PLUGIN_ROOT, target)
+    path = target / relative
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    return target
+
+
+def test_runtime_checker_rejects_renamed_edit_parser(tmp_path):
+    checker = _load_runtime_checker()
+    plugin = _mutated_plugin(
+        tmp_path,
+        relative="skills/generate-slide-body-image/scripts/codex_gpt_image.py",
+        old='sub.add_parser("edit",',
+        new='sub.add_parser("revise",',
+    )
+    assert any("edit" in item for item in checker._scan_image_cli(plugin, tmp_path))
+
+
+def test_runtime_checker_rejects_hardcoded_generate_selection(tmp_path):
+    checker = _load_runtime_checker()
+    plugin = _mutated_plugin(
+        tmp_path,
+        relative="skills/run-word-to-ppt-workflow/scripts/workflow_v6_image.py",
+        old='operation="edit" if images else "generate"',
+        new='operation="generate"',
+    )
+    skill = plugin / "skills/run-word-to-ppt-workflow"
+    assert any("adaptive" in item for item in checker._scan_initial_generation(skill, tmp_path))
+
+
+def test_runtime_checker_rejects_invalid_required_schema(tmp_path):
+    checker = _load_runtime_checker()
+    plugin = _mutated_plugin(
+        tmp_path,
+        relative="skills/run-word-to-ppt-workflow/schemas/page_materials_v6.schema.json",
+        old='  "$schema":',
+        new='  "broken":,\n  "$schema":',
+    )
+    skill = plugin / "skills/run-word-to-ppt-workflow"
+    assert any("invalid JSON schema" in item for item in checker._scan_required_v6_files(skill, tmp_path))
+
+
+def test_legacy_visual_qa_variants_are_detected_but_current_contract_is_allowed(tmp_path):
+    checker = _load_runtime_checker()
+    root = tmp_path / "skill"
+    (root / "scripts").mkdir(parents=True)
+    path = root / "scripts" / "sample.py"
+    path.write_text("global_visual_contract = {}\n", encoding="utf-8")
+    assert checker._scan_tokens(root, tmp_path) == []
+    for variant in ("global_visual_qa", "global-visual-qa", "global visual QA", "cross_page_similarity"):
+        path.write_text(f"value = {variant!r}\n", encoding="utf-8")
+        findings = checker._scan_tokens(root, tmp_path)
+        assert any("legacy deck-wide visual QA" in item for item in findings), variant

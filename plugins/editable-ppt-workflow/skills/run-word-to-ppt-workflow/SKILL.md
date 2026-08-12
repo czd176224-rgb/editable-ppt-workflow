@@ -25,7 +25,7 @@ The 1904x896 (17:8) body excludes the fixed page title, original SVG Logo, foote
 ```powershell
 python scripts\word_to_editable_ppt.py v6 init --word D:\Input\source.docx --logo D:\Input\logo.svg --project D:\Projects\Deck
 python scripts\word_to_editable_ppt.py v6 import-reference --project D:\Projects\Deck --page 1 --request-id REF --image D:\Input\photo.jpg
-python scripts\word_to_editable_ppt.py v6 confirm-reference --project D:\Projects\Deck --page 1 --reference-id REF
+python scripts\word_to_editable_ppt.py v6 confirm-reference --project D:\Projects\Deck --page 1 --request-id REF
 python scripts\word_to_editable_ppt.py v6 fail-reference --project D:\Projects\Deck --page 1 --request-id REF --reason unavailable
 python scripts\word_to_editable_ppt.py confirm-ui start --project D:\Projects\Deck
 python scripts\word_to_editable_ppt.py v6 confirm-style --project D:\Projects\Deck --ui-result D:\Projects\Deck\confirm_ui\result.json

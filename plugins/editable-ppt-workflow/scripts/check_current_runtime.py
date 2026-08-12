@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import sys
 from pathlib import Path
+
+from jsonschema.validators import validator_for
 
 
 TEXT_SUFFIXES = frozenset({".json", ".md", ".py", ".ps1", ".sh"})
@@ -207,6 +210,41 @@ def _literal_strings(node: ast.AST) -> set[str]:
     }
 
 
+def _has_operation_input_guard(function: ast.AST, operation: str, *, require_inputs: bool) -> bool:
+    """Recognize `operation == X and [not] image_inputs` guarding a raise."""
+    for node in ast.walk(function):
+        if not isinstance(node, ast.If) or not any(isinstance(item, ast.Raise) for item in ast.walk(node)):
+            continue
+        test = node.test
+        if not isinstance(test, ast.BoolOp) or not isinstance(test.op, ast.And):
+            continue
+        has_operation = any(
+            isinstance(item, ast.Compare)
+            and any(isinstance(value, ast.Constant) and value.value == operation for value in item.comparators)
+            for item in test.values
+        )
+        def field_name(value: ast.AST) -> str | None:
+            if isinstance(value, ast.Name):
+                return value.id
+            if isinstance(value, ast.Attribute):
+                return value.attr
+            return None
+
+        has_inputs = any(
+            (require_inputs and field_name(item) in {"image_paths", "input_images"})
+            or (
+                not require_inputs
+                and isinstance(item, ast.UnaryOp)
+                and isinstance(item.op, ast.Not)
+                and field_name(item.operand) in {"image_paths", "input_images"}
+            )
+            for item in test.values
+        )
+        if has_operation and has_inputs:
+            return True
+    return False
+
+
 def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
     path = skill_root / "scripts/workflow_v6_image.py"
     if not path.is_file():
@@ -215,15 +253,35 @@ def _scan_initial_generation(skill_root: Path, repo_root: Path) -> list[str]:
         module = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     except SyntaxError as error:
         return [f"{_display(path, repo_root)}:{error.lineno}: cannot parse initial-generation builder"]
-    literals = _literal_strings(module)
     findings: list[str] = []
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+    request_builder = functions.get("build_image_request")
+    command_builder = functions.get("build_image_command")
+    if request_builder is None or command_builder is None:
+        return [f"{_display(path, repo_root)}: adaptive Image2 request/command builder is missing"]
+
+    selection_ok = any(
+        isinstance(node, ast.keyword)
+        and node.arg == "operation"
+        and isinstance(node.value, ast.IfExp)
+        and isinstance(node.value.test, ast.Name)
+        and node.value.test.id == "images"
+        and isinstance(node.value.body, ast.Constant)
+        and node.value.body.value == "edit"
+        and isinstance(node.value.orelse, ast.Constant)
+        and node.value.orelse.value == "generate"
+        for node in ast.walk(request_builder)
+    )
+    if not selection_ok:
+        findings.append(f"{_display(path, repo_root)}: adaptive zero-reference generate / usable-reference edit selection is missing")
+
+    command_literals = _literal_strings(command_builder)
     for required in ("generate", "edit", "--image", "--image-role", "--image-sha256"):
-        if required not in literals:
-            findings.append(f"{_display(path, repo_root)}: adaptive Image2 request is missing {required!r}")
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
-    if "edit requires at least one image input" not in text:
+        if required not in command_literals:
+            findings.append(f"{_display(path, repo_root)}: adaptive Image2 command is missing {required!r}")
+    if not _has_operation_input_guard(command_builder, "edit", require_inputs=False):
         findings.append(f"{_display(path, repo_root)}: adaptive edit lacks an empty-input guard")
-    if "generate cannot carry image inputs" not in text:
+    if not _has_operation_input_guard(command_builder, "generate", require_inputs=True):
         findings.append(f"{_display(path, repo_root)}: adaptive generate lacks an image-input guard")
     return findings
 
@@ -238,6 +296,27 @@ def _scan_required_v6_files(skill_root: Path, repo_root: Path) -> list[str]:
         path = skill_root / "schemas" / name
         if not path.is_file():
             findings.append(f"{_display(path, repo_root)}: required adaptive V6 schema is missing")
+            continue
+        try:
+            schema = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as error:
+            findings.append(f"{_display(path, repo_root)}: invalid JSON schema: {error}")
+            continue
+        object_shape = (
+            schema.get("type") == "object" and isinstance(schema.get("properties"), dict)
+        )
+        union_shape = (
+            isinstance(schema.get("$defs"), dict)
+            and isinstance(schema.get("oneOf"), list)
+            and bool(schema["oneOf"])
+        )
+        if not isinstance(schema, dict) or not (object_shape or union_shape):
+            findings.append(f"{_display(path, repo_root)}: invalid JSON schema root shape")
+            continue
+        try:
+            validator_for(schema).check_schema(schema)
+        except Exception as error:  # jsonschema exposes draft-specific subclasses
+            findings.append(f"{_display(path, repo_root)}: invalid JSON schema contract: {error}")
     return findings
 
 
@@ -248,18 +327,40 @@ def _scan_image_cli(plugin_root: Path, repo_root: Path) -> list[str]:
         module = ast.parse(text, filename=str(path))
     except (OSError, SyntaxError) as error:
         return [f"{_display(path, repo_root)}: cannot inspect bundled Image2 CLI: {error}"]
-    literals = _literal_strings(module)
     findings: list[str] = []
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+    builder = functions.get("build_parser")
+    if builder is None:
+        return [f"{_display(path, repo_root)}: bundled Image2 CLI lacks build_parser"]
+    parser_names = {
+        call.args[0].value
+        for call in ast.walk(builder)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "add_parser"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    }
     for operation in ("generate", "edit"):
-        if operation not in literals:
-            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks {operation!r}")
-    guards = (
-        "Reference images require the explicit edit subcommand.",
-        "The edit subcommand requires at least one --image input.",
-    )
-    for guard in guards:
-        if guard not in text:
-            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks guard: {guard}")
+        if operation not in parser_names:
+            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks {operation!r} parser")
+    builder_literals = _literal_strings(builder)
+    for option in ("--image", "--image-sha256", "--image-role", "--prompt-file"):
+        if option not in builder_literals:
+            findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks {option!r} argument")
+    if "cmd_generate" not in {
+        node.id for node in ast.walk(builder) if isinstance(node, ast.Name)
+    }:
+        findings.append(f"{_display(path, repo_root)}: bundled Image2 parsers do not dispatch to cmd_generate")
+    body_builder = functions.get("build_image_body")
+    if body_builder is None:
+        findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks build_image_body")
+    else:
+        if not _has_operation_input_guard(body_builder, "edit", require_inputs=False):
+            findings.append(f"{_display(path, repo_root)}: bundled edit lacks empty-image guard")
+        if not _has_operation_input_guard(body_builder, "generate", require_inputs=True):
+            findings.append(f"{_display(path, repo_root)}: bundled generate lacks reference-image guard")
     return findings
 
 

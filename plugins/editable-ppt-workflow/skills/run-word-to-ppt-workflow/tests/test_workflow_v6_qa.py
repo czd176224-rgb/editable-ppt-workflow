@@ -145,7 +145,7 @@ def test_semantic_review_uses_only_frozen_contract_and_declares_exclusions(
     class Result:
         value = {
             "checks": {
-                code: {"result": "pass", "detail": "compliant", "correction": ""}
+                code: {"result": "pass", "detail": "compliant", "correction": None}
                 for code in workflow_v6_qa.SEMANTIC_CHECKS
             },
             "issues": [],
@@ -187,10 +187,20 @@ def test_semantic_review_uses_only_frozen_contract_and_declares_exclusions(
 
 
 def test_actionable_retry_feedback_requires_new_structured_corrections():
+    fixed = {
+        "check": "fixed_layers_absent", "action": "remove", "target": "fixed_layer",
+        "constraint": "remove_fixed_layer",
+        "correction": "Remove the generated main title from the body.",
+    }
+    style = {
+        "check": "global_style_followed", "action": "use", "target": "style_property",
+        "constraint": "match_style_property",
+        "correction": "Use the approved navy and gold palette.",
+    }
     previous = {
         "checks": {"fixed_layers_absent": {
             "result": "fail", "detail": "Main title is present",
-            "correction": "Remove the generated main title from the body.",
+            "correction": fixed,
         }},
         "issues": [],
     }
@@ -198,11 +208,11 @@ def test_actionable_retry_feedback_requires_new_structured_corrections():
         "checks": {
             "fixed_layers_absent": {
                 "result": "fail", "detail": "Main title is present",
-                "correction": "Remove the generated main title from the body.",
+                "correction": fixed,
             },
             "global_style_followed": {
                 "result": "fail", "detail": "Colors ignore the approved palette",
-                "correction": "Use the approved navy and gold palette.",
+                "correction": style,
             },
         },
         "issues": [{"code": "vague", "correction": "   "}],
@@ -246,7 +256,7 @@ def test_review_candidate_honors_a_lower_caller_timeout(tmp_path: Path, monkeypa
     class Result:
         value = {
             "checks": {
-                code: {"result": "pass", "detail": "compliant", "correction": ""}
+                code: {"result": "pass", "detail": "compliant", "correction": None}
                 for code in workflow_v6_qa.SEMANTIC_CHECKS
             },
             "issues": [],
@@ -300,7 +310,7 @@ def test_review_candidate_honors_a_lower_caller_timeout(tmp_path: Path, monkeypa
         "修正已确认截图中存在的严重变形。",
     ],
 )
-def test_retry_feedback_accepts_deterministic_imperative_corrections(correction: str):
+def test_legacy_free_form_imperative_corrections_are_nonactionable(correction: str):
     current = {
         "checks": {
             "confirmed_content_and_requirements": {
@@ -312,7 +322,7 @@ def test_retry_feedback_accepts_deterministic_imperative_corrections(correction:
         "issues": [],
     }
 
-    assert actionable_retry_feedback(current, None) == [correction]
+    assert actionable_retry_feedback(current, None) == []
 
 
 @pytest.mark.parametrize(
@@ -397,7 +407,7 @@ def test_retry_feedback_rejects_status_nouns_short_commands_and_questions(correc
         ),
     ],
 )
-def test_retry_feedback_accepts_contract_bound_target_variants(
+def test_free_form_contract_bound_target_variants_remain_nonactionable(
     correction: str, expected: str,
 ):
     current = {
@@ -411,7 +421,7 @@ def test_retry_feedback_accepts_contract_bound_target_variants(
         "issues": [],
     }
 
-    assert actionable_retry_feedback(current, None) == [expected]
+    assert actionable_retry_feedback(current, None) == []
 
 
 @pytest.mark.parametrize(
@@ -448,6 +458,86 @@ def test_retry_feedback_rejects_generic_imperatives_across_variants(correction: 
                 "result": "fail",
                 "detail": "contract mismatch",
                 "correction": correction,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == []
+
+
+@pytest.mark.parametrize(
+    "correction",
+    [
+        "Remove the generated main title from the body region.",
+        "从正文区域移除生成的页面主标题。",
+    ],
+)
+def test_structured_retry_fields_not_correction_language_control_classification(
+    correction: str,
+):
+    structured = {
+        "check": "fixed_layers_absent",
+        "action": "remove",
+        "target": "fixed_layer",
+        "constraint": "remove_fixed_layer",
+        "correction": correction,
+    }
+    current = {
+        "checks": {
+            "fixed_layers_absent": {
+                "result": "fail",
+                "detail": "main title present",
+                "correction": structured,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == [correction]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"correction": "Remove the generated main title from the body region."},
+        {"action": "remove", "target": "fixed_layer", "correction": "Remove title."},
+        {
+            "check": "fixed_layers_absent", "action": "remove",
+            "target": "fixed_layer", "constraint": "", "correction": "Remove title.",
+        },
+        {
+            "check": "fixed_layers_absent", "action": "improve",
+            "target": "overall_design", "constraint": "remove_fixed_layer",
+            "correction": "This prose sounds actionable but its structure is invalid.",
+        },
+        {
+            "check": "global_style_followed", "action": "remove",
+            "target": "fixed_layer", "constraint": "remove_fixed_layer",
+            "correction": "Remove title.",
+        },
+    ],
+)
+def test_retry_feedback_rejects_missing_or_invalid_structured_combinations(mutation: dict):
+    current = {
+        "checks": {
+            "fixed_layers_absent": {
+                "result": "fail", "detail": "failure", "correction": mutation,
+            },
+        },
+        "issues": [],
+    }
+
+    assert actionable_retry_feedback(current, None) == []
+
+
+def test_legacy_string_correction_is_nonactionable_even_when_imperative():
+    current = {
+        "checks": {
+            "fixed_layers_absent": {
+                "result": "fail",
+                "detail": "main title present",
+                "correction": "Remove the generated main title from the body region.",
             },
         },
         "issues": [],

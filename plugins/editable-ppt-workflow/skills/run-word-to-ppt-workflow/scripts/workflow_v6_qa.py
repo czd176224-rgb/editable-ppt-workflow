@@ -29,35 +29,59 @@ SEMANTIC_CHECKS = (
     "no_fabricated_real_world_evidence",
     "reference_high_fidelity_best_effort",
 )
-_VAGUE = frozenset({
-    "bad", "poor", "wrong", "improve", "fix", "fix it", "not good",
-    "不好", "很差", "有问题", "改进", "修改",
-})
-_ENGLISH_IMPERATIVE = re.compile(
-    r"^(?:preserve|keep|maintain|restore|remove|avoid|ensure|increase|reduce|"
-    r"improve|align|use|replace|correct)\s+(?P<target>.+)$",
-    re.IGNORECASE,
+CORRECTION_ACTIONS = (
+    "preserve", "keep", "maintain", "restore", "remove", "avoid", "ensure",
+    "increase", "reduce", "improve", "align", "use", "replace", "correct",
 )
-_CHINESE_IMPERATIVES = (
-    "保留", "保持", "维持", "恢复", "移除", "删除", "避免", "确保",
-    "提高", "增加", "降低", "减少", "改进", "改善", "对齐", "使用",
-    "采用", "替换", "更换", "修正", "纠正",
+CORRECTION_TARGETS = (
+    "confirmed_reference", "fixed_layer", "body_region", "confirmed_body",
+    "image_requirement", "style_property", "aspect_ratio", "legibility",
+    "crop", "recognizable_identity", "contrast_relation", "geometry",
+    "fabricated_identity",
 )
-_ENGLISH_CONTRACT_TARGET = re.compile(
-    r"(?:\b(?:confirmed|approved|fixed)\b|\b(?:reference|logo|logotype|screenshot|"
-    r"meeting[- ]photo|page number|footer|main title|body(?:[- ](?:text|region))?|"
-    r"image requirement|style contract|typography|palette|spacing|grid|chart|"
-    r"crop|aspect ratio|recognizable|identity|institution|event|product|"
-    r"abstract geometry)\b|\bcontrast\b.{0,80}\b(?:between|relative to|against)\b|"
-    r"\b(?:17:8|1904\s*x\s*896)\b)",
-    re.IGNORECASE,
+CORRECTION_CONSTRAINTS = (
+    "aspect_ratio", "legibility", "recognizable", "uncropped", "remove_fixed_layer",
+    "match_confirmed_body", "match_image_requirement", "match_style_property",
+    "no_fabricated_identity", "body_region_only", "contrast_relation", "align_geometry",
+    "high_fidelity_best_effort",
 )
-_CHINESE_CONTRACT_TARGET = re.compile(
-    r"(?:已确认|确认参考|用户确认|固定(?:页面)?(?:主标题|徽标|页脚|页码)|"
-    r"(?:主标题|页脚|页码|徽标|截图|会议照片|参考图片|真实材料|正文(?:文字|区域)?|"
-    r"图表|说明文字|背景面板|字体|颜色|配色|间距|裁剪|比例|身份|机构|事件|产品|"
-    r"抽象图形|风格合同|生图要求|可识别|对比度|对齐)|17:8|1904\s*[xX×]\s*896)"
-)
+_CHECK_CORRECTION_RULES = {
+    "confirmed_content_and_requirements": {
+        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "use", "replace", "correct"},
+        "targets": {"confirmed_body", "image_requirement", "confirmed_reference"},
+        "constraints": {"match_confirmed_body", "match_image_requirement", "recognizable", "high_fidelity_best_effort"},
+    },
+    "global_style_followed": {
+        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "increase", "reduce", "improve", "align", "use", "replace", "correct"},
+        "targets": {"style_property", "contrast_relation", "geometry", "legibility"},
+        "constraints": {"match_style_property", "contrast_relation", "align_geometry", "legibility"},
+    },
+    "body_region_composition": {
+        "actions": {"preserve", "keep", "maintain", "restore", "ensure", "align", "correct"},
+        "targets": {"body_region", "aspect_ratio", "geometry"},
+        "constraints": {"aspect_ratio", "body_region_only", "align_geometry"},
+    },
+    "fixed_layers_absent": {
+        "actions": {"remove", "avoid", "ensure", "correct"},
+        "targets": {"fixed_layer", "body_region"},
+        "constraints": {"remove_fixed_layer", "body_region_only"},
+    },
+    "confirmed_references_recognizable_and_fused": {
+        "actions": {"preserve", "keep", "maintain", "restore", "avoid", "ensure", "align", "use", "correct"},
+        "targets": {"confirmed_reference", "crop", "recognizable_identity", "geometry"},
+        "constraints": {"recognizable", "uncropped", "align_geometry", "high_fidelity_best_effort"},
+    },
+    "no_fabricated_real_world_evidence": {
+        "actions": {"remove", "avoid", "ensure", "replace", "correct"},
+        "targets": {"fabricated_identity", "confirmed_reference", "image_requirement"},
+        "constraints": {"no_fabricated_identity", "match_image_requirement"},
+    },
+    "reference_high_fidelity_best_effort": {
+        "actions": {"preserve", "keep", "maintain", "restore", "avoid", "ensure", "correct"},
+        "targets": {"confirmed_reference", "crop", "recognizable_identity", "aspect_ratio"},
+        "constraints": {"recognizable", "uncropped", "aspect_ratio", "high_fidelity_best_effort"},
+    },
+}
 
 
 def _issue(code: str, detail: str) -> dict[str, str]:
@@ -181,6 +205,18 @@ def mechanical_review(
 
 
 def output_schema() -> dict[str, Any]:
+    correction = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["check", "action", "target", "constraint", "correction"],
+        "properties": {
+            "check": {"type": "string", "enum": list(SEMANTIC_CHECKS)},
+            "action": {"type": "string", "enum": list(CORRECTION_ACTIONS)},
+            "target": {"type": "string", "enum": list(CORRECTION_TARGETS)},
+            "constraint": {"type": "string", "enum": list(CORRECTION_CONSTRAINTS)},
+            "correction": {"type": "string", "minLength": 1, "maxLength": 500},
+        },
+    }
     check = {
         "type": "object",
         "additionalProperties": False,
@@ -188,7 +224,7 @@ def output_schema() -> dict[str, Any]:
         "properties": {
             "result": {"type": "string", "enum": ["pass", "fail"]},
             "detail": {"type": "string", "minLength": 1},
-            "correction": {"type": "string"},
+            "correction": {"anyOf": [{"type": "null"}, correction]},
         },
     }
     return {
@@ -237,8 +273,10 @@ def semantic_review(
         "Explicit exclusions: do not demand pixel identity, exact original hash appearance, "
         "exhaustive word/number/person/institution coverage, exact-material placement, "
         "reconstruction suitability, editable-object suitability, post-reconstruction comparison, "
-        "overlay repair, or re-explanation of the design. Return concise actionable corrections "
-        "only for failed checks.\n"
+        "overlay repair, or re-explanation of the design. For each failed check, emit correction "
+        "as a structured object with that exact check code, an allowed action, typed target, "
+        "concrete constraint, and a concise natural-language correction. For passed checks use "
+        "null. Classification uses only the structured fields; correction language is not parsed.\n"
         + json.dumps({
             "confirmed_page": filter_confirmed_page_for_prompt(confirmed_page),
             "global_visual_contract": filter_global_visual_contract(visual_contract),
@@ -271,37 +309,32 @@ def semantic_review(
     }
 
 
-def _correction(value: Any) -> str | None:
+def _correction(check_code: str, value: Any) -> str | None:
     if not isinstance(value, Mapping):
         return None
-    candidate = value.get("correction")
-    if not isinstance(candidate, str):
+    structured = value.get("correction")
+    if not isinstance(structured, Mapping) or set(structured) != {
+        "check", "action", "target", "constraint", "correction",
+    }:
         return None
-    text = candidate.strip()
-    if not text or len(text) > 2_000 or text.casefold().rstrip(".!。！") in _VAGUE:
+    if structured.get("check") != check_code:
         return None
-    if text.endswith(("?", "？")):
+    action = structured.get("action")
+    target = structured.get("target")
+    constraint = structured.get("constraint")
+    text = structured.get("correction")
+    rules = _CHECK_CORRECTION_RULES.get(check_code)
+    if (
+        rules is None
+        or action not in rules["actions"]
+        or target not in rules["targets"]
+        or constraint not in rules["constraints"]
+        or not isinstance(text, str)
+        or not text.strip()
+        or len(text.strip()) > 500
+    ):
         return None
-    normalized = re.sub(r"\s+", " ", text).strip()
-    english = _ENGLISH_IMPERATIVE.fullmatch(text)
-    if english is None:
-        english = _ENGLISH_IMPERATIVE.fullmatch(normalized)
-    if english is not None:
-        target = english.group("target").strip().rstrip(".!。！").strip()
-        words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]*", target)
-        if len(words) < 2 or _ENGLISH_CONTRACT_TARGET.search(target) is None:
-            return None
-        return text
-    for action in _CHINESE_IMPERATIVES:
-        if normalized.startswith(action):
-            target = normalized[len(action):].strip().rstrip("。！.! ").strip()
-            if (
-                len(re.sub(r"\s+", "", target)) < 4
-                or _CHINESE_CONTRACT_TARGET.search(target) is None
-            ):
-                return None
-            return text
-    return None
+    return text.strip()
 
 
 def actionable_retry_feedback(
@@ -316,7 +349,7 @@ def actionable_retry_feedback(
             check = checks.get(code)
             if not isinstance(check, Mapping) or check.get("result") != "fail":
                 continue
-            text = _correction(check)
+            text = _correction(code, check)
             if text:
                 feedback.append(text)
     unique: list[str] = []

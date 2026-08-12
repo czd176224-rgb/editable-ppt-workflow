@@ -143,6 +143,21 @@ def _write_mock_trace(command: list[str]) -> None:
 def _semantic_failure(
     correction: str, *, score: int = 4, code: str = "global_style_followed",
 ) -> dict:
+    structured_by_code = {
+        "global_style_followed": {
+            "action": "increase", "target": "contrast_relation",
+            "constraint": "contrast_relation",
+        },
+        "confirmed_content_and_requirements": {
+            "action": "restore", "target": "confirmed_body",
+            "constraint": "match_confirmed_body",
+        },
+        "fixed_layers_absent": {
+            "action": "remove", "target": "fixed_layer",
+            "constraint": "remove_fixed_layer",
+        },
+    }
+    fields = structured_by_code[code]
     return {
         "accepted": False,
         "score": score,
@@ -150,7 +165,7 @@ def _semantic_failure(
             code: {
                 "result": "fail",
                 "detail": "The frozen semantic contract is not yet satisfied.",
-                "correction": correction,
+                "correction": {"check": code, **fields, "correction": correction},
             },
         },
         "issues": [],
@@ -736,13 +751,13 @@ def test_qa_feedback_over_prompt_limit_uses_first_candidate_without_retry(tmp_pa
     project = _project(tmp_path)
     result_path = project / "confirm_ui" / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
-    result["confirmed_pages"][0]["effective_body"] = "x" * 30_500
+    result["confirmed_pages"][0]["effective_body"] = "x" * 30_650
     result_path.write_text(json.dumps(result), encoding="utf-8")
     state = load(project)
     state["confirmed_ui_digest"] = canonical_sha256(result)
     save(project, state)
     calls = []
-    feedback = "Increase body contrast: " + "y" * 1_000
+    feedback = "Increase body contrast relative to the approved background: " + "y" * 400
 
     initial_prompt = build_prompt(
         global_visual_contract=result["global_visual_contract"],
@@ -1813,7 +1828,13 @@ def test_candidate_two_trace_requires_medium_to_high_upgrade_semantics(
                 "global_style_followed": {
                     "result": "fail",
                     "detail": "The panel contrast is too low.",
-                    "correction": "Increase contrast between the body text and panels.",
+                    "correction": {
+                        "check": "global_style_followed",
+                        "action": "increase",
+                        "target": "contrast_relation",
+                        "constraint": "contrast_relation",
+                        "correction": "Increase contrast between the body text and panels.",
+                    },
                 },
             },
             "issues": [],

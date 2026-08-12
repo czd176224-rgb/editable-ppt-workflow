@@ -6,7 +6,7 @@
   "workflowContractVersion": "word-ppt-workflow-v6",
   "promptContractVersion": "page-prompt-v6-adaptive-confirmed-materials",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "482eb828d3e7d21d502e81152454c27e8e3abf8cc72999434bdc7cde1e9b9a2e",
+  "sourceManifestSha256": "ee79335b6bec25032336b3df48551607d1d36a4690ff9b5982421d0df622e7fe",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1649,7 +1649,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 62384,
-      "sha256": "482eb828d3e7d21d502e81152454c27e8e3abf8cc72999434bdc7cde1e9b9a2e"
+      "sha256": "ee79335b6bec25032336b3df48551607d1d36a4690ff9b5982421d0df622e7fe"
     },
     {
       "path": "README.md",
@@ -1683,8 +1683,8 @@
     },
     {
       "path": "scripts/release_gate.ps1",
-      "bytes": 5229,
-      "sha256": "af57bfa9a6a1d0eadb7e2e84a1407a586423ac9c2a6f242e6dea9cacf11af3b8"
+      "bytes": 5243,
+      "sha256": "71b6880276c203c3de840211113f7f49bd02da74a6924d8e97b2cec381d227b7"
     },
     {
       "path": "SECURITY.md",
@@ -1708,8 +1708,8 @@
     },
     {
       "path": "tests/test_release_hardening_v2.py",
-      "bytes": 14191,
-      "sha256": "984e6983b87d897c6eff5199a0bc4b1aef85eb82926a984a01f4950eb6603f24"
+      "bytes": 14420,
+      "sha256": "ae9e201adcefac204e473db1dbf40b16f6df84f02fc0de72dcbc70964d9f5db6"
     },
     {
       "path": "tests/test_skill_role_names.py",

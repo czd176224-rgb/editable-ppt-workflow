@@ -294,3 +294,9 @@ def test_public_verifier_reports_the_adaptive_image_policy():
     verifier = (ROOT / "verify.ps1").read_text(encoding="utf-8")
     assert "generate-only" not in verifier.lower()
     assert "adaptive generate/edit Image2 bodies" in verifier
+
+
+def test_release_gate_excludes_ignored_development_workspace_from_json_validation():
+    gate = (ROOT / "scripts/release_gate.ps1").read_text(encoding="utf-8")
+    assert "\\.superpowers" in gate
+    assert "-notmatch" in gate

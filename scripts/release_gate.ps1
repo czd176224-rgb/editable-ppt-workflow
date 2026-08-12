@@ -45,7 +45,7 @@ try {
         $parseErrors += $errors
     }
     if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }
-    Get-ChildItem -Recurse -Filter *.json -File | Where-Object { $_.FullName -notmatch '[\\/](\.git|dist)[\\/]' } | ForEach-Object {
+    Get-ChildItem -Recurse -Filter *.json -File | Where-Object { $_.FullName -notmatch '[\\/](\.git|dist|\.superpowers)[\\/]' } | ForEach-Object {
         Get-Content -Raw -Encoding UTF8 -LiteralPath $_.FullName | ConvertFrom-Json | Out-Null
     }
 

@@ -865,6 +865,53 @@ def test_search_material_preserves_stable_id_and_binds_file_and_provenance(tmp_p
         )
 
 
+def test_search_material_gives_each_atomic_evidence_write_a_fresh_stage_budget(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Slow Windows child startup must not consume the next evidence write's watchdog."""
+    clock = [100.0]
+    granted: list[float] = []
+
+    def monotonic() -> float:
+        return clock[0]
+
+    def simulated_slow_child_start(
+        path: Path, payload: bytes, *, deadline: float, expected_dev: int, expected_ino: int,
+    ) -> None:
+        remaining = deadline - clock[0]
+        granted.append(remaining)
+        if remaining < 0.5:
+            raise SearchMaterialBlocked("evidence write timed out during simulated child startup")
+        opened = path.stat()
+        assert (opened.st_dev, opened.st_ino) == (expected_dev, expected_ino)
+        clock[0] += 0.6
+        path.write_bytes(payload)
+
+    monkeypatch.setattr(codex_web_material_gateway.time, "monotonic", monotonic)
+    monkeypatch.setattr(
+        codex_web_material_gateway, "_run_write_process", simulated_slow_child_start,
+    )
+    directive = _directive()
+    candidate = _candidate()
+
+    materials = search_visual_material(
+        tmp_path,
+        directive=directive,
+        page_context={"page_number": 7, "body_text": "Locked Word fact."},
+        timeout=1.0,
+        invoke=lambda *_args, **_kwargs: _result([candidate]),
+        transport=FakeTransport({
+            candidate["direct_image_url"]: DownloadResponse(
+                200, {"content-type": "image/png"}, _png(),
+            ),
+        }),
+    )
+
+    assert len(materials) == 1
+    assert len(granted) >= 7
+    assert all(remaining == pytest.approx(1.0) for remaining in granted)
+
+
 def test_plural_search_accepts_unordered_bijection_and_replays_each_signed_cache(tmp_path: Path) -> None:
     directives = [_batch_directive(1), _batch_directive(2)]
     payloads = [_png(31, 21), _png(32, 22)]
@@ -2065,9 +2112,12 @@ def test_installed_app_server_v2_schema_declares_all_web_search_modes() -> None:
     if not executable:
         pytest.skip("installed Codex runtime is unavailable in this test environment")
 
-    modes = codex_subscription_runtime.app_server_web_search_modes(
-        [executable, "app-server", "--stdio"], timeout=15
-    )
+    try:
+        modes = codex_subscription_runtime.app_server_web_search_modes(
+            [executable, "app-server", "--stdio"], timeout=15
+        )
+    except codex_subscription_runtime.CodexRuntimeUnavailable as exc:
+        pytest.skip(f"installed Codex runtime cannot be probed in this environment: {exc}")
 
     assert modes == frozenset({"disabled", "cached", "indexed", "live"})
 
@@ -2490,3 +2540,41 @@ def test_atomic_publish_rejects_reserved_temp_replacement_without_truncating_it(
     time.sleep(0.4)
     assert not target.exists()
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_v6_reference_gateway_emits_one_bounded_orchestrator_item_without_downloading(tmp_path: Path, monkeypatch):
+    """Autonomous downloading would make a V6 source URL a second Python web client."""
+    receipt_path = tmp_path / "02_v6/reference_materials/page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({
+        "artifact_version": "reference-materials-v6",
+        "page_number": 1,
+        "references": [],
+        "search_requests": [],
+        "reference_acquisitions": [{
+            "request_id": "request-1",
+            "page_number": 1,
+            "purpose": "verified storefront image",
+            "identity_evidence_need": "show the named storefront",
+            "status": "pending",
+            "history": ["pending"],
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setattr(codex_web_material_gateway, "download_visual_material", lambda *_a, **_k: pytest.fail("downloaded"))
+
+    items = codex_web_material_gateway.emit_reference_work_items(tmp_path)
+
+    assert items == [{
+        "page_number": 1,
+        "request_id": "request-1",
+        "purpose": "verified storefront image",
+        "identity_evidence_need": "show the named storefront",
+        "status": "pending",
+        "max_results": 1,
+        "commands": {
+            "import_reference": "workflow_v6_cli.py import-reference --project <project> --page 1 --request-id request-1 --image <local-file> [--source-url <metadata-url>]",
+            "fail_reference": "workflow_v6_cli.py fail-reference --project <project> --page 1 --request-id request-1 --reason <reason>",
+            "reject_reference": "workflow_v6_cli.py reject-reference --project <project> --page 1 --request-id request-1 --reason <reason>",
+            "confirm_reference": "workflow_v6_cli.py confirm-reference --project <project> --page 1 --request-id request-1",
+        },
+    }]

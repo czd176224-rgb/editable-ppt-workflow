@@ -1,10 +1,11 @@
-"""Canonical contracts for the generate-only V6 Word-to-PPT workflow."""
+"""Canonical contracts for the adaptive V6 Word-to-PPT workflow."""
 
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -14,7 +15,8 @@ from fixed_region_contract import BODY_BOX_CM, CONTRACT_VERSION, SLIDE_SIZE_CM
 WORKFLOW_VERSION = "word-ppt-workflow-v6"
 PROJECT_ARTIFACT_VERSION = "word-ppt-project-v6"
 PAGE_ARTIFACT_VERSION = "word-ppt-page-v6"
-IMAGE_POLICY = "gpt-image-2-generate-only"
+IMAGE_POLICY = "generate-without-refs-edit-with-confirmed-refs"
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 PAGE_STATES = frozenset({
     "prepared",
@@ -50,6 +52,39 @@ def canonical_sha256(value: Any) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def request_identity(
+    *,
+    revision_digest: str,
+    prompt_sha256: str,
+    operation: str,
+    quality: str,
+    input_sha256s: Sequence[str],
+) -> str:
+    """Return the local, path-neutral identity of one adaptive Image2 request."""
+    for name, value in (
+        ("revision_digest", revision_digest),
+        ("prompt_sha256", prompt_sha256),
+    ):
+        if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+            raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    if operation not in {"generate", "edit"}:
+        raise ValueError("operation must be generate or edit")
+    if quality not in {"medium", "high"}:
+        raise ValueError("quality must be medium or high")
+    if isinstance(input_sha256s, (str, bytes)) or not isinstance(input_sha256s, Sequence):
+        raise ValueError("input_sha256s must be an ordered digest sequence")
+    inputs = list(input_sha256s)
+    if any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in inputs):
+        raise ValueError("input_sha256s contains an invalid digest")
+    return canonical_sha256({
+        "input_sha256s": inputs,
+        "operation": operation,
+        "prompt_sha256": prompt_sha256,
+        "quality": quality,
+        "revision_digest": revision_digest,
+    })
 
 
 def geometry_contract() -> dict[str, Any]:
@@ -98,6 +133,9 @@ def new_project(
         "word_source": copy.deepcopy(dict(word_source)),
         "logo_source": copy.deepcopy(dict(logo_source)),
         "style_confirmation": {"status": "pending", "contract": None},
+        "confirmed_ui_revision": None,
+        "confirmed_ui_digest": None,
+        "page_materials_status": "pre_confirmation",
         "pages": [copy.deepcopy(dict(page)) for page in pages],
     }
     project["source_identity"] = canonical_sha256({
@@ -158,6 +196,9 @@ def validate_project(project: Mapping[str, Any]) -> None:
         "logo_source",
         "source_identity",
         "style_confirmation",
+        "confirmed_ui_revision",
+        "confirmed_ui_digest",
+        "page_materials_status",
         "pages",
     }
     if set(project) != required:
@@ -167,7 +208,9 @@ def validate_project(project: Mapping[str, Any]) -> None:
     if project["workflow_contract_version"] != WORKFLOW_VERSION:
         raise ValueError("V6 workflow contract version is invalid")
     if project["image_policy"] != IMAGE_POLICY:
-        raise ValueError("V6 must use the generate-only Image2 policy")
+        raise ValueError(
+            "V6 image policy must generate without confirmed references and edit with them"
+        )
     if project["geometry"] != geometry_contract():
         raise ValueError("V6 fixed geometry contract changed")
     if not isinstance(project["word_source"], Mapping) or not isinstance(
@@ -187,6 +230,18 @@ def validate_project(project: Mapping[str, Any]) -> None:
         raise ValueError("V6 style status is invalid")
     if style["status"] == "confirmed" and not isinstance(style["contract"], Mapping):
         raise ValueError("confirmed V6 style requires a contract")
+    revision = project["confirmed_ui_revision"]
+    digest = project["confirmed_ui_digest"]
+    materials_status = project["page_materials_status"]
+    if materials_status not in {"pre_confirmation", "confirmed"}:
+        raise ValueError("V6 page materials status is invalid")
+    if materials_status == "pre_confirmation" and (revision is not None or digest is not None):
+        raise ValueError("unconfirmed V6 materials cannot carry a confirmed UI revision")
+    if materials_status == "confirmed":
+        if type(revision) is not int or revision < 1:
+            raise ValueError("confirmed V6 materials require a positive UI revision")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ValueError("confirmed V6 materials require a UI digest")
     pages = project["pages"]
     if not isinstance(pages, list) or not pages:
         raise ValueError("V6 project requires at least one page")

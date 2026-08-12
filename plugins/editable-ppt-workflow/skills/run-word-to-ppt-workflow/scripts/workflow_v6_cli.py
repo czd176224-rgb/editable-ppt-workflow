@@ -1,8 +1,9 @@
-"""Production command line for the generate-only V6 Word-to-PPT workflow."""
+"""Production command line for the adaptive V6 Word-to-PPT workflow."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,14 @@ from workflow_v6_reconstruction import (
     build_reconstruction_request,
     finalize_reconstructed_page,
 )
-from workflow_v6_source import initialize_v6_project
-from workflow_v6_state import load, save
+from workflow_v6_source import (
+    confirm_reference,
+    fail_reference,
+    import_reference,
+    initialize_v6_project,
+    reject_reference,
+)
+from workflow_v6_state import load, mutation_lock, save
 
 
 def _emit(value: Any) -> None:
@@ -62,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     generate = sub.add_parser("generate-page", help="generate and lightly review one body")
     generate.add_argument("--project", type=Path, required=True)
     generate.add_argument("--page", type=int, required=True)
-    generate.add_argument("--max-candidates", type=int, default=3)
+    generate.add_argument("--max-candidates", type=int, choices=(1, 2), default=2)
     request = sub.add_parser("reconstruction-request", help="write one editable reconstruction request")
     request.add_argument("--project", type=Path, required=True)
     request.add_argument("--page", type=int, required=True)
@@ -72,6 +79,26 @@ def _parser() -> argparse.ArgumentParser:
     finalize.add_argument("--body-pptx", type=Path, required=True)
     assemble = sub.add_parser("assemble", help="mechanically assemble all completed pages")
     assemble.add_argument("--project", type=Path, required=True)
+    import_ref = sub.add_parser("import-reference", help="confirm one local real-image result")
+    import_ref.add_argument("--project", type=Path, required=True)
+    import_ref.add_argument("--page", type=int, required=True)
+    import_ref.add_argument("--request-id", required=True)
+    import_ref.add_argument("--image", type=Path, required=True)
+    import_ref.add_argument("--source-url")
+    fail_ref = sub.add_parser("fail-reference", help="close one unavailable real-image request")
+    fail_ref.add_argument("--project", type=Path, required=True)
+    fail_ref.add_argument("--page", type=int, required=True)
+    fail_ref.add_argument("--request-id", required=True)
+    fail_ref.add_argument("--reason", required=True)
+    reject_ref = sub.add_parser("reject-reference", help="reject one found local real-image candidate")
+    reject_ref.add_argument("--project", type=Path, required=True)
+    reject_ref.add_argument("--page", type=int, required=True)
+    reject_ref.add_argument("--request-id", required=True)
+    reject_ref.add_argument("--reason", required=True)
+    confirm_ref = sub.add_parser("confirm-reference", help="confirm one found local real-image candidate")
+    confirm_ref.add_argument("--project", type=Path, required=True)
+    confirm_ref.add_argument("--page", type=int, required=True)
+    confirm_ref.add_argument("--request-id", required=True)
     return parser
 
 
@@ -83,13 +110,30 @@ def main() -> int:
     elif args.command == "status":
         _emit(_status(args.project))
     elif args.command == "confirm-style":
-        raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
-        state = load(args.project)
-        state["style_confirmation"] = {
-            "status": "confirmed",
-            "contract": compile_style_execution(raw),
-        }
-        save(args.project, state)
+        with mutation_lock(args.project):
+            raw = json.loads(args.ui_result.read_text(encoding="utf-8"))
+            live_path = args.project / "confirm_ui" / "result.json"
+            if not live_path.is_file():
+                raise ValueError("confirm-style requires the authoritative confirm_ui/result.json")
+            live = json.loads(live_path.read_text(encoding="utf-8"))
+            canonical = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if canonical(raw) != canonical(live):
+                raise ValueError("confirm-style input does not match the authoritative UI result")
+            state = load(args.project)
+            if not isinstance(live, dict) or live.get("status") != "confirmed":
+                raise ValueError("confirm-style requires one confirmed UI revision")
+            if isinstance(live.get("global_visual_contract"), dict):
+                revision = live.get("revision")
+                pages = live.get("confirmed_pages")
+                if type(revision) is not int or revision < 1 or not isinstance(pages, list):
+                    raise ValueError("confirmed UI revision is incomplete")
+                if [item.get("page_number") for item in pages if isinstance(item, dict)] != list(range(1, len(state["pages"]) + 1)):
+                    raise ValueError("confirmed UI pages are incomplete")
+                state["confirmed_ui_revision"] = revision
+                state["confirmed_ui_digest"] = hashlib.sha256(canonical(live).encode("utf-8")).hexdigest()
+                state["page_materials_status"] = "confirmed"
+            state["style_confirmation"] = {"status": "confirmed", "contract": compile_style_execution(live)}
+            save(args.project, state)
         _emit(_status(args.project))
     elif args.command == "generate-page":
         _emit(generate_page_body(args.project, page_number=args.page, max_candidates=args.max_candidates))
@@ -99,6 +143,25 @@ def main() -> int:
         _emit(finalize_reconstructed_page(args.project, page_number=args.page, reconstructed_body=args.body_pptx))
     elif args.command == "assemble":
         _emit(assemble_v6_deck(args.project))
+    elif args.command == "import-reference":
+        _emit(import_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            image=args.image, source_url=args.source_url,
+        ))
+    elif args.command == "fail-reference":
+        _emit(fail_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            reason=args.reason,
+        ))
+    elif args.command == "reject-reference":
+        _emit(reject_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+            reason=args.reason,
+        ))
+    elif args.command == "confirm-reference":
+        _emit(confirm_reference(
+            args.project, page_number=args.page, request_id=args.request_id,
+        ))
     return 0
 
 

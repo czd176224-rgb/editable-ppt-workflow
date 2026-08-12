@@ -416,7 +416,7 @@ def _visual_decisions(text: str) -> tuple[list[dict[str, Any]], bool]:
 
 def _protected_decision(text: str) -> dict[str, Any] | None:
     def changes(target_pattern: str) -> bool:
-        verb = r"(?:改成|替换|修改|change|replace)"
+        verb = r"(?:改成|改为|替换|修改|change|replace)"
         return bool(
             re.search(
                 rf"(?:{target_pattern}).{{0,30}}{verb}|{verb}.{{0,30}}(?:{target_pattern})",

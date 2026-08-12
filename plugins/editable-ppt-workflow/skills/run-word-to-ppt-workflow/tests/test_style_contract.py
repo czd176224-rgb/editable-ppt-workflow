@@ -88,11 +88,65 @@ def confirmed_result() -> dict:
         "generation_mode": "continuous",
         "refine_spec": False,
         "image_quality": "high",
-        "max_concurrency": 4,
+        "max_concurrency": 2,
         "automatic_repair_budget": 2,
         "editable_output": True,
         "start_generation": True,
     }
+
+
+def _schema_errors(legacy_contract: dict, *, wrapped: bool):
+    schema = json.loads((ROOT / "schemas" / "style_confirmation.schema.json").read_text(encoding="utf-8"))
+    instance = legacy_contract
+    if wrapped:
+        instance = {
+            "status": "confirmed",
+            "revision": 1,
+            "confirmed_at": "2026-08-12T00:00:00+08:00",
+            "global_visual_contract": legacy_contract,
+            "production_profile": "balanced",
+            "confirmed_pages": [{
+                "page_number": 1,
+                "effective_body": "Approved body",
+                "attachment_extracts": [],
+                "chart_facts": [],
+                "image_requirements": [],
+                "degradations": [],
+                "reference_images": [],
+                "reference_decisions": [],
+            }],
+        }
+    return list(Draft202012Validator(schema).iter_errors(instance))
+
+
+@pytest.mark.parametrize("wrapped", [False, True], ids=["legacy", "v6-wrapper"])
+@pytest.mark.parametrize(
+    "field",
+    ["template_selection", "typography", "style_axes", "regional_style", "image_role"],
+)
+def test_style_schema_rejects_empty_required_nested_contracts(field: str, wrapped: bool):
+    """Replacing a detailed legacy definition with a bare object must remain invalid."""
+    contract = confirmed_result()
+    contract[field] = {}
+
+    assert _schema_errors(contract, wrapped=wrapped)
+
+
+@pytest.mark.parametrize("wrapped", [False, True], ids=["legacy", "v6-wrapper"])
+def test_style_schema_rejects_arbitrary_or_duplicate_layout_preferences(wrapped: bool):
+    """The legacy layout enum and uniqueness rules also govern V6's global contract."""
+    for layouts in (["arbitrary-layout"], ["auto", "auto"]):
+        contract = confirmed_result()
+        contract["layout_preferences"] = layouts
+        assert _schema_errors(contract, wrapped=wrapped)
+
+
+@pytest.mark.parametrize("wrapped", [False, True], ids=["legacy", "v6-wrapper"])
+def test_style_schema_narrowly_accepts_the_image_usage_policy(wrapped: bool):
+    contract = confirmed_result()
+    contract["image_usage_policy"] = "content-driven"
+
+    assert not _schema_errors(contract, wrapped=wrapped)
 
 
 def write_project(project: Path, confirmed: dict) -> None:
@@ -280,8 +334,8 @@ def test_freeze_writes_canonical_artifacts_validates_schemas_and_advances_workfl
         "ui_preview_audit_sha256": visual_hash_path.read_text(encoding="ascii").strip(),
     }
     assert state["scheduler"] == {
-        "concurrency": 4,
-        "configured_max": 4,
+        "concurrency": 2,
+        "configured_max": 2,
         "last_trigger": "style_confirmation",
     }
     assert state["runtime"] == {

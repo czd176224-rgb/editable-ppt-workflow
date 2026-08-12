@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import builtins
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import http.server
 import json
 import os
@@ -15,6 +17,7 @@ import time
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +58,143 @@ def load_server():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_v6_confirm_ui_import_and_routes_do_not_depend_on_v4_or_v5(monkeypatch, tmp_path: Path):
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith(("workflow_v4", "workflow_v5")):
+            raise AssertionError(f"V6 UI imported legacy module {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    server = load_server()
+    app = server.create_app(str(tmp_path))
+    assert "/api/health" in {rule.rule for rule in app.url_map.iter_rules()}
+
+
+def test_v6_confirm_ui_exposes_no_v5_routes(tmp_path: Path):
+    server = load_server()
+    app = server.create_app(str(tmp_path))
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    assert not any(rule.startswith("/api/v5/") for rule in rules)
+
+
+def test_media_endpoint_requires_matching_project_owner_and_nonce_for_every_variant(
+    tmp_path: Path,
+):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    for name in ("original.png", "thumbnail.png", "model-input.png"):
+        Image.new("RGB", (2, 2), "#336699").save(media_dir / name, format="PNG")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    paths = {
+        "original": "02_v6/reference_media/ref/original.png",
+        "thumbnail": "02_v6/reference_media/ref/thumbnail.png",
+        "model-input": "02_v6/reference_media/ref/model-input.png",
+    }
+    for variant, path in paths.items():
+        assert client.get(f"/api/media/{variant}/{path}").status_code == 403
+        response = client.get(
+            f"/api/media/{variant}/{path}", headers={"X-Confirm-Nonce": "n" * 32},
+        )
+        assert response.status_code == 200
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Content-Type"].startswith("image/png")
+
+
+def test_media_endpoint_rejects_svg_html_and_project_path_escape(tmp_path: Path):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    (media_dir / "original.svg").write_text("<svg/>", encoding="utf-8")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+    headers = {"X-Confirm-Nonce": "n" * 32}
+
+    assert client.get("/api/media/original/02_v6/reference_media/ref/original.svg", headers=headers).status_code == 404
+    assert client.get("/api/media/thumbnail/../workflow_run.json", headers=headers).status_code == 404
+
+
+def test_media_endpoint_returns_the_one_validated_buffer_and_uses_variant_dispositions(tmp_path: Path, monkeypatch):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    original = media_dir / "original.png"
+    thumbnail = media_dir / "thumbnail.png"
+    initial = Image.new("RGB", (3, 2), "#123456")
+    initial.save(original, format="PNG")
+    initial.save(thumbnail, format="PNG")
+    original_bytes = original.read_bytes()
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    import workflow_v6_media
+    real_decode = workflow_v6_media._open_raster
+    replaced = False
+
+    def replace_after_decode(data: bytes):
+        nonlocal replaced
+        decoded = real_decode(data)
+        if not replaced:
+            replaced = True
+            original.write_bytes(b"not the validated image")
+        return decoded
+
+    monkeypatch.setattr(workflow_v6_media, "_open_raster", replace_after_decode)
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+    headers = {"X-Confirm-Nonce": "n" * 32}
+
+    original_response = client.get("/api/media/original/02_v6/reference_media/ref/original.png", headers=headers)
+    thumbnail_response = client.get("/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png", headers=headers)
+
+    assert original_response.status_code == 200
+    assert original_response.data == original_bytes
+    assert original_response.headers["Content-Disposition"].startswith("attachment")
+    assert thumbnail_response.status_code == 200
+    assert thumbnail_response.headers["Content-Disposition"].startswith("inline")
+
+
+def test_media_endpoint_rejects_oversized_tampered_media(tmp_path: Path):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    (media_dir / "thumbnail.png").write_bytes(b"x" * (25 * 1024 * 1024 + 1))
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    response = client.get(
+        "/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png",
+        headers={"X-Confirm-Nonce": "n" * 32},
+    )
+
+    assert response.status_code == 404
+
+
+def test_media_endpoint_rejects_handle_path_escape_before_reading_payload(tmp_path: Path, monkeypatch):
+    server = load_server()
+    project = tmp_path / "project"
+    media_dir = project / "02_v6" / "reference_media" / "ref"
+    media_dir.mkdir(parents=True)
+    Image.new("RGB", (2, 2), "#336699").save(media_dir / "thumbnail.png", format="PNG")
+    owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}
+    import workflow_v6_media
+    final_paths = iter((project.resolve(), tmp_path / "outside.png"))
+    monkeypatch.setattr(workflow_v6_media, "_final_path_for_handle", lambda _handle: next(final_paths))
+    client = server.create_app(str(project), lock_owner=owner).test_client()
+
+    response = client.get(
+        "/api/media/thumbnail/02_v6/reference_media/ref/thumbnail.png",
+        headers={"X-Confirm-Nonce": "n" * 32},
+    )
+
+    assert response.status_code == 404
 
 
 @pytest.fixture
@@ -225,6 +365,350 @@ def valid_one_screen_submission(direction: int = 0) -> dict:
         "production_profile": "balanced",
         "additional_requirements": "减少无意义图标，保持正式克制",
     }
+
+
+def _v6_project_for_final_confirmation(tmp_path: Path) -> Path:
+    """Create the smallest real V6 project whose page materials are editable."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_contract import new_page, new_project
+    from workflow_v6_materials import new_page_materials
+    from workflow_v6_state import create
+
+    project = tmp_path / "v6-project"
+    create(project, new_project(
+        word_source={"path": "00_source/source.docx", "sha256": "a" * 64},
+        logo_source={"path": "00_source/logo.svg", "sha256": "b" * 64},
+        pages=[new_page(1, title="Fixed title")],
+    ))
+    materials = new_page_materials(
+        page_number=1,
+        fixed_page_title="Fixed title",
+        word_original="Fixed title\nOriginal context only",
+        effective_body="Editable material body",
+    )
+    materials.update({
+        "attachment_extracts": [{"attachment_id": "budget", "status": "available", "content": [{"amount": 42}]}],
+        "chart_facts": [{"title": "Growth", "series": [{"name": "2026", "value": 42}]}],
+        "image_requirements": [{"kind": "text_only", "concept": "timeline"}],
+        "degradations": [{"code": "attachment_unavailable", "detail": "Use a text summary."}],
+    })
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    material_path.parent.mkdir(parents=True)
+    material_path.write_text(json.dumps(materials, ensure_ascii=False), encoding="utf-8")
+    source_path = project / "02_v6" / "page_sources" / "page_001.json"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps({"word_original": materials["word_original"], "references": []}), encoding="utf-8")
+    (project / "confirm_ui").mkdir()
+    write_recommendations(project, one_screen_recommendations())
+    return project
+
+
+def test_v6_final_submission_freezes_one_complete_revision_and_rejects_stale_payloads(tmp_path: Path):
+    """Dropping any editable material or accepting a stale revision corrupts Image2 authority."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    client = server.create_app(project).test_client()
+
+    view = client.get("/api/pages").get_json()["pages"][0]
+    assert view["word_original"] == "Fixed title\nOriginal context only"
+    assert view["fixed_page_title"] == "Fixed title"
+    assert view["effective_body"] == "Editable material body"
+    payload = valid_one_screen_submission()
+    payload.update({
+        "revision": 0,
+        "confirmed_pages": [{
+            "page_number": 1,
+            "effective_body": "Reviewer-approved body",
+            "attachment_extracts": view["attachment_extracts"],
+            "chart_facts": view["chart_facts"],
+            "image_requirements": view["image_requirements"],
+            "degradations": view["degradations"],
+            "reference_images": [],
+            "reference_decisions": [],
+        }],
+    })
+    first = client.post("/api/confirm", json=payload)
+    assert first.status_code == 200, first.get_json()
+    result = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert result["revision"] == 1
+    assert result["global_visual_contract"]["visual_style"] == "editorial"
+    assert result["confirmed_pages"][0]["effective_body"] == "Reviewer-approved body"
+    assert "word_original" not in result["confirmed_pages"][0]
+    assert "fixed_page_title" not in result["confirmed_pages"][0]
+
+    stale = client.post("/api/confirm", json=payload)
+    assert stale.status_code == 400
+    assert "exactly once" in stale.get_json()["error"]
+    payload["revision"] = 1
+    payload["confirmed_pages"][0]["effective_body"] = "Reconfirmed body"
+    second = client.post("/api/confirm", json=payload)
+    assert second.status_code == 400
+    assert "exactly once" in second.get_json()["error"]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
+
+
+def test_v6_final_submission_only_replaces_result_and_never_mutates_source_artifacts(tmp_path: Path):
+    """A failed or successful final submit must not rewrite pre-confirmation evidence."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    client = server.create_app(project).test_client()
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    state_path = project / "workflow_v6.json"
+    before = {path: path.read_bytes() for path in (material_path, state_path)}
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Frozen only in result",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    assert {path: path.read_bytes() for path in before} == before
+    result = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert result["confirmed_pages"][0]["effective_body"] == "Frozen only in result"
+    reopened = client.get("/api/recommendations")
+    assert reopened.status_code == 200 and reopened.get_json()["stage"] == "final"
+    assert client.get("/api/session").get_json()["revision"] == 1
+    assert client.get("/api/pages").get_json()["pages"][0]["effective_body"] == "Frozen only in result"
+
+
+def test_v6_concurrent_same_base_submissions_leave_one_authoritative_revision(tmp_path: Path):
+    """Without the project confirmation lock, two same-base submits could both claim revision 1."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    page = server.create_app(project).test_client().get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Concurrent body",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+
+    def submit():
+        try:
+            return server._stage_submission(project, payload)
+        except ValueError as error:
+            return None, str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _index: submit(), range(2)))
+
+    successes = [result for result, error in outcomes if result is not None and error is None]
+    failures = [error for result, error in outcomes if result is None or error is not None]
+    assert len(successes) == 1
+    assert len(failures) == 1 and "exactly once" in failures[0]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
+
+
+def test_v6_final_write_fault_leaves_every_source_artifact_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A persistence fault must fail before any material, receipt, or state mutation."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server()
+    page = server.create_app(project).test_client().get("/api/pages").get_json()["pages"][0]
+    tracked = [project / "02_v6" / "page_materials" / "page_001.json", project / "workflow_v6.json"]
+    before = {path: path.read_bytes() for path in tracked}
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "No partial write",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+    monkeypatch.setattr(server, "_write_json", lambda *_args: (_ for _ in ()).throw(OSError("injected write failure")))
+
+    with pytest.raises(OSError, match="injected write failure"):
+        server._stage_submission(project, payload)
+
+    assert {path: path.read_bytes() for path in tracked} == before
+    assert not (project / "confirm_ui" / "result.json").exists()
+
+
+def test_v6_route_persists_result_once_inside_the_confirmation_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A route-level second write could overwrite a newer revision after the lock is released."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    server = load_server(); client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": "Single write",
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [],
+    }]})
+    real_write = server._write_json; writes = []
+    def tracked(path, value):
+        if Path(path).name == "result.json": writes.append(value)
+        return real_write(path, value)
+    monkeypatch.setattr(server, "_write_json", tracked)
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    assert len(writes) == 1
+
+
+def test_v6_ui_prompt_estimate_uses_the_shared_final_prompt_contract():
+    """A divergent UI estimate could accept material the final prompt compiler must reject."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_prompt_contract import estimate_frozen_page_chars
+    server = load_server()
+    contract = {"visual_style": "balanced"}; page = {"effective_body": "x" * 17, "reference_images": []}
+
+    assert server._estimate_v6_final_prompt_chars(contract, page) == estimate_frozen_page_chars(contract, page)
+
+
+def test_shared_confirmed_page_compiler_is_the_exact_ui_estimate_and_excludes_word_context():
+    """The UI cannot safely budget a different prompt than Image2 will receive."""
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_prompt_contract import compile_confirmed_page_prompt
+    server = load_server()
+    contract = {"visual_style": "editorial", "production_profile": "balanced"}
+    page = {"page_number": 1, "effective_body": "Approved body", "attachment_extracts": [], "chart_facts": [], "image_requirements": [], "reference_images": [], "degradations": [], "word_original": "raw comment must not leak", "fixed_page_title": "Fixed title must not leak"}
+    prompt = compile_confirmed_page_prompt(contract, page)
+
+    assert server._estimate_v6_final_prompt_chars(contract, page) == len(prompt)
+    assert "Approved body" in prompt and "editorial" in prompt
+    assert "raw comment must not leak" not in prompt and "Fixed title must not leak" not in prompt
+
+
+def test_v6_final_submission_copies_accepted_found_candidate_without_mutating_receipt(tmp_path: Path):
+    """A reviewer decision belongs to the frozen revision, not the acquisition lifecycle receipt."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_source import import_reference
+    receipt_path = project / "02_v6" / "reference_materials" / "page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({"artifact_version": "reference-materials-v6", "page_number": 1, "references": [], "search_requests": [], "reference_acquisitions": [{"request_id": "found-1", "page_number": 1, "purpose": "evidence", "identity_evidence_need": "show evidence", "status": "pending", "history": ["pending"]}]}), encoding="utf-8")
+    image = tmp_path / "candidate.png"; Image.new("RGB", (4, 2), "#336699").save(image, format="PNG")
+    import_reference(project, page_number=1, request_id="found-1", image=image, source_url="https://example.test/image.png")
+    receipt_before = receipt_path.read_bytes()
+    server = load_server(); owner = {"pid": 1234, "port": 5050, "project": str(project.resolve()), "nonce": "n" * 32}; client = server.create_app(project, lock_owner=owner).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    assert page["found_reference_candidates"][0]["request_id"] == "found-1"
+    candidate_url = page["found_reference_candidates"][0]["thumbnail_url"]
+    assert "nonce=" + owner["nonce"] in candidate_url
+    assert client.get(candidate_url).status_code == 200
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [], "reference_decisions": [{"request_id": "found-1", "decision": "accept"}],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    frozen = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["confirmed_pages"][0]
+    assert frozen["reference_decisions"] == [{"request_id": "found-1", "decision": "accept"}]
+    assert frozen["reference_images"][0]["source_url"] == "https://example.test/image.png"
+    assert receipt_path.read_bytes() == receipt_before
+    second_payload = dict(payload)
+    second_payload["revision"] = 1
+    second = client.post("/api/confirm", json=second_payload)
+    assert second.status_code == 400
+    assert "exactly once" in second.get_json()["error"]
+    assert json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))["revision"] == 1
+
+
+def test_v6_final_submission_can_remove_preconfirmed_irrelevant_reference(tmp_path: Path):
+    """Custody confirmation cannot silently promote an irrelevant image past final UI review."""
+    project = _v6_project_for_final_confirmation(tmp_path)
+    scripts = ROOT / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from workflow_v6_source import confirm_reference, import_reference
+
+    receipt_path = project / "02_v6" / "reference_materials" / "page_001.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps({
+        "artifact_version": "reference-materials-v6", "page_number": 1,
+        "references": [], "search_requests": [],
+        "reference_acquisitions": [{
+            "request_id": "irrelevant-1", "page_number": 1,
+            "purpose": "real meeting photo", "identity_evidence_need": "meeting participants",
+            "status": "pending", "history": ["pending"],
+        }],
+    }), encoding="utf-8")
+    image = tmp_path / "irrelevant.png"
+    Image.new("RGB", (8, 5), "white").save(image)
+    import_reference(project, page_number=1, request_id="irrelevant-1", image=image, source_url=None)
+    confirm_reference(project, page_number=1, request_id="irrelevant-1")
+
+    server = load_server()
+    client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    assert page["reference_images"][0]["review_decision"] == ""
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [{
+            "reference_id": item["reference_id"], "purpose": item["purpose"],
+            "allow_crop": item["allow_crop"], "allow_restyle": item["allow_restyle"],
+            "status": item["status"], "decision": "remove",
+        } for item in page["reference_images"]],
+        "reference_decisions": [],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 200, response.get_json()
+    frozen = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
+    assert frozen["revision"] == 1
+    assert frozen["confirmed_pages"][0]["reference_images"] == []
+    assert frozen["confirmed_pages"][0]["reference_decisions"] == [{
+        "reference_id": page["reference_images"][0]["reference_id"], "decision": "remove",
+    }]
+
+
+def test_v6_final_submission_rejects_unreviewed_preconfirmed_reference(tmp_path: Path):
+    project = _v6_project_for_final_confirmation(tmp_path)
+    material_path = project / "02_v6" / "page_materials" / "page_001.json"
+    material = json.loads(material_path.read_text(encoding="utf-8"))
+    reference = {
+        "reference_id": "preconfirmed", "kind": "photo", "source": "attachment",
+        "purpose": "meeting", "status": "available", "source_url": None,
+        "original_path": "02_v6/reference_media/preconfirmed/original.png",
+        "thumbnail_path": "02_v6/reference_media/preconfirmed/thumbnail.png",
+        "model_input_path": "02_v6/reference_media/preconfirmed/model-input.jpg",
+        "allow_crop": False, "allow_restyle": False,
+        "integrity": {"original_sha256": "a" * 64, "thumbnail_sha256": "b" * 64, "model_input_sha256": "c" * 64},
+    }
+    material["reference_images"] = [reference]
+    material_path.write_text(json.dumps(material), encoding="utf-8")
+    server = load_server(); client = server.create_app(project).test_client()
+    page = client.get("/api/pages").get_json()["pages"][0]
+    payload = valid_one_screen_submission()
+    payload.update({"revision": 0, "confirmed_pages": [{
+        "page_number": 1, "effective_body": page["effective_body"],
+        "attachment_extracts": page["attachment_extracts"], "chart_facts": page["chart_facts"],
+        "image_requirements": page["image_requirements"], "degradations": page["degradations"],
+        "reference_images": [{
+            "reference_id": "preconfirmed", "purpose": "meeting", "allow_crop": False,
+            "allow_restyle": False, "status": "available", "decision": "",
+        }], "reference_decisions": [],
+    }]})
+
+    response = client.post("/api/confirm", json=payload)
+
+    assert response.status_code == 400
+    assert "explicit keep or remove" in response.get_json()["error"]
+    assert not (project / "confirm_ui" / "result.json").exists()
 
 
 def test_one_screen_confirmation_does_not_ask_for_fixed_frame_geometry(project: Path):
@@ -445,18 +929,21 @@ def test_tampered_page_requirement_summary_blocks_ui(project: Path):
     assert "seal" in response.get_json()["error"]
 
 
-def test_static_ui_renders_read_only_requirements_without_page_approval_controls(project: Path):
+def test_static_ui_keeps_one_final_submission_for_global_style_and_page_materials(project: Path):
     app_js = (ROOT / "scripts" / "confirm_ui" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "scripts" / "confirm_ui" / "static" / "index.html").read_text(encoding="utf-8")
 
     assert "pageRequirementSummary" in app_js
+    assert "renderEditablePageMaterials" in app_js
+    assert "confirmed_pages" in app_js
+    assert 'document.querySelector(".invalid-json")' in app_js
     assert "precedenceNotice" in app_js
     assert "detected-page-requirements" in app_js
     assert "只读" in app_js
     assert app_js.count('requestJson("/api/confirm"') == 1
     assert "page-approve" not in app_js
     assert "逐页确认" not in app_js
-    assert 'data-confirmation-scope="global-style-only"' in index_html
+    assert 'data-confirmation-scope="global-style-and-page-materials"' in index_html
 
 
 def test_one_screen_rejects_removed_4_by_3_canvas(project: Path):
@@ -509,7 +996,7 @@ def test_one_screen_submission_confirms_locked_project_in_one_request(project: P
     assert result["layout_preferences"] == ["auto", "editorial", "matrix"]
     assert result["production_profile"] == "balanced"
     assert result["image_quality"] == "high"
-    assert result["max_concurrency"] == 5
+    assert result["max_concurrency"] == 2
     assert result["automatic_repair_budget"] == 1
     assert result["formula_policy"] == "mixed"
     assert result["generation_mode"] == "continuous"
@@ -1108,9 +1595,9 @@ def test_one_screen_rejects_missing_layout_preferences(project: Path):
 @pytest.mark.parametrize(
     ("profile", "quality", "concurrency", "repair_budget"),
     [
-        ("quality", "high", 3, 2),
-        ("balanced", "high", 5, 1),
-        ("speed", "medium", 8, 1),
+        ("quality", "high", 2, 2),
+        ("balanced", "high", 2, 1),
+        ("speed", "medium", 3, 1),
     ],
 )
 def test_one_screen_maps_nontechnical_production_profile_to_execution_settings(

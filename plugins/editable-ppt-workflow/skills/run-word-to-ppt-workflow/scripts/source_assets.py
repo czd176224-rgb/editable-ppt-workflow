@@ -82,6 +82,51 @@ def extract_attachment_text(path: Path, media_type: str) -> str:
     return text[:120000]
 
 
+def _element_text(element: ElementTree.Element) -> str:
+    return "".join(node.text or "" for node in element.iter()).strip()
+
+
+def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
+    """Extract literal Word chart labels and cached values without producing an image input."""
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        return None
+
+    def descendants(node: ElementTree.Element, name: str) -> list[ElementTree.Element]:
+        return [item for item in node.iter() if item.tag.rsplit("}", 1)[-1] == name]
+
+    title_node = next(iter(descendants(root, "title")), None)
+    title = _element_text(title_node) if title_node is not None else ""
+    if not title:
+        return None
+    series: list[dict[str, Any]] = []
+    for series_node in descendants(root, "ser"):
+        series_title = ""
+        tx_node = next(iter(descendants(series_node, "tx")), None)
+        if tx_node is not None:
+            series_title = _element_text(tx_node)
+        values: list[str] = []
+        times: list[str] = []
+        for child in series_node:
+            local = child.tag.rsplit("}", 1)[-1]
+            points = descendants(child, "pt")
+            if local in {"cat", "xVal"}:
+                times = [_element_text(point) for point in points]
+            elif local in {"val", "yVal"}:
+                values = [_element_text(point) for point in points]
+        record: dict[str, Any] = {"series": series_title, "values": values}
+        if times:
+            record["times"] = times
+        series.append(record)
+    return {
+        "page_numbers": list(asset["page_numbers"]),
+        "source_asset_id": asset["asset_id"],
+        "title": title,
+        "series": series,
+    }
+
+
 def _read_relationships(docx_path: Path) -> dict[str, str | None]:
     """Read document-part relationships; ``None`` denotes an external target."""
     with zipfile.ZipFile(docx_path) as archive:
@@ -331,6 +376,7 @@ def extract_source_assets(docx_path: Path, pages_payload: dict, output_dir: Path
             )
 
     manifest = build_manifest(occurrences, source_file=docx_path.name)
+    chart_records: list[dict[str, Any]] = []
     for asset in manifest["assets"]:
         if asset["sha256"] is None:
             continue
@@ -341,6 +387,10 @@ def extract_source_assets(docx_path: Path, pages_payload: dict, output_dir: Path
         if destination.exists() and destination.read_bytes() != data:
             raise ValueError(f"refusing to overwrite different source asset: {destination}")
         destination.write_bytes(data)
+        if asset["media_type"] == "application/vnd.openxmlformats-officedocument.drawingml.chart+xml":
+            chart = _chart_record(asset, data)
+            if chart is not None:
+                chart_records.append(chart)
         if asset["media_type"] in SUPPORTED_GENERATION_MEDIA:
             asset["generation_input"] = {
                 "relative_path": asset["relative_path"],
@@ -390,4 +440,6 @@ def extract_source_assets(docx_path: Path, pages_payload: dict, output_dir: Path
                     "derivation": "text_extraction",
                     "source_sha256": asset["sha256"],
                 }
+    if chart_records:
+        manifest["chart_records"] = chart_records
     return manifest

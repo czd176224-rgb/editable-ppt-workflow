@@ -1,29 +1,21 @@
-# 使用说明（word-ppt-workflow-v5）
+# 使用说明（word-ppt-workflow-v6）
 
-## 输入与分页
+## 一次最终确认
 
-每个项目需要一个分页 Word 和一个 SVG Logo。一页 Word 固定对应一页 16:9 PPT。优先识别连续的“第1页、第2页……”标记；完全没有标记时才使用物理分页。Word 中的批注只指导本页生成，不进入正文。
+每个新项目需要一个分页 Word 和一个 SVG Logo；一页 Word 固定对应一页 16:9 PPT。UI 中只进行一次最终提交。该提交是 sole material/reference authority（材料与参考图唯一权威）：本页有效正文、附件提取、图表事实、具体生图要求和参考图选择都会冻结，后台不得再次解释批注、增删事实或改写用户确认内容。
 
-## 当前风格 UI
+每张候选参考图都必须 explicit keep/remove（明确保留或移除）。无法访问的附件和已失败的单次搜索会显示降级状态，但不阻断。
 
-当前 UI 仍保留一次全局确认，并通过临时版本化 `confirm-ui-result-v1` 适配器生成确定性风格合同。下游不读取原始 UI 字段。后续 UI 改版不会改变材料、生成、QA 和重建合同。
+## 自适应 Image2
 
-## 每页 Image2
+没有确认参考图时使用 `generate`；有 `1–16 confirmed refs` 时使用 `edit`，并按确认顺序携带原图和用途。真实 Logo、截图和照片只能做到 high-fidelity best effort（高保真尽力融合），never pixel-perfect（绝不承诺像素级一致）。图表可转换为文字事实后参与生成。
 
-每个页面都调用 Image2 生成完整正文设计。目标宽高比是 17:8，允许相对误差不超过 1%；不合格结果必须修复或阻断。标题、Logo、页脚和页码不由 Image2 生成。
+提供商若返回非 1904x896 或不符合 17:8 容差的输出，将被 rejected rather than stretched or cropped（拒绝而不是拉伸或裁剪）。重试保持原操作和原参考图，第一版只作回退依据。
 
-页内 Word 图片默认只作 Image2 素材；只有精确页内批注或归一化全局风格要求才必须直接出现。附件只作本页不可信参考。只有批注明确要求搜索时才会取得有来源、数量受限的搜索材料。Logo 永不发送给 Image2。
+## QA、重建与固定层
 
-## QA、修复与重建
+轻量 QA 仅检查用户确认的本页要求、有效正文、风格、可读性、17:8 和固定层禁区。QA outage is nonblocking candidate1 fallback：服务不可用时使用 candidate1，并在记录中明确标记 `unvalidated`，不伪造通过。
 
-确定性前置检查先验证 Word 原文、表格事实、批注优先级、必需真实图片、固定图层冲突和精确画布；这些检查不调用模型。修复是问题定向且次数有界。
+接受的正文图进行对象级可编辑重建；固定页面标题、original SVG logo、页脚和页码始终作为 PPT 原生层添加。V6 没有 V4/V5 runtime fallback、exact overlay 或 post-reconstruction visual repair。
 
-已接受的 Image2 正文图决定视觉布局，Word 决定精确文字和原生表格。重建不得重新设计；复杂照片、纹理、阴影和难以等价矢量化的局部视觉可保留为有来源的局部图片。最终成对 QA 同时查看 Image2 原图与可编辑页，只有内容硬错误、真实素材硬错误或明显视觉走样才阻断；软性审美建议只记录，不阻塞交付。
-
-## 缓存与恢复
-
-材料、生成、QA、重建、完成页和最终组装分别缓存并绑定内容身份。Word、Logo 或已确认风格变化会使下游缓存失效；缓存不会覆盖更新后的文件。进程中断、服务超时、局部页面失败或最终组装失败后，重复同一命令会从最后一个通过验证的阶段继续。
-
-## 凭证与网络
-
-Image2 使用 Codex OAuth，并按生产档位生成精确像素尺寸。QA 与视觉重建通过本地 Codex App Server 使用 ChatGPT 管理的 OAuth 和订阅额度，不读取或持久化令牌，也不需要 OpenAI API key。每次网关调用都有硬超时、请求/结果哈希、Codex turn ID、HMAC 和 nonce 证据。
+重建可能需要独立的 `editppt` authentication。Image2 可正常不代表重建令牌也有效；认证错误请按故障排除处理。

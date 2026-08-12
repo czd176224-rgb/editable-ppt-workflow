@@ -1,11 +1,13 @@
-# Editable PPT Workflow 2.0.3
+# Editable PPT Workflow
 
-`word-ppt-workflow-v6` converts one paginated Word document and one SVG Logo into an object-level editable 16:9 PowerPoint.
+`word-ppt-workflow-v6` creates a new V6 project from one paginated Word document and one SVG Logo. Comments are resolved before the one Confirm UI into effective body edits, attachment extraction, and real-reference/image requirements. Pending real-reference acquisition runs once; inaccessible inputs are recorded without blocking.
 
-V6 uses a fixed 1904x896 (17:8) body region. Every body candidate is a fresh `gpt-image-2 generate` call; Word images, attachments and searched materials are references and never become `edit` inputs. Page comments are authoritative and may modify Word facts. Inaccessible references and ineffective later candidates do not block production.
+The UI final stage shows editable per-page materials and safe thumbnail, original and model-input controls. On submit, the sealed result is the only prompt and QA authority.
+Every staged image requires an explicit keep/remove decision in that one final submission, and only kept images enter the frozen result. Prior byte custody confirmation never bypasses this decision.
 
-After light QA, each accepted body is reconstructed into editable objects. The plugin then adds the native title, original SVG Logo, footer and page number and assembles pages in Word order. Final validation is mechanical; OfficeCLI inspection is optional.
+Image2 selection is adaptive: zero valid confirmed references uses `generate`; one to sixteen valid confirmed references uses `edit`, never an empty edit. Ordinary pages use `medium`, risk pages use `high`; retries reuse the same original references, never candidate 1. The workflow uses at most two candidates, bounded concurrency and nonblocking fallback.
+When semantic QA is unavailable, candidate 1 remains a permitted nonblocking fallback, but the receipt is `accepted_fallback_first` with `qa_unavailable`; it is never represented as a semantic pass.
 
-Version 2.0.3 keeps the V6 architecture and stabilizes its contracts: body text must be verbatim-grounded in effective Word/comment authority, the fixed page title is forbidden from Image2 output, documentary visuals require usable references, page imagery defaults to content-driven use, and the original SVG bytes are contained directly in the fixed logo box. Concurrent Windows state saves retry short-lived access denials without changing the workflow branches.
+Every Image2 body is the 1904x896 (17:8) body region inside a 16:9 slide. The fixed page title, original SVG Logo, footer and page number are native PPT layers outside Image2. Reference fusion is high-fidelity best effort. There is no post-generation exact overlay, no post-reconstruction visual repair or comparison, and no V4/V5 runtime fallback.
 
-Use the `run-word-to-ppt-workflow` skill as the production orchestrator. V4/V5 commands are not exposed by the production entry.
+Use `run-word-to-ppt-workflow` as the production orchestrator.

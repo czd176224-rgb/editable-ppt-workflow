@@ -1,4 +1,4 @@
-param([switch]$SkipPortableSmoke)
+param([switch]$SkipPortableSmoke, [switch]$PublicSnapshotOnly)
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -11,27 +11,30 @@ function Get-Sha256([string]$Path) {
 }
 Push-Location $RepoRoot
 try {
-    $wordTests = @(Get-ChildItem "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
-    for ($offset = 0; $offset -lt $wordTests.Count; $offset += 12) {
-        $last = [Math]::Min($offset + 11, $wordTests.Count - 1)
-        $batch = @($wordTests[$offset..$last] | ForEach-Object { $_.FullName })
-        & python -m pytest -p no:cacheprovider @batch -q
-        if ($LASTEXITCODE -ne 0) { throw "Word V6 test split failed at offset $offset." }
-    }
-    foreach ($suite in @(
-        "plugins/editable-ppt-workflow/skills/generate-slide-body-image/tests",
-        "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests",
-        "tests"
-    )) {
-        & python -m pytest -p no:cacheprovider $suite -q
-        if ($LASTEXITCODE -ne 0) { throw "Release test suite failed: $suite" }
-    }
+    $IsGitWorkTree = Test-Path -LiteralPath (Join-Path $RepoRoot ".git")
+    if (-not $PublicSnapshotOnly) {
+        $wordTests = @(Get-ChildItem "plugins/editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
+        for ($offset = 0; $offset -lt $wordTests.Count; $offset += 12) {
+            $last = [Math]::Min($offset + 11, $wordTests.Count - 1)
+            $batch = @($wordTests[$offset..$last] | ForEach-Object { $_.FullName })
+            & python -m pytest -p no:cacheprovider @batch -q
+            if ($LASTEXITCODE -ne 0) { throw "Word V6 test split failed at offset $offset." }
+        }
+        foreach ($suite in @(
+            "plugins/editable-ppt-workflow/skills/generate-slide-body-image/tests",
+            "plugins/editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests",
+            "tests"
+        )) {
+            & python -m pytest -p no:cacheprovider $suite -q
+            if ($LASTEXITCODE -ne 0) { throw "Release test suite failed: $suite" }
+        }
 
-    & python scripts/check_python_syntax.py
-    if ($LASTEXITCODE -ne 0) { throw "Python compilation failed." }
-    & python plugins/editable-ppt-workflow/scripts/check_current_runtime.py --repo-root $RepoRoot
-    if ($LASTEXITCODE -ne 0) { throw "Current-runtime policy scan failed." }
-    if (Test-Path -LiteralPath (Join-Path $RepoRoot ".git") -PathType Container) {
+        & python scripts/check_python_syntax.py
+        if ($LASTEXITCODE -ne 0) { throw "Python compilation failed." }
+        & python plugins/editable-ppt-workflow/scripts/check_current_runtime.py --repo-root $RepoRoot
+        if ($LASTEXITCODE -ne 0) { throw "Current-runtime policy scan failed." }
+    }
+    if ($IsGitWorkTree) {
         & git diff --check
         if ($LASTEXITCODE -ne 0) { throw "Git whitespace validation failed." }
     } else {
@@ -45,7 +48,7 @@ try {
         $parseErrors += $errors
     }
     if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }
-    Get-ChildItem -Recurse -Filter *.json -File | Where-Object { $_.FullName -notmatch '[\\/](\.git|dist)[\\/]' } | ForEach-Object {
+    Get-ChildItem -Recurse -Filter *.json -File | Where-Object { $_.FullName -notmatch '[\\/](\.git|dist|\.superpowers)[\\/]' } | ForEach-Object {
         Get-Content -Raw -Encoding UTF8 -LiteralPath $_.FullName | ConvertFrom-Json | Out-Null
     }
 
@@ -54,12 +57,12 @@ try {
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
         $package = Get-Content -Raw -Encoding UTF8 package-info.json | ConvertFrom-Json
         if ($package.releaseTag -ne ("v" + [string]$package.pluginVersion)) { throw "releaseTag/version mismatch." }
-        if ($package.repositoryVisibility -eq "public") {
-            $publicRoot = $RepoRoot
-            & python scripts/check_public_release.py . --write-report public-release-audit.json
-        } else {
+        if ($IsGitWorkTree) {
             $publicRoot = Join-Path $tempRoot "public"
             & .\scripts\export_public_release.ps1 -OutputPath $publicRoot
+        } else {
+            $publicRoot = $RepoRoot
+            & python scripts/check_public_release.py . --write-report public-release-audit.json
         }
         if ($LASTEXITCODE -ne 0) { throw "Public snapshot validation failed." }
 

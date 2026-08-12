@@ -31,13 +31,26 @@ def _project():
     )
 
 
-def test_v6_contract_is_generate_only_and_uses_fixed_geometry():
+def test_v6_contract_is_adaptive_and_uses_fixed_geometry():
     project = _project()
     assert project["workflow_contract_version"] == WORKFLOW_VERSION
     assert project["image_policy"] == IMAGE_POLICY
+    assert IMAGE_POLICY == "generate-without-refs-edit-with-confirmed-refs"
     assert project["geometry"]["slide_aspect"] == "16:9"
     assert project["geometry"]["body_aspect"] == "17:8"
     assert project["geometry"]["body_pixels"] == {"width": 1904, "height": 896}
+
+
+def test_active_v6_entrypoints_do_not_claim_generate_only():
+    active = [
+        ROOT / "scripts" / "word_to_editable_ppt.py",
+        ROOT / "scripts" / "workflow_v6_cli.py",
+        ROOT / "scripts" / "workflow_v6_contract.py",
+    ]
+    for path in active:
+        text = path.read_text(encoding="utf-8").lower()
+        assert "generate-only" not in text
+        assert "generate_only" not in text
 
 
 def test_v6_rejects_legacy_fields():
@@ -88,3 +101,15 @@ def test_v6_requires_contiguous_word_page_order():
             logo_source={"path": "logo.svg"},
             pages=[new_page(2, title="第二页")],
         )
+
+
+def test_confirmed_v6_project_rejects_non_hex_ui_digest():
+    project = _project()
+    project.update({
+        "confirmed_ui_revision": 1,
+        "confirmed_ui_digest": "z" * 64,
+        "page_materials_status": "confirmed",
+    })
+
+    with pytest.raises(ValueError, match="UI digest"):
+        validate_project(project)

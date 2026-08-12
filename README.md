@@ -1,32 +1,26 @@
-# Editable PPT Workflow 2.0.3
+# Editable PPT Workflow 2.1.0
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
-## V6 production contract
+## V6 adaptive production contract
 
-The production contract identifier is `word-ppt-workflow-v6`.
+The workflow contract is `word-ppt-workflow-v6`; the prompt contract is `page-prompt-v6-adaptive-confirmed-materials`.
 
-- One Word page becomes one slide.
-- One global visual style is confirmed in the UI.
-- The body is 1904x896 (17:8) inside a fixed 16:9 slide.
-- Every Image2 body call uses `gpt-image-2 generate`; references never trigger `edit` or `--image`.
-- Page comments may modify Word facts and request reference searches.
-- Word images, attachments and search results are reference material only. Unavailable references are recorded and ignored without blocking.
-- Light QA checks the effective page request, style, readability, 17:8 size and absence of generated fixed layers.
-- Failed or non-improving later candidates fall back to the first valid candidate.
-- Accepted bodies are reconstructed as editable objects; native title, SVG Logo, footer and page number are added afterward.
-- Generated body text is grounded verbatim in the effective Word body or active comments; fixed page titles stay out of Image2 output.
-- Documentary imagery is enabled only when usable reference descriptions exist, and page imagery is content-driven by default.
-- The fixed logo embeds the original SVG bytes directly, proportionally contained in the locked top-right box.
-- Final validation is mechanical. OfficeCLI is optional.
-
-The production dispatcher exposes V6 only. It does not migrate or resume V4/V5 state.
+- One Word page becomes one slide. The body is 1904x896 (17:8).
+- The single final UI submission is the sole material/reference authority. Every staged reference requires explicit keep/remove; the backend cannot reinterpret it afterward.
+- Zero confirmed references uses Image2 `generate`; 1–16 confirmed refs uses `edit`, preserving their ordered role descriptions.
+- Reference fusion is high-fidelity best effort, never a pixel-perfect guarantee.
+- QA outage is nonblocking: candidate1 is used and explicitly marked `unvalidated`.
+- Provider outputs with the wrong dimensions are rejected rather than stretched or cropped.
+- Fixed title, original SVG logo, footer and page number are PPT layers and never Image2 body content.
+- V6 has no V4/V5 runtime fallback, exact overlay, or post-reconstruction visual repair.
+- Object-level reconstruction may require separate `editppt` authentication.
 
 ## Install
 
-Download the immutable `v2.0.3` Windows release ZIP:
+Download the immutable `v2.1.0` Windows release ZIP:
 
-`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.0.3/editable-ppt-workflow-2.0.3-windows.zip`
+`https://github.com/czd176224-rgb/editable-ppt-workflow/releases/download/v2.1.0/editable-ppt-workflow-2.1.0-windows.zip`
 
 Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
 

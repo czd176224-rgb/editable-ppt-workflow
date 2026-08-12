@@ -595,6 +595,54 @@ def test_word_conflicts_preserve_the_audited_target(text, target):
     assert result.decisions[0]["target"] == target
 
 
+@pytest.mark.parametrize(
+    "text, target",
+    [
+        ("Change the revenue fact Revenue was 20% to Revenue was 30%.", "word.facts"),
+        ("Replace final body paragraph with Revised conclusion.", "word.body_text"),
+        ("将正文最后一段替换为新结论。", "word.body_text"),
+        ("将收入为20%改为收入为30%。", "word.facts"),
+        ("Replace the table with revised values.", "word.tables"),
+        ("将表格替换为修订数据。", "word.tables"),
+    ],
+)
+def test_word_change_classes_remain_deterministically_auditable(text: str, target: str):
+    """The V6 adapter relies on the resolver retaining the exact Word target class."""
+    result = resolve_comment_deterministically(text, page_context())
+
+    assert result is not None
+    assert result.decisions[0]["target"] == target
+
+
+@pytest.mark.parametrize(
+    "text, target",
+    [
+        ("Change the body to Replaced.", "word.body_text"),
+        ("\u5c06\u6536\u5165\u4e3a20%\u4fee\u6539\u4e3a\u6536\u5165\u4e3a30%\u3002", "word.facts"),
+    ],
+)
+def test_additional_recognized_word_edit_forms_keep_closed_targets(text: str, target: str):
+    """The adapter may only handle patterns that the deterministic resolver identifies by target."""
+    result = resolve_comment_deterministically(text, page_context())
+
+    assert result is not None
+    assert result.decisions[0]["target"] == target
+
+
+def test_fact_change_exposes_the_replacement_text_to_pre_ui_compilation():
+    """A fact decision without its replacement text could not produce a complete effective body."""
+    result = resolve_comment_deterministically(
+        "Change the key fact to Revenue expanded by 30%.", page_context(),
+    )
+
+    assert result is not None
+    assert result.decisions == ({
+        "target": "word.facts",
+        "action": "replace",
+        "value": "Change the key fact to Revenue expanded by 30%.",
+    },)
+
+
 def test_timeline_is_a_required_closed_layout_decision_consumed_by_authority():
     """Downgrading timeline to an empty note would erase a required natural comment."""
     result = resolve_comment_deterministically("本页采用时间轴", page_context())

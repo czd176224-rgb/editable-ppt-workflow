@@ -1,11 +1,11 @@
-# 分页 Word 转可编辑 PPT（V5）
+# Paginated Word to editable PowerPoint V6
 
-生产合同 `word-ppt-workflow-v5`；几何合同 `fixed-canvas-cm-v2`。PPT 为 16:9，每个未命中有效内容缓存的页面都生成精确 1904×896、17:8 的 Image2 正文设计，比例相对误差门槛为 1%。
+A new V6 project is created from the original paginated Word and SVG Logo. Before one Confirm UI opens, comments become effective body edits, attachment extraction instructions, and concrete real-reference/image requirements. Attachment and reference failures are nonblocking; pending reference acquisition runs once and ends as confirmed, rejected, or `failed_no_retry`.
 
-每页材料保留完整 Word 原文、表格、页内批注、页内图片、附件证据、一次确认的整体视觉合同，以及批注明确要求但源文件没有提供时一次性取得的真实素材。批注优先覆盖全局软风格，但不能改变 Word 事实、固定几何或 Logo。Logo 不进入正文生图。
+The final UI stage exposes editable page materials plus thumbnail, original and model-input media controls. After submission, the sealed result is the only prompt and QA authority; production never reinterprets comments or silently rewrites confirmed material.
+Every acquired image, including one whose bytes were custody-confirmed earlier, requires an explicit keep/remove decision in this single final submission. Only kept images enter the frozen result. The final submission cannot be reopened or submitted twice.
 
-Image2 输出先通过尺寸与真实素材保管链检查，再接受订阅模型的语义设计验收；失败只允许一次针对明确问题的定向修复。通过后的图片是可编辑重建的视觉权威。`reconstruct-editable-slide` 按其构图、层级、配色、留白和装饰拆成原生文字、表格、形状和局部图片，禁止整块正文图片冒充可编辑页面。
+For every 1904x896 body, zero valid confirmed references selects `generate`; one to sixteen valid confirmed references selects `edit`. Empty edit is forbidden. A retry uses the same original references, never candidate 1. Ordinary quality is `medium`; risk pages use `high`. The budget is at most two candidates with bounded concurrency and nonblocking fallback.
+If semantic QA is unavailable, generation does not pause: candidate 1 may be selected as `accepted_fallback_first`, with `qa_unavailable` recorded explicitly. This is a degraded nonblocking result, not a semantic pass and not proof that invented visual facts were checked.
 
-标题、原始 SVG Logo、页脚和页码由确定性代码加入固定区域。最终 QA 将已接受的 Image2 正文与最终页面中精确裁出的正文区域同尺寸比较；结构、Logo、页数、顺序和 Office 可打开性由确定性门禁验证。软性建议不会阻塞交付。
-
-全项目只确认一次视觉合同。V5 DAG、请求级幂等账本和项目级常驻 Codex App Server 负责页面隔离、断点恢复、搜索去重和模型调用复用；无需 `OPENAI_API_KEY`。
+The fixed page title, original SVG Logo, footer and page number remain outside Image2 and are added only as fixed PPT layers. Real-photo, screenshot and Logo fusion is high-fidelity best effort. There is no post-generation exact overlay, no post-reconstruction visual repair or comparison, and no V4/V5 runtime fallback.

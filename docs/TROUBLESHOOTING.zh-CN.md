@@ -1,29 +1,29 @@
-# 常见故障（V4）
+# 常见故障（V6 adaptive）
 
-## `await_style_confirmation`
+## 最终 UI 无法提交
 
-完成当前 UI 的最终确认后重跑。该 UI 是临时版本化适配层；不要手工修改风格 JSON。
+每张 staged reference 都必须 explicit keep/remove。检查所有页面的材料 JSON、参考图决定和修订号；最终提交是 sole material/reference authority，提交后后台不会静默修改。
 
-## Image2 生成失败或 `page_blocked`
+## Image2 输出比例错误
 
-确认 Codex 已登录、账户具备图片能力且网络可用。比例超出 17:8 的 1% 相对误差会触发修复或阻断。解决记录的认证、限流或输出问题后，再显式释放被阻断页面。
+输出必须是 1904x896，并符合 17:8 容差。错误尺寸会被 rejected rather than stretched or cropped；插件不会用拉伸或裁剪掩盖提供商错误。检查请求记录和候选状态后重试。
 
-## `qa_backend_pending` / `reconstruction_backend_pending`
+## 真实图片不像原图
 
-打开 Codex 桌面版或 CLI 并使用 ChatGPT 登录，确认本地 `codex app-server` 可启动。未登录、订阅能力不可用、超时、结构化输出无效、签名不一致或对象清单不合格时都保持 pending，不会使用通用模板或假设通过。解决原因后重复同一命令。
+有 `1–16 confirmed refs` 时会走 `edit`，但融合属于 high-fidelity best effort，never pixel-perfect。减少互相冲突的参考图、明确每张图用途，并确保使用的是最终 UI 中确认的原图。
 
-## `assembly_pending`
+## QA 服务不可用
 
-页面已完成但最终原子组装或机械 QA 未成功。检查记录的错误、关闭正在占用目标 PPTX 的 Office 程序，然后重跑。失败尝试不会发布半成品。
+QA outage 不阻断生成：插件回退 candidate1，并明确记录为 `unvalidated`。恢复服务后可新建项目重新生成，但不会伪造历史 QA 通过。
 
-## 内容或图片不符合预期
+## 重建返回 `401 token_expired`
 
-检查对应 Word 页正文、批注和材料绑定。页内图片默认仅作参考；需要直接出现时，在本页批注中明确指定图片。风格要求应在 UI 合同中确认。
+对象级重建使用独立 editppt authentication，可能与 Image2 登录状态不同。`401 token_expired` 表示该令牌已过期；重新完成 editppt/Codex 登录后重试重建。不要声称该状态下已完成在线重建。
 
-## 安装后找不到插件
+## 固定标题、Logo、页脚或页码异常
 
-完全退出并重启 Codex Desktop，再新建任务。运行 `.\verify.ps1` 检查 V4 元数据与运行时。
+这些内容都是 PPT 固定层：标题、original SVG logo、页脚、页码不应出现在 Image2 正文中。V6 不提供 V4/V5 runtime fallback、exact overlay 或 post-reconstruction visual repair。
 
-## 卸载
+## 安装后仍显示旧版本
 
-运行 `uninstall.cmd` 并按提示确认。卸载器不删除用户项目。
+完全退出并重启 Codex Desktop，再新建任务。运行 `verify.ps1` 查看插件版本和运行时诊断；不要手工修改个人 marketplace 配置。

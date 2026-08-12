@@ -14,6 +14,51 @@ from request_ledger import (  # noqa: E402
     complete_request,
     request_identity,
 )
+from workflow_v6_contract import request_identity as adaptive_request_identity  # noqa: E402
+
+
+def test_adaptive_request_identity_is_canonical_and_order_sensitive() -> None:
+    base = {
+        "revision_digest": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "operation": "edit",
+        "quality": "high",
+        "input_sha256s": ["c" * 64, "d" * 64],
+    }
+
+    first = adaptive_request_identity(**base)
+    second = adaptive_request_identity(**dict(reversed(list(base.items()))))
+    reordered = adaptive_request_identity(**{
+        **base, "input_sha256s": list(reversed(base["input_sha256s"])),
+    })
+
+    assert first == second
+    assert len(first) == 64 and first == first.lower()
+    assert reordered != first
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("revision_digest", "A" * 64),
+        ("prompt_sha256", "short"),
+        ("operation", "transform"),
+        ("quality", "low"),
+        ("input_sha256s", ["e" * 64, "BAD"]),
+    ],
+)
+def test_adaptive_request_identity_rejects_noncanonical_inputs(field: str, value) -> None:
+    payload = {
+        "revision_digest": "a" * 64,
+        "prompt_sha256": "b" * 64,
+        "operation": "generate",
+        "quality": "medium",
+        "input_sha256s": [],
+    }
+    payload[field] = value
+
+    with pytest.raises(ValueError):
+        adaptive_request_identity(**payload)
 
 
 def test_request_identity_is_stable_across_project_roots_and_rejects_absolute_paths(tmp_path: Path) -> None:

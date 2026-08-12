@@ -39,15 +39,9 @@ def _confirmation() -> dict:
         "composition_tendency": "formal-consulting", "brand_device": "light",
         "production_profile": "speed", "additional_requirements": "保持克制",
         "formula_policy": "mixed", "generation_mode": "continuous", "refine_spec": False,
-        "image_quality": "medium", "max_concurrency": 8, "automatic_repair_budget": 1,
+        "image_quality": "medium", "max_concurrency": 2, "automatic_repair_budget": 1,
         "editable_output": True, "start_generation": True,
-        "frame_geometry": {
-            "preset": "compact",
-            "body_bounds": {"x": 0.03, "y": 0.135, "w": 0.94, "h": 0.815},
-            "title_bounds": {"x": 0.03, "y": 0.025, "w": 0.80, "h": 0.095},
-            "logo_bounds": {"x": 0.865, "y": 0.03, "w": 0.105, "h": 0.07},
-            "footer_y": 0.965,
-        },
+        "image_usage_policy": "content-driven",
     }
 
 
@@ -61,9 +55,9 @@ def _v4_request(tmp_path: Path, *, attachment_text: str | None = None):
     return request, bundle
 
 
-def test_speed_profile_can_really_schedule_eight_pages() -> None:
-    scheduler = AdaptiveScheduler(20, initial_concurrency=8, maximum_concurrency=8)
-    assert scheduler.snapshot().concurrency == 8
+def test_speed_profile_respects_the_reviewed_two_page_bound() -> None:
+    scheduler = AdaptiveScheduler(20, initial_concurrency=2, maximum_concurrency=2)
+    assert scheduler.snapshot().concurrency == 2
 
 
 def test_frame_geometry_is_fixed_and_ignores_visual_choices() -> None:

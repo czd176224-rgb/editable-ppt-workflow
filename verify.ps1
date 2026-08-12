@@ -76,11 +76,15 @@ if ($PackageInfo.bodyImageAspectPolicy -ne "17:8-relative-error-at-most-0.01" -o
 if ($PackageInfo.geometryTolerancePercent -ne 0.1) {
     throw "package-info must declare the 0.1 percent geometry tolerance"
 }
-if ($PackageInfo.initialImageEndpoint -ne "images/generations") {
-    throw "V6 initial page generation must use images/generations"
+if ($PackageInfo.initialImageEndpoint -ne "adaptive-images/generate-or-edit") {
+    throw "V6 initial page generation must use the adaptive generate-or-edit dispatcher"
 }
-if ($PackageInfo.localRepairEndpoint -ne "images/generations") {
-    throw "V6 page repair must use fresh images/generations"
+if ($PackageInfo.localRepairEndpoint -ne "same-as-initial-operation") {
+    throw "V6 page repair must preserve the initial generate/edit operation and references"
+}
+if ($PackageInfo.promptContractVersion -ne "page-prompt-v6-adaptive-confirmed-materials" -or
+    $PackageInfo.pageImagePolicy -ne "generate-without-refs-edit-with-confirmed-refs") {
+    throw "package-info must declare the adaptive confirmed-materials prompt and image policy"
 }
 
 if ($MetadataOnly) {
@@ -158,4 +162,4 @@ if ($PortableSmokeTest) {
     }
 }
 
-Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v6, generate-only Image2 bodies, light pre-reconstruction QA, editable reconstruction, fixed-layer mechanical assembly, optional Office validation, fixed-canvas-cm-v2."
+Write-Output "Verified $($Manifest.name) $($Manifest.version): word-ppt-workflow-v6, adaptive generate/edit Image2 bodies, light pre-reconstruction QA, editable reconstruction, fixed-layer mechanical assembly, optional Office validation, fixed-canvas-cm-v2."

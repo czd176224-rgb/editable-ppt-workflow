@@ -48,11 +48,25 @@ def test_skill_frontmatter_and_ui_metadata_use_folder_name() -> None:
 def test_slide_body_generator_cannot_bypass_v6_authority() -> None:
     skill = (SKILLS / "generate-slide-body-image" / "SKILL.md").read_text(encoding="utf-8")
     assert "prepared by `run-word-to-ppt-workflow`" in skill
-    assert "Always call `codex_gpt_image.py generate`" in skill
-    assert "Never call `edit`" in skill
+    assert "zero valid confirmed references" in skill
+    assert "one to sixteen valid confirmed references" in skill
+    assert "`codex_gpt_image.py generate`" in skill
+    assert "`codex_gpt_image.py edit`" in skill
+    assert "The edit subcommand requires at least one `--image`" in skill
+    assert "never candidate 1" in skill
+    assert "high-fidelity best effort" in skill
     assert "Do not draw the fixed page title, SVG Logo, footer or page number" in skill
     assert "1904x896, 17:8" in skill
     assert "Avoid adding logos, watermarks, or extra text unless requested" not in skill
+
+
+def test_adaptive_role_metadata_has_no_generate_only_claims() -> None:
+    for name in ("run-word-to-ppt-workflow", "generate-slide-body-image"):
+        metadata_text = (SKILLS / name / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        folded = metadata_text.casefold()
+        assert "adaptive" in folded
+        assert "generate-only" not in folded
+        assert "generate only" not in folded
 
 
 def test_reconstruction_user_messages_use_role_name_but_keep_cli_compatibility() -> None:

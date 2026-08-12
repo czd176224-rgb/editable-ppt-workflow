@@ -118,7 +118,10 @@ def validate(root: Path) -> dict:
         if len(entries) != 1 or entries[0].get("name") != "editable-ppt-workflow":
             errors.append("Marketplace must expose exactly editable-ppt-workflow")
         if source_manifest is not None:
-            for field in ("releaseTag", "pluginVersion", "workflowContractVersion"):
+            for field in (
+                "releaseTag", "pluginVersion", "workflowContractVersion",
+                "promptContractVersion", "pageImagePolicy",
+            ):
                 if source_manifest.get(field) != package.get(field):
                     errors.append(f"public source manifest {field} does not match package-info")
             declared = source_manifest.get("files")
@@ -193,6 +196,8 @@ def validate(root: Path) -> dict:
         "releaseTag": package_identity.get("releaseTag"),
         "pluginVersion": package_identity.get("pluginVersion"),
         "workflowContractVersion": package_identity.get("workflowContractVersion"),
+        "promptContractVersion": package_identity.get("promptContractVersion"),
+        "pageImagePolicy": package_identity.get("pageImagePolicy"),
         "sourceManifestSha256": sha256(source_manifest_path) if source_manifest_path.is_file() else None,
         "root": ".",
         "passed": not errors,
@@ -209,9 +214,8 @@ def main() -> int:
     report = validate(args.root)
     if args.write_report:
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
-        args.write_report.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with args.write_report.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"passed": report["passed"], "errors": report["errors"], "fileCount": len(report["files"])}, ensure_ascii=False))
     return 0 if report["passed"] else 1
 

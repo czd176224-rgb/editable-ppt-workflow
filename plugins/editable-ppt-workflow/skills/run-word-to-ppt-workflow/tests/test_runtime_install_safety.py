@@ -92,6 +92,8 @@ def test_portable_installer_injects_current_workflow_and_runs_real_v6_object_bui
     assert "from workflow_v6_source import initialize_v6_project" in e2e
     assert '"word-ppt-workflow-v6"' in e2e
     assert '"reconstruction_contract_version": "editable-image-v3"' in e2e
+    assert 'confirmation["revision"] = 0' in e2e
+    assert 'for page in page_materials["pages"]' in e2e
 
 
 def test_workflow_runtime_installs_its_declared_editppt_package_dependency():

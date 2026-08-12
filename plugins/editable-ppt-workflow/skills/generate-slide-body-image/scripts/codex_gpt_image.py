@@ -67,7 +67,12 @@ GPT_IMAGE_2_MAX_RATIO = 3.0
 
 
 class CliError(RuntimeError):
-    pass
+    def __init__(
+        self, message: str, *, status_code: int | None = None, network: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.network = network
 
 
 @dataclass
@@ -89,6 +94,13 @@ class CodexAuth:
     access_token: str
     account_id: str | None = None
     last_refresh: str | None = None
+
+
+@dataclass(frozen=True)
+class LoadedImage:
+    path: Path
+    data: bytes
+    sha256: str
 
 
 def eprint(message: str) -> None:
@@ -163,9 +175,9 @@ def read_json_response(req: request.Request, timeout: int) -> dict[str, Any]:
             text = resp.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
     except error.HTTPError as exc:
         detail = exc.read(4096).decode("utf-8", errors="replace")
-        raise CliError(f"HTTP {exc.code}: {detail}") from exc
+        raise CliError(f"HTTP {exc.code}: {detail}", status_code=exc.code) from exc
     except error.URLError as exc:
-        raise CliError(f"Request failed: {exc.reason}") from exc
+        raise CliError(f"Request failed: {exc.reason}", network=True) from exc
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -419,6 +431,7 @@ def write_generation_trace(
     image_paths: list[str],
     outputs: list[Path],
     authenticated: bool,
+    loaded_images: list[LoadedImage] | None = None,
 ) -> None:
     if not args.trace_out:
         return
@@ -449,13 +462,23 @@ def write_generation_trace(
         "operation": operation,
         "endpoint": image_endpoint(operation),
         "model": model,
+        "size": str(getattr(args, "size", "auto")),
+        "quality": str(getattr(args, "quality", "auto")),
         "auth": "codex_oauth" if authenticated else "not_authenticated_dry_run",
         "input_images": [
+            {"role": role, "path": str(loaded.path.resolve()), "sha256": loaded.sha256}
+            for role, loaded in zip(roles, loaded_images)
+        ] if loaded_images is not None else [
             {"role": role, "path": str(Path(raw).resolve()), "sha256": file_sha256(Path(raw))}
             for role, raw in zip(roles, image_paths)
         ],
         "outputs": [
-            {"path": str(path.resolve()), "sha256": file_sha256(path)} for path in outputs
+            {
+                "path": str(path.resolve()),
+                "sha256": file_sha256(path),
+                "mime_type": decoded_output_mime(path),
+            }
+            for path in outputs
         ],
     }
     if warnings:
@@ -463,6 +486,21 @@ def write_generation_trace(
     destination = Path(args.trace_out)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def decoded_output_mime(path: Path) -> str:
+    try:
+        with Image.open(path) as image:
+            image_format = image.format
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise CliError(f"Generated output is not a valid supported image: {path}") from exc
+    mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}.get(
+        str(image_format).upper(),
+    )
+    if mime is None:
+        raise CliError(f"Generated output must be PNG, JPEG, or WebP: {path}")
+    return mime
 
 
 def read_prompt(prompt: str | None, prompt_file: str | None) -> str:
@@ -581,6 +619,31 @@ def image_to_data_url(path: Path) -> str:
     return data_url
 
 
+def load_input_images(image_paths: list[str], expected_sha256s: list[str]) -> list[LoadedImage]:
+    if expected_sha256s and len(expected_sha256s) != len(image_paths):
+        raise CliError("--image-sha256 count must match --image count.")
+    loaded: list[LoadedImage] = []
+    for index, raw in enumerate(image_paths):
+        path = Path(raw)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise CliError(f"Cannot read input image: {path}") from exc
+        digest = hashlib.sha256(data).hexdigest()
+        if expected_sha256s and digest != expected_sha256s[index]:
+            raise CliError(f"Input image digest does not match the confirmed digest: {path}")
+        loaded.append(LoadedImage(path=path.resolve(), data=data, sha256=digest))
+    return loaded
+
+
+def loaded_image_reference(image: LoadedImage) -> dict[str, str]:
+    encoded = base64.b64encode(image.data).decode("ascii")
+    data_url = f"data:{guess_mime(image.path, image.data)};base64,{encoded}"
+    if len(data_url) > MAX_IMAGE_DATA_URL_CHARS:
+        raise CliError(f"Input image exceeds data URL limit: {image.path}")
+    return {"image_url": data_url}
+
+
 def image_reference(path: Path) -> dict[str, str]:
     return {"image_url": image_to_data_url(path)}
 
@@ -591,9 +654,12 @@ def build_image_body(
     image_paths: list[str],
     *,
     operation: str,
+    loaded_images: list[LoadedImage] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     if len(image_paths) > MAX_INPUT_IMAGES:
         raise CliError(f"At most {MAX_INPUT_IMAGES} input images are supported.")
+    if loaded_images is not None and len(loaded_images) != len(image_paths):
+        raise CliError("Loaded image count must match --image count.")
     if args.mask and not image_paths:
         raise CliError("--mask can only be used with at least one --image input.")
 
@@ -635,7 +701,11 @@ def build_image_body(
     if operation not in {"generate", "edit"}:
         raise CliError("image operation must be generate or edit.")
     if image_paths:
-        body["images"] = [image_reference(Path(raw)) for raw in image_paths]
+        body["images"] = (
+            [loaded_image_reference(image) for image in loaded_images]
+            if loaded_images is not None
+            else [image_reference(Path(raw)) for raw in image_paths]
+        )
         if args.mask:
             body["mask"] = image_reference(Path(args.mask))
 
@@ -673,9 +743,12 @@ def post_image_json(
             text = resp.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
     except error.HTTPError as exc:
         detail = exc.read(4096).decode("utf-8", errors="replace")
-        raise CliError(f"Codex Images request failed (HTTP {exc.code}): {detail}") from exc
+        raise CliError(
+            f"Codex Images request failed (HTTP {exc.code}): {detail}",
+            status_code=exc.code,
+        ) from exc
     except error.URLError as exc:
-        raise CliError(f"Codex Images request failed: {exc.reason}") from exc
+        raise CliError(f"Codex Images request failed: {exc.reason}", network=True) from exc
     try:
         response = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -799,12 +872,15 @@ def cmd_auth_status(args: argparse.Namespace) -> int:
 def cmd_generate(args: argparse.Namespace) -> int:
     prompt = read_prompt(args.prompt, args.prompt_file)
     image_paths = args.image or []
+    if len(image_paths) > MAX_INPUT_IMAGES:
+        raise CliError(f"At most {MAX_INPUT_IMAGES} input images are supported.")
+    loaded_images = load_input_images(image_paths, getattr(args, "image_sha256", None) or [])
     if args.count < 1 or args.count > MAX_COUNT:
         raise CliError(f"--count must be between 1 and {MAX_COUNT}.")
     output_format = normalize_output_format(args.output_format)
     operation = str(args.declared_operation)
     operation, image_model, body = build_image_body(
-        args, prompt, image_paths, operation=operation,
+        args, prompt, image_paths, operation=operation, loaded_images=loaded_images,
     )
     url = image_endpoint_url(args.base_url, operation)
 
@@ -825,7 +901,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "count": args.count,
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        write_generation_trace(args, operation, image_model, image_paths, [], authenticated=False)
+        write_generation_trace(
+            args, operation, image_model, image_paths, [], authenticated=False,
+            loaded_images=loaded_images,
+        )
         return 0
 
     auth = load_or_login_codex_auth(args)
@@ -838,7 +917,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
         args.size,
         allow_off_ratio_for_downstream_repair=args.allow_off_ratio_for_downstream_repair,
     )
-    write_generation_trace(args, operation, image_model, image_paths, written, authenticated=True)
+    write_generation_trace(
+        args, operation, image_model, image_paths, written, authenticated=True,
+        loaded_images=loaded_images,
+    )
     for path in written:
         print(path)
     eprint(f"Generated {len(written)} image(s) via Codex OAuth in {time.time() - start:.1f}s.")
@@ -870,6 +952,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--prompt", "-p")
         command.add_argument("--prompt-file")
         command.add_argument("--image", "-i", action="append", help="Reference/edit image path. Repeatable.")
+        command.add_argument("--image-sha256", action="append", help="Expected SHA-256 for each --image, in the same order. Repeatable.")
         command.add_argument("--image-role", action="append", help="Semantic role for each --image, in the same order. Repeatable.")
         command.add_argument("--mask", help="Mask image path for edits. Requires at least one --image.")
         command.add_argument("--out", "-o", default="output/generate-slide-body-image/output.png")
@@ -910,6 +993,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except CliError as exc:
+        eprint("CODEX_IMAGE_ERROR_JSON:" + json.dumps({
+            "status_code": exc.status_code,
+            "network": exc.network,
+            "message": str(exc),
+        }, ensure_ascii=False, separators=(",", ":")))
         die(str(exc))
     return 0
 

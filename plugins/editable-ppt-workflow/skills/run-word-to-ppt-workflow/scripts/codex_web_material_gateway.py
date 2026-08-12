@@ -1679,7 +1679,10 @@ def download_visual_material(
             extension = _FORMAT_TO_EXTENSION[image_format]
             filename = f"{material_id}-{candidate_number:02d}-{digest[:12]}{extension}"
             target = output_dir / filename
-            _write_immutable(target, stored, deadline=candidate_deadline)
+            _write_immutable(
+                target, stored,
+                deadline=_operation_deadline(timeout, cancel_deadline),
+            )
             local_path = target.relative_to(project_root).as_posix()
             identity = {
                 "material_id": material_id,
@@ -1788,7 +1791,10 @@ def download_visual_material(
             attestation_sha = hashlib.sha256(_canonical_bytes(attestation)).hexdigest()
             signed = {"attestation_sha256": attestation_sha, "attestation": attestation}
             signature = hmac.new(
-                _attestation_key(project_root, deadline=candidate_deadline),
+                _attestation_key(
+                    project_root,
+                    deadline=_operation_deadline(timeout, cancel_deadline),
+                ),
                 _canonical_bytes(signed),
                 hashlib.sha256,
             ).hexdigest()
@@ -1802,7 +1808,10 @@ def download_visual_material(
                 + b"\n"
             )
             record_path = output_dir / f"{evidence_id}-{attestation_sha[:12]}.attestation.json"
-            _write_immutable(record_path, record_payload, deadline=candidate_deadline)
+            _write_immutable(
+                record_path, record_payload,
+                deadline=_operation_deadline(timeout, cancel_deadline),
+            )
             material["material_attestation_path"] = record_path.relative_to(project_root).as_posix()
             material["material_attestation_sha256"] = _sha256_file(record_path)
             material["material_attestation_digest"] = attestation_sha
@@ -2072,10 +2081,13 @@ def _write_invocation_bundle(
     query: str,
     request: Mapping[str, Any],
     result: CodexStructuredResult,
-    deadline: float,
+    timeout: float,
+    cancel_deadline: float | None,
 ) -> str:
-    _check_deadline(deadline, "invocation write")
-    directory = _safe_evidence_dir(project, page_number, deadline=deadline)
+    _raise_if_cancelled(cancel_deadline)
+    directory = _safe_evidence_dir(
+        project, page_number, deadline=_operation_deadline(timeout, cancel_deadline),
+    )
     request_payload = {
         "artifact_version": "codex-web-material-request-v1",
         **dict(request),
@@ -2091,12 +2103,12 @@ def _write_invocation_bundle(
     _write_immutable(
         request_path,
         json.dumps(request_payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n",
-        deadline=deadline,
+        deadline=_operation_deadline(timeout, cancel_deadline),
     )
     _write_immutable(
         response_path,
         json.dumps(response_payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n",
-        deadline=deadline,
+        deadline=_operation_deadline(timeout, cancel_deadline),
     )
     bundle: dict[str, Any] = {
         "artifact_version": _SEARCH_INVOCATION_VERSION,
@@ -2127,11 +2139,16 @@ def _write_invocation_bundle(
     }
     bundle["sealed_sha256"] = hashlib.sha256(_canonical_bytes(bundle)).hexdigest()
     bundle["signature"] = hmac.new(
-        _attestation_key(project, deadline=deadline), _canonical_bytes(bundle), hashlib.sha256
+        _attestation_key(
+            project, deadline=_operation_deadline(timeout, cancel_deadline),
+        ),
+        _canonical_bytes(bundle), hashlib.sha256,
     ).hexdigest()
     payload = json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n"
     target = directory / f"{material_id}-invocation-{bundle['sealed_sha256'][:12]}.json"
-    _write_immutable(target, payload, deadline=deadline)
+    _write_immutable(
+        target, payload, deadline=_operation_deadline(timeout, cancel_deadline),
+    )
     return target.relative_to(Path(project).resolve(strict=True)).as_posix()
 
 
@@ -2694,7 +2711,6 @@ def search_visual_material(
         if not required:
             return advisory_warning("the result did not use ChatGPT OAuth")
         raise SearchMaterialBlocked("required visual material search did not use ChatGPT OAuth")
-    evidence_deadline = _operation_deadline(timeout, cancel_deadline)
     invocation_path = _cancel_aware(
         cancel_deadline,
         lambda: _write_invocation_bundle(
@@ -2717,7 +2733,8 @@ def search_visual_material(
                 "output_schema": request_schema,
             },
             result=result,
-            deadline=evidence_deadline,
+            timeout=timeout,
+            cancel_deadline=cancel_deadline,
         ),
     )
     invocation_sha256 = _cancel_aware(
@@ -2728,7 +2745,7 @@ def search_visual_material(
         lambda: _read_signed_invocation(
             project,
             invocation_path,
-            deadline=evidence_deadline,
+            deadline=_operation_deadline(timeout, cancel_deadline),
             expected_sha256=invocation_sha256,
         ),
     )
@@ -3157,3 +3174,58 @@ def search_visual_materials(
     finally:
         for cache_path, token in reversed(leases):
             _release_search_lease(cache_path, token)
+
+
+def emit_reference_work_items(project: Path) -> list[dict[str, Any]]:
+    """Write bounded V6 work for the outer orchestrator, without fetching result URLs."""
+    project = Path(project).resolve()
+    items: list[dict[str, Any]] = []
+    material_dir = project / "02_v6" / "reference_materials"
+    for receipt_path in sorted(material_dir.glob("page_*.json")):
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(receipt, Mapping) or not isinstance(receipt.get("page_number"), int):
+            continue
+        for request in receipt.get("reference_acquisitions", []):
+            if not isinstance(request, Mapping) or request.get("status") != "pending":
+                continue
+            request_id = request.get("request_id")
+            purpose = request.get("purpose")
+            need = request.get("identity_evidence_need")
+            if not all(isinstance(value, str) and value for value in (request_id, purpose, need)):
+                continue
+            page_number = receipt["page_number"]
+            items.append({
+                "page_number": page_number,
+                "request_id": request_id,
+                "purpose": purpose,
+                "identity_evidence_need": need,
+                "status": "pending",
+                "max_results": 1,
+                "commands": {
+                    "import_reference": (
+                        "workflow_v6_cli.py import-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --image <local-file> "
+                        "[--source-url <metadata-url>]"
+                    ),
+                    "fail_reference": (
+                        "workflow_v6_cli.py fail-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --reason <reason>"
+                    ),
+                    "reject_reference": (
+                        "workflow_v6_cli.py reject-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id} --reason <reason>"
+                    ),
+                    "confirm_reference": (
+                        "workflow_v6_cli.py confirm-reference --project <project> "
+                        f"--page {page_number} --request-id {request_id}"
+                    ),
+                },
+            })
+    items = sorted(items, key=lambda item: (item["page_number"], item["request_id"]))
+    output = project / "02_v6" / "orchestrator" / "reference_work_items.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"artifact_version": "reference-work-items-v6", "items": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return items

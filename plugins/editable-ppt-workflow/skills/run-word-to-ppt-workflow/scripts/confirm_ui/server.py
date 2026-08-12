@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 import webbrowser
@@ -47,8 +48,11 @@ from fixed_region_contract import (  # noqa: E402
     SLIDE_SIZE_CM,
 )
 from style_contract import compile_style_execution, revise_style_contract  # noqa: E402
-from workflow_v5_ui import ConfirmationLifecycle, read_progress_events  # noqa: E402
-from workflow_v5_dag import DagStore  # noqa: E402
+from workflow_v6_media import read_validated_project_media  # noqa: E402
+from workflow_v6_materials import confirmed_revision_digest, validate_page_materials  # noqa: E402
+from workflow_v6_source import _found_candidate_reference  # noqa: E402
+from workflow_v6_state import load as load_v6_state, mutation_lock  # noqa: E402
+from workflow_v6_prompt_contract import estimate_frozen_page_chars  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -120,9 +124,9 @@ ONE_SCREEN_FIELDS = (
     "additional_requirements",
 )
 PRODUCTION_PROFILES = {
-    "quality": {"image_quality": "high", "max_concurrency": 3, "automatic_repair_budget": 2},
-    "balanced": {"image_quality": "high", "max_concurrency": 5, "automatic_repair_budget": 1},
-    "speed": {"image_quality": "medium", "max_concurrency": 8, "automatic_repair_budget": 1},
+    "quality": {"image_quality": "high", "max_concurrency": 2, "automatic_repair_budget": 2},
+    "balanced": {"image_quality": "high", "max_concurrency": 2, "automatic_repair_budget": 1},
+    "speed": {"image_quality": "medium", "max_concurrency": 3, "automatic_repair_budget": 1},
 }
 ONE_SCREEN_PRODUCTION_BASE = {
     "formula_policy": "mixed", "generation_mode": "continuous", "refine_spec": False,
@@ -222,12 +226,18 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
+    if os.name != "nt":
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _clean(value: Any) -> Any:
@@ -256,7 +266,10 @@ def _confirmed_stage(result_path: Path) -> int:
     if not result_path.is_file():
         return 0
     try:
-        return _stage_number(_read_json(result_path).get("stage"))
+        result = _read_json(result_path)
+        if result.get("status") == "confirmed" and type(result.get("revision")) is int:
+            return 4
+        return _stage_number(result.get("stage"))
     except (OSError, ValueError, json.JSONDecodeError):
         return 0
 
@@ -302,26 +315,217 @@ def _project_facts(project: Path) -> dict[str, Any]:
 
 def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
     state = _read_json(project / "workflow_v6.json")
+    frozen_result = _read_json(project / CONFIRM_DIR / RESULT) if (project / CONFIRM_DIR / RESULT).is_file() else {}
+    frozen_pages = {
+        item.get("page_number"): item for item in frozen_result.get("confirmed_pages", [])
+        if isinstance(item, dict) and type(item.get("page_number")) is int
+    }
     pages = []
     for page in state.get("pages", []):
         number = page.get("page_number")
         source = _read_json(project / "02_v6" / "page_sources" / f"page_{number:03d}.json")
-        references = source.get("references", [])
+        materials = _read_json(project / "02_v6" / "page_materials" / f"page_{number:03d}.json")
+        frozen = frozen_pages.get(number)
+        if frozen:
+            materials = {**materials, **{field: frozen[field] for field in (
+                "effective_body", "attachment_extracts", "chart_facts", "image_requirements",
+                "degradations", "reference_images",
+            ) if field in frozen}}
+        references = materials.get("reference_images", [])
+        public_references = []
+        for item in references:
+            if not isinstance(item, dict):
+                continue
+            public_references.append({
+                "reference_id": item.get("reference_id"),
+                "purpose": item.get("purpose", ""),
+                "allow_crop": bool(item.get("allow_crop")),
+                "allow_restyle": bool(item.get("allow_restyle")),
+                "status": item.get("status", "available"),
+                "review_decision": "",
+                "thumbnail_url": "/api/media/thumbnail?path=" + str(item.get("thumbnail_path", "")),
+                "original_url": "/api/media/original?path=" + str(item.get("original_path", "")),
+                "model_input_url": "/api/media/model-input?path=" + str(item.get("model_input_path", "")),
+            })
+        receipt_path = project / "02_v6" / "reference_materials" / f"page_{number:03d}.json"
+        receipt = _read_json(receipt_path) if receipt_path.is_file() else {}
+        found_candidates = []
+        for acquisition in receipt.get("reference_acquisitions", []) if not frozen else []:
+            if not isinstance(acquisition, dict):
+                continue
+            candidate = acquisition.get("candidate")
+            reference = candidate.get("reference") if isinstance(candidate, dict) else None
+            if acquisition.get("status") != "found" or not isinstance(reference, dict):
+                continue
+            found_candidates.append({
+                "request_id": acquisition.get("request_id"),
+                "purpose": reference.get("purpose", acquisition.get("purpose", "")),
+                "thumbnail_url": "/api/media/thumbnail?path=" + str(reference.get("thumbnail_path", "")),
+                "original_url": "/api/media/original?path=" + str(reference.get("original_path", "")),
+                "model_input_url": "/api/media/model-input?path=" + str(reference.get("model_input_path", "")),
+            })
         pages.append({
             "page_number": number,
             "title": page.get("title"),
-            "text": source.get("word_original", ""),
-            "assets": [
-                {
-                    "asset_id": item.get("asset_id", item.get("url", "reference")),
-                    "media_type": item.get("media_type", item.get("kind", "reference")),
-                    "name": Path(item.get("path", item.get("url", "reference"))).name,
-                }
-                for item in references if isinstance(item, dict)
-            ],
-            "table_count": 0,
+            "fixed_page_title": materials.get("fixed_page_title", page.get("title", "")),
+            "word_original": materials.get("word_original", source.get("word_original", "")),
+            "effective_body": materials.get("effective_body", ""),
+            "attachment_extracts": materials.get("attachment_extracts", []),
+            "chart_facts": materials.get("chart_facts", []),
+            "image_requirements": materials.get("image_requirements", []),
+            "degradations": materials.get("degradations", []),
+            "reference_images": public_references,
+            "reference_count": len(public_references),
+            "reference_warning": (
+                "reject" if len(public_references) > 16 else
+                "strong" if len(public_references) >= 11 else
+                "warning" if len(public_references) >= 7 else None
+            ),
+            "found_reference_candidates": found_candidates,
+            "reference_decisions": frozen.get("reference_decisions", []) if frozen else [],
         })
     return pages
+
+
+_V6_PAGE_EDITABLE_FIELDS = (
+    "page_number", "effective_body", "attachment_extracts", "chart_facts",
+    "image_requirements", "degradations", "reference_images", "reference_decisions",
+)
+_V6_PROMPT_LIMIT = 32000
+
+
+@contextmanager
+def _v6_confirmation_lock(project: Path, timeout: float = 15.0):
+    """Serialize the one authoritative UI commit without touching V6 source state."""
+    with mutation_lock(project, timeout=timeout):
+        yield
+
+
+def _estimate_v6_final_prompt_chars(global_contract: dict[str, Any], page: dict[str, Any]) -> int:
+    """Compatibility boundary for the shared final prompt compiler estimate."""
+    return estimate_frozen_page_chars(global_contract, page)
+
+
+def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and seal all V6 page material in the same final UI revision."""
+    with _v6_confirmation_lock(project):
+        result_path = project / CONFIRM_DIR / RESULT
+        if result_path.is_file():
+            raise ValueError("V6 final confirmation may be submitted exactly once")
+        current = {}
+        current_revision = current.get("revision", 0)
+        if type(current_revision) is not int or current_revision < 0:
+            raise ValueError("authoritative confirmation revision is invalid")
+        supplied_revision = payload.get("revision")
+        if type(supplied_revision) is not int or supplied_revision != current_revision:
+            raise ValueError("stale confirmation revision; reload the final page before submitting")
+        prior_frozen_pages = {
+            item.get("page_number"): item for item in current.get("confirmed_pages", [])
+            if isinstance(item, dict) and type(item.get("page_number")) is int
+        }
+        state = load_v6_state(project)
+        pages = payload.get("confirmed_pages")
+        if not isinstance(pages, list) or len(pages) != len(state["pages"]):
+            raise ValueError("confirmed_pages must contain one complete record for every page")
+        numbers = [item.get("page_number") for item in pages if isinstance(item, dict)]
+        if numbers != list(range(1, len(state["pages"]) + 1)):
+            raise ValueError("confirmed_pages must preserve the locked V6 page order")
+
+        revision = current_revision + 1
+        frozen_pages: list[dict[str, Any]] = []
+        for submitted in pages:
+            page_number = submitted["page_number"]
+            if set(submitted) != set(_V6_PAGE_EDITABLE_FIELDS):
+                raise ValueError("confirmed page records may contain only editable Image2 material fields")
+            material_path = project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
+            material = _read_json(material_path)
+            updated = dict(material)
+            for field in _V6_PAGE_EDITABLE_FIELDS:
+                if field not in {"page_number", "reference_decisions"}:
+                    updated[field] = _clean(submitted[field])
+            base_references = {
+            item.get("reference_id"): dict(item) for item in material.get("reference_images", [])
+            if isinstance(item, dict) and isinstance(item.get("reference_id"), str)
+            }
+            controlled_references = []
+            reviewed_reference_ids = set()
+            fixed_reference_decisions = []
+            for reference in submitted["reference_images"]:
+                if not isinstance(reference, dict) or set(reference) != {
+                "reference_id", "purpose", "allow_crop", "allow_restyle", "status", "decision",
+                }:
+                    raise ValueError("reference controls must identify an existing safe reference")
+                original = base_references.get(reference.get("reference_id"))
+                if original is None:
+                    raise ValueError("reference controls cannot add a new local image")
+                if reference["reference_id"] in reviewed_reference_ids:
+                    raise ValueError("reference controls cannot duplicate a local image")
+                if reference["decision"] not in {"keep", "remove"}:
+                    raise ValueError("every acquired reference requires an explicit keep or remove decision")
+                if not isinstance(reference["purpose"], str) or type(reference["allow_crop"]) is not bool or type(reference["allow_restyle"]) is not bool:
+                    raise ValueError("reference purpose, crop, and restyle controls are invalid")
+                reviewed_reference_ids.add(reference["reference_id"])
+                original.update({
+                "purpose": reference["purpose"],
+                "allow_crop": reference["allow_crop"],
+                "allow_restyle": reference["allow_restyle"],
+                })
+                fixed_reference_decisions.append({
+                    "reference_id": reference["reference_id"], "decision": reference["decision"],
+                })
+                if reference["decision"] == "keep":
+                    controlled_references.append(original)
+            if reviewed_reference_ids != set(base_references):
+                raise ValueError("every acquired reference requires an explicit keep or remove decision")
+            decisions = submitted["reference_decisions"]
+            receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
+            acquisitions = _read_json(receipt_path).get("reference_acquisitions", []) if receipt_path.is_file() else []
+            prior_decisions = prior_frozen_pages.get(page_number, {}).get("reference_decisions", [])
+            prior_decision_map = {
+                item.get("request_id"): item.get("decision") for item in prior_decisions
+                if isinstance(item, dict) and item.get("decision") in {"accept", "reject"}
+            }
+            found = {item.get("request_id"): item for item in acquisitions if isinstance(item, dict) and item.get("status") == "found" and item.get("request_id") not in prior_decision_map}
+            decision_map = {}
+            for decision in decisions:
+                if not isinstance(decision, dict) or set(decision) != {"request_id", "decision"} or decision.get("decision") not in {"accept", "reject"}:
+                    raise ValueError("found reference decisions must be explicit accept or reject values")
+                request_id = decision.get("request_id")
+                if request_id in prior_decision_map:
+                    if decision.get("decision") != prior_decision_map[request_id]:
+                        raise ValueError("previously frozen reference decisions cannot be changed")
+                    continue
+                if request_id not in found or request_id in decision_map:
+                    raise ValueError("found reference decision is unknown or duplicated")
+                decision_map[request_id] = decision["decision"]
+            if set(decision_map) != set(found):
+                raise ValueError("every found reference candidate requires an explicit decision")
+            frozen_decisions = fixed_reference_decisions
+            for request_id, acquisition in found.items():
+                decision = decision_map[request_id]
+                if decision == "accept":
+                    controlled_references.append(_found_candidate_reference(project, acquisition))
+                else:
+                    updated["degradations"].append({"code": "reference_rejected", "detail": f"Reference request {request_id} was rejected by the reviewer."})
+                frozen_decisions.append({"request_id": request_id, "decision": decision})
+            updated["reference_images"] = controlled_references
+            if len(updated["reference_images"]) > 16:
+                raise ValueError("a page may not contain more than 16 reference images")
+            if _estimate_v6_final_prompt_chars(global_contract, updated) > _V6_PROMPT_LIMIT:
+                raise ValueError("final Image2 prompt estimate exceeds 32,000 characters")
+            validate_page_materials(updated, confirmed=False)
+            frozen = {field: updated[field] for field in _V6_PAGE_EDITABLE_FIELDS if field != "reference_decisions"}
+            frozen["reference_decisions"] = frozen_decisions
+            frozen_pages.append(frozen)
+
+        result = {
+            "status": "confirmed", "revision": revision,
+            "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "production_profile": global_contract["production_profile"],
+            "global_visual_contract": global_contract, "confirmed_pages": frozen_pages,
+        }
+        _write_json(result_path, result)
+        return result
 
 
 def _field_value(value: Any, default: Any = "") -> Any:
@@ -658,12 +862,20 @@ def _session_state(project: Path) -> dict[str, Any]:
         except (OSError, ValueError, json.JSONDecodeError):
             pass
     confirmed = _confirmed_stage(confirm_dir / RESULT)
-    return {
+    state = {
         "recommendation_stage": recommendation_stage,
         "confirmed_stage": confirmed,
         "expected_stage": _expected_recommendation_stage(confirm_dir / RESULT),
         "complete": confirmed == 4,
     }
+    if (project / "workflow_v6.json").is_file():
+        try:
+            result_path = confirm_dir / RESULT
+            result = _read_json(result_path) if result_path.is_file() else {}
+            state["revision"] = result.get("revision") or 0
+        except (OSError, ValueError, json.JSONDecodeError):
+            state["revision"] = 0
+    return state
 
 
 def _write_session(project: Path, event: str) -> dict[str, Any]:
@@ -686,7 +898,11 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
     expected_stage = _expected_recommendation_stage(result_path)
     if expected_stage == 1 and rec_stage == 4 and not result_path.exists():
         expected_stage = 4
-    if rec_stage != expected_stage or submitted_stage != rec_stage:
+    v6_resubmission = (
+        (project / "workflow_v6.json").is_file()
+        and rec_stage == 4 and submitted_stage == 4
+    )
+    if (rec_stage != expected_stage and not v6_resubmission) or submitted_stage != rec_stage:
         return None, (
             f"strict stage order requires stage{expected_stage or ' complete'}; "
             f"recommendation is stage{rec_stage or ' invalid'} and submission is "
@@ -750,6 +966,17 @@ def _stage_submission(project: Path, payload: dict[str, Any]) -> tuple[dict[str,
         result["status"] = "confirmed"
     result = _clean(result)
     result["confirmed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    if rec_stage == 4 and (project / "workflow_v6.json").is_file():
+        global_contract = {
+            key: value for key, value in result.items()
+            if key not in {"stage", "status", "confirmed_at"}
+        }
+        global_contract.update({
+            "stage": "final",
+            "status": "confirmed",
+            "confirmed_at": result["confirmed_at"],
+        })
+        return _v6_final_submission(project, global_contract, payload), None
     return result, None
 
 
@@ -772,8 +999,6 @@ def create_app(
         LOCK_OWNER=dict(lock_owner) if lock_owner else None,
         LAST_REQUEST=time.monotonic(),
     )
-    v5_enabled = (project / "04_v5" / "dag.json").is_file()
-
     @app.before_request
     def _activity() -> None:
         app.config["LAST_REQUEST"] = time.monotonic()
@@ -807,53 +1032,6 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    @app.get("/api/v5/lifecycle")
-    def v5_lifecycle():
-        if not v5_enabled:
-            return jsonify({"enabled": False})
-        response = jsonify(ConfirmationLifecycle(project).snapshot())
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/api/v5/events")
-    def v5_events():
-        if not v5_enabled:
-            return jsonify({"error": "V5 progress stream is not enabled"}), 404
-        try:
-            cursor = int(request.headers.get("Last-Event-ID") or request.args.get("cursor", "0"))
-        except ValueError:
-            return jsonify({"error": "invalid V5 event cursor"}), 400
-        diagnostics = request.args.get("diagnostics") == "1"
-
-        def stream():
-            current = cursor
-            deadline = time.monotonic() + 25.0
-            while time.monotonic() < deadline:
-                batch = read_progress_events(project, cursor=current, diagnostics=diagnostics)
-                if batch["events"]:
-                    current = batch["next_cursor"]
-                    data = json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
-                    yield f"id: {current}\ndata: {data}\n\n"
-                else:
-                    yield ": keep-alive\n\n"
-                time.sleep(0.5)
-
-        response = Response(stream(), mimetype="text/event-stream")
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Accel-Buffering"] = "no"
-        return response
-
-    @app.post("/api/v5/cancel")
-    def v5_cancel():
-        if not v5_enabled:
-            return jsonify({"error": "V5 workflow is not enabled"}), 404
-        dag = DagStore(project).cancel(["project:source"], reason="user_cancelled")
-        canceled = sum(node["status"] == "canceled" for node in dag["nodes"])
-        return jsonify({
-            "status": "canceled", "canceled_nodes": canceled,
-            "completed_artifacts_preserved": True,
-        })
-
     @app.get("/api/catalogs")
     def catalogs():
         return send_from_directory(static_dir, "catalogs.json")
@@ -862,13 +1040,25 @@ def create_app(
     def pages():
         try:
             project_facts = _project_facts(project)
+            page_records = (
+                _v6_project_pages(project)
+                if (project / "workflow_v6.json").is_file()
+                else project_pages(project, project_facts["page_count"])
+            )
+            owner = app.config.get("LOCK_OWNER")
+            if _valid_owner(owner, project):
+                for page in page_records:
+                    for reference in page.get("reference_images", []):
+                        for field in ("thumbnail_url", "original_url", "model_input_url"):
+                            if isinstance(reference.get(field), str):
+                                reference[field] += "&nonce=" + owner["nonce"]
+                    for candidate in page.get("found_reference_candidates", []):
+                        for field in ("thumbnail_url", "original_url", "model_input_url"):
+                            if isinstance(candidate.get(field), str):
+                                candidate[field] += "&nonce=" + owner["nonce"]
             response = jsonify(
                 {
-                    "pages": (
-                        _v6_project_pages(project)
-                        if (project / "workflow_v6.json").is_file()
-                        else project_pages(project, project_facts["page_count"])
-                    ),
+                    "pages": page_records,
                     "page_count": project_facts["page_count"],
                 }
             )
@@ -876,6 +1066,29 @@ def create_app(
             return response
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             return jsonify({"error": str(exc)}), 409
+
+    @app.get("/api/media/<variant>")
+    @app.get("/api/media/<variant>/<path:relative_path>")
+    def media(variant: str, relative_path: str | None = None):
+        """Serve only authenticated, decoded V6 raster derivatives."""
+        owner = app.config.get("LOCK_OWNER")
+        if (
+            not _valid_owner(owner, project)
+            or (request.headers.get("X-Confirm-Nonce") != owner.get("nonce")
+                and request.args.get("nonce") != owner.get("nonce"))
+        ):
+            return jsonify({"error": "confirmation UI media ownership mismatch"}), 403
+        path_value = relative_path or request.args.get("path")
+        try:
+            data, mime_type, path = read_validated_project_media(project, path_value, variant=variant)
+        except (OSError, ValueError):
+            return jsonify({"error": "media was not found"}), 404
+        response = Response(data, mimetype=mime_type)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        disposition = "attachment" if variant == "original" else "inline"
+        response.headers["Content-Disposition"] = f'{disposition}; filename="{path.name}"'
+        return response
 
     @app.get("/api/recommendations")
     def recommendations():
@@ -888,7 +1101,11 @@ def create_app(
             expected = _expected_recommendation_stage(project / CONFIRM_DIR / RESULT)
             if expected == 1 and rec_stage == 4 and not (project / CONFIRM_DIR / RESULT).exists():
                 expected = 4
-            if rec_stage != expected:
+            v6_reopen = (
+                (project / "workflow_v6.json").is_file()
+                and rec_stage == 4 and expected == 0
+            )
+            if rec_stage != expected and not v6_reopen:
                 return jsonify(
                     {
                         "error": (
@@ -916,30 +1133,17 @@ def create_app(
         try:
             result, error = _stage_submission(project, payload)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return jsonify({"error": str(exc)}), 400
+            status = 409 if "stale confirmation revision" in str(exc) else 400
+            return jsonify({"error": str(exc)}), status
         if error:
             return jsonify({"error": error}), 409
         assert result is not None
-        if v5_enabled and result["stage"] == "final":
-            stable_contract = {
-                key: value for key, value in result.items()
-                if key not in {"stage", "status", "confirmed_at"}
-            }
-            contract_id = hashlib.sha256(
-                json.dumps(
-                    stable_contract, ensure_ascii=False, sort_keys=True,
-                    separators=(",", ":"), allow_nan=False,
-                ).encode("utf-8")
-            ).hexdigest()
-            try:
-                ConfirmationLifecycle(project).confirm(contract_id)
-            except ValueError as exc:
-                return jsonify({"error": str(exc)}), 409
-        _write_json(project / CONFIRM_DIR / RESULT, result)
-        _write_session(project, f"{result['stage']}-submitted")
+        result_stage = result.get("stage", "final")
+        if not ((project / "workflow_v6.json").is_file() and type(result.get("revision")) is int):
+            _write_json(project / CONFIRM_DIR / RESULT, result)
+        _write_session(project, f"{result_stage}-submitted")
         if (
-            result["stage"] == "final"
-            and not v5_enabled
+            result_stage == "final"
             and app.config.get("LOCK_FILE") is not None
         ):
             threading.Thread(
@@ -947,7 +1151,7 @@ def create_app(
                 args=(app.config["LOCK_FILE"], app.config.get("LOCK_OWNER")),
                 daemon=True,
             ).start()
-        return jsonify({"status": "ok", "stage": result["stage"]})
+        return jsonify({"status": "ok", "stage": result_stage, "revision": result.get("revision")})
 
     @app.post("/api/style-revisions")
     def create_style_revision():
@@ -1292,16 +1496,7 @@ def _start(project: Path, port: int, no_browser: bool, idle_timeout: int) -> int
                 return 1
             url = _server_url(port)
             if not no_browser:
-                if (project / "04_v5" / "dag.json").is_file():
-                    lifecycle = ConfirmationLifecycle(project)
-                    decision = lifecycle.claim_browser_launch(
-                        session_id=nonce,
-                    )
-                    if decision["open_browser"]:
-                        opened = bool(webbrowser.open(url))
-                        lifecycle.record_launch_result(session_id=nonce, success=opened)
-                else:
-                    webbrowser.open(url)
+                webbrowser.open(url)
             print(json.dumps({"status": "started", "url": url, "pid": process.pid}, ensure_ascii=False))
             return 0
         finally:
@@ -1322,13 +1517,28 @@ def _wait(project: Path, stage: str, timeout: int) -> int:
                 # production with the same immutable identity.
                 if (project / "workflow_v6.json").is_file():
                     from workflow_v6_state import load as load_v6, save as save_v6
-
-                    state = load_v6(project)
-                    state["style_confirmation"] = {
-                        "status": "confirmed",
-                        "contract": compile_style_execution(_read_json(result_path)),
-                    }
-                    save_v6(project, state)
+                    with mutation_lock(project):
+                        live = _read_json(result_path)
+                        revision = live.get("revision")
+                        digest = hashlib.sha256(json.dumps(
+                            live, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                        ).encode("utf-8")).hexdigest()
+                        if type(revision) is not int or revision < 1:
+                            raise ValueError("V6 wait requires a valid confirmed UI revision")
+                        state = load_v6(project)
+                        existing_revision = state.get("confirmed_ui_revision")
+                        existing_digest = state.get("confirmed_ui_digest")
+                        if existing_revision is not None and (
+                            existing_revision != revision or existing_digest != digest
+                        ):
+                            raise ValueError("V6 live confirmation revision changed before sealing")
+                        state["style_confirmation"] = {
+                            "status": "confirmed", "contract": compile_style_execution(live),
+                        }
+                        state["confirmed_ui_revision"] = revision
+                        state["confirmed_ui_digest"] = digest
+                        state["page_materials_status"] = "confirmed"
+                        save_v6(project, state)
                 else:
                     from style_contract import freeze_style_contract
 

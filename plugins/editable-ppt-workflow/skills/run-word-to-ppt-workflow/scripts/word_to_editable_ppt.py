@@ -1,4 +1,4 @@
-"""Generate-only V6 production entry and explicit diagnostic dispatcher."""
+"""Adaptive V6 production entry and explicit diagnostic dispatcher."""
 
 from __future__ import annotations
 

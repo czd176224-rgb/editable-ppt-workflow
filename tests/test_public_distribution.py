@@ -79,6 +79,26 @@ def test_public_distribution_assets_exist():
         assert (ROOT / relative).is_file(), relative
 
 
+def test_adaptive_release_metadata_and_user_contract_are_consistent():
+    package = json.loads(read("package-info.json"))
+    plugin = json.loads(read("plugins/editable-ppt-workflow/.codex-plugin/plugin.json"))
+    marketplace = json.loads(read(".agents/plugins/marketplace.json"))
+    assert package["pluginVersion"] == plugin["version"] == "2.1.0"
+    assert package["releaseTag"] == "v2.1.0"
+    assert marketplace["interface"]["displayName"] == "Editable PPT Workflow 2.1.0"
+    assert package["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
+    docs = "\n".join(read(path) for path in (
+        "README.md", "docs/RELEASE.md", "docs/USER_GUIDE.zh-CN.md", "docs/TROUBLESHOOTING.zh-CN.md"
+    ))
+    for phrase in (
+        "sole material/reference authority", "explicit keep/remove", "1–16 confirmed refs",
+        "high-fidelity best effort", "pixel-perfect", "unvalidated", "token_expired",
+        "rejected rather than stretched or cropped",
+    ):
+        assert phrase in docs
+
+
 def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     if not (ROOT / ".git").exists():
         pytest.skip("public export requires the private reviewed Git checkout")
@@ -112,8 +132,12 @@ def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
+    assert audit["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert audit["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["sourceManifestSha256"]
     assert source_manifest["schemaVersion"] == "public-source-manifest-v1"
+    assert source_manifest["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert source_manifest["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["root"] == "."
     assert not (output / "docs/superpowers").exists()
     assert not (output / ".git").exists()

@@ -73,7 +73,7 @@ PROHIBITED_RUNTIME_PATTERNS = {
         re.IGNORECASE,
     ),
     "legacy deck-wide visual QA": re.compile(
-        r"global_qa|global[-_ ]visual[-_ ]qa|style_drift|cross[-_ ]page[-_ ]similarity",
+        r"global_qa|global[-_ ]visual[-_ ](?:qa|review|check)|style_drift|cross[-_ ]page[-_ ]similarity",
         re.IGNORECASE,
     ),
     "legacy generated page category": re.compile(
@@ -345,6 +345,39 @@ def _scan_image_cli(plugin_root: Path, repo_root: Path) -> list[str]:
     for operation in ("generate", "edit"):
         if operation not in parser_names:
             findings.append(f"{_display(path, repo_root)}: bundled Image2 CLI lacks {operation!r} parser")
+
+    parser_variables: dict[str, str] = {}
+    for node in ast.walk(builder):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        call = node.value
+        if (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_parser"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+            and call.args[0].value in {"generate", "edit"}
+        ):
+            parser_variables[node.targets[0].id] = call.args[0].value
+    wiring: dict[str, str] = {}
+    for node in ast.walk(builder):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != "add_image_arguments":
+            continue
+        if (
+            len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            wiring[node.args[0].id] = node.args[1].value
+    for variable, operation in parser_variables.items():
+        if variable not in wiring:
+            findings.append(f"{_display(path, repo_root)}: {operation} parser lacks image argument wiring")
+        elif wiring[variable] != operation:
+            findings.append(
+                f"{_display(path, repo_root)}: {operation} parser declared operation is {wiring[variable]!r}"
+            )
     builder_literals = _literal_strings(builder)
     for option in ("--image", "--image-sha256", "--image-role", "--prompt-file"):
         if option not in builder_literals:

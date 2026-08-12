@@ -170,6 +170,28 @@ def test_runtime_checker_rejects_renamed_edit_parser(tmp_path):
     assert any("edit" in item for item in checker._scan_image_cli(plugin, tmp_path))
 
 
+def test_runtime_checker_rejects_removed_edit_argument_wiring(tmp_path):
+    checker = _load_runtime_checker()
+    plugin = _mutated_plugin(
+        tmp_path,
+        relative="skills/generate-slide-body-image/scripts/codex_gpt_image.py",
+        old='add_image_arguments(edit, "edit")',
+        new='pass  # removed edit argument wiring',
+    )
+    assert any("edit" in item and "wiring" in item for item in checker._scan_image_cli(plugin, tmp_path))
+
+
+def test_runtime_checker_rejects_edit_wired_as_generate(tmp_path):
+    checker = _load_runtime_checker()
+    plugin = _mutated_plugin(
+        tmp_path,
+        relative="skills/generate-slide-body-image/scripts/codex_gpt_image.py",
+        old='add_image_arguments(edit, "edit")',
+        new='add_image_arguments(edit, "generate")',
+    )
+    assert any("edit" in item and "declared operation" in item for item in checker._scan_image_cli(plugin, tmp_path))
+
+
 def test_runtime_checker_rejects_hardcoded_generate_selection(tmp_path):
     checker = _load_runtime_checker()
     plugin = _mutated_plugin(
@@ -199,9 +221,20 @@ def test_legacy_visual_qa_variants_are_detected_but_current_contract_is_allowed(
     root = tmp_path / "skill"
     (root / "scripts").mkdir(parents=True)
     path = root / "scripts" / "sample.py"
-    path.write_text("global_visual_contract = {}\n", encoding="utf-8")
-    assert checker._scan_tokens(root, tmp_path) == []
-    for variant in ("global_visual_qa", "global-visual-qa", "global visual QA", "cross_page_similarity"):
+    for allowed in (
+        "global_visual_contract",
+        "filter_global_visual_contract",
+        "frozen_global_visual_contract",
+        "global_visual_contract_digest",
+    ):
+        path.write_text(f"value = {allowed!r}\n", encoding="utf-8")
+        assert checker._scan_tokens(root, tmp_path) == [], allowed
+    for variant in (
+        "global_visual_qa", "global-visual-qa", "global visual QA",
+        "global_visual_review", "global-visual-review", "global visual review",
+        "global_visual_check", "global-visual-check", "global visual check",
+        "cross_page_similarity",
+    ):
         path.write_text(f"value = {variant!r}\n", encoding="utf-8")
         findings = checker._scan_tokens(root, tmp_path)
         assert any("legacy deck-wide visual QA" in item for item in findings), variant
